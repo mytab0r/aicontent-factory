@@ -1,0 +1,11 @@
+# Ротация настроений для lo-fi/ambient треков.
+# pipeline/01_idea.py берёт следующее по индексу (rotation state в .state/mood_idx.txt).
+moods:
+  - rainy night study
+  - cozy autumn afternoon
+  - deep focus midnight
+  - slow morning coffee
+  - sleepy ambient drift
+  - foggy forest calm
+  - city lights insomnia
+  - warm analog nostalgia
