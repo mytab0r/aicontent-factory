@@ -39,7 +39,7 @@ def burn_overlay(cover_path, out_path) -> None:
 def main() -> None:
     run_dir = latest_run_dir()
     cover = run_dir / "cover.png"
-    track = run_dir / "track.wav"
+    track = run_dir / "track.mp3"
     frame = run_dir / "frame.png"
     out_path = run_dir / "video.mp4"
 

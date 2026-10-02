@@ -1,138 +1,136 @@
 #!/usr/bin/env python3
-"""Шаг 3: процедурная генерация lo-fi/ambient трека (WAV) без внешних моделей.
+"""Шаг 3: lo-fi трек через ACE-Step (HF Space, бесплатный публичный API).
 
-Почему процедурно, а не через готовую модель генерации музыки:
-9router не предоставляет music-gen модель (проверено: нет ни одного
-audio/music эндпоинта с рабочим backend). Suno/Udio — платные внешние
-SaaS, что запрещено п.2 AGENTS.md без явного решения. Поэтому для MVP —
-простой процедурный синтез (детерминированный, бесплатный, без лицензионных
-рисков): случайные lo-fi аккорды на синусах с мягкой огибающей + шум винила
-+ лёгкий RC-фильтр низких частот для "тёплого" звука.
+История решения — см. docs/DECISIONS.md п.1 (апдейт):
+изначально был чистый numpy-синтез (аккорды на синусах + шум) — качество
+признано слабым владельцем ("просто арпеджио+шум, без мелодии/ударных").
+Ресёрч актуального рынка (2026): MusicGen — CC-BY-NC (не годится для
+монетизации), Stable Audio Open — коммерческая лицензия ОК, но нужна своя
+GPU (её нет, 1 vCPU хост). Suno — нет официального API, только
+реверс-инженерные обёртки (ToS-риск + юридическая неопределённость вокруг
+данных обучения, сейчас в суде с лейблами) — отклонено.
 
-Только numpy + stdlib wave — scipy.signal убран: на 1 vCPU сервере
-scipy.signal.butter/lfilter подвешивает процесс (threadpool deadlock),
-а готовый однополюсный фильтр даёт тот же "тёплый" эффект за O(n).
+Выбор: ACE-Step (github.com/ace-step/ACE-Step, Apache-2.0, честно заявлен
+коммерчески пригодным) через публичный HF Space `ACE-Step/ACE-Step`
+(ZeroGPU, бесплатно) по `gradio_client`. Проверено вживую: полный
+инструментальный трек 45-60с генерируется за 15-35 секунд (в основном
+сетевая/очередная задержка, сама диффузия ~3с) — с большим запасом для
+1 видео/день. Жанр-специфичный промпт (не постобработка FFmpeg) даёт
+звучание, принятое владельцем после A/B теста 3 вариантов.
 
-ponytail: это не "настоящая" музыка с мелодией/ударными — упрощение ради
-MVP. Апгрейд (при появлении денег/нужды): подключить внешний music-gen API
-(Suno/Udio/ElevenLabs Music) за этим же интерфейсом generate_track().
+ponytail: HF Space — бесплатный общий ресурс без SLA (может тормозить при
+чужой нагрузке). Апгрейд при нужде: платный Space/Replicate с тем же
+интерфейсом generate_track(), или self-host на домашнем GPU через туннель.
 """
-import wave
+import os
+import random
 
-import numpy as np
+from gradio_client import Client
 
 from common import latest_run_dir
 
-SR = 44100
-NOTE_A4 = 440.0
+SPACE = "ACE-Step/ACE-Step"
 
-# lo-fi аккордовые прогрессии (semitones от A4, минорный септаккорд от каждой ступени)
-PROGRESSIONS = [
-    [0, -3, -5, -8],
-    [0, -5, -3, -8],
-    [0, -7, -5, -10],
-]
-
-
-def note_freq(semitones_from_a4: float) -> float:
-    return NOTE_A4 * (2 ** (semitones_from_a4 / 12))
-
-
-def chord_freqs(root_semitone: int) -> list[float]:
-    intervals = [0, 3, 7, 10]  # минорный септаккорд
-    return [note_freq(root_semitone + i - 24) for i in intervals]
-
-
-def one_pole_lowpass(signal: np.ndarray, cutoff_hz: float = 2800, chunk: int = 2048) -> np.ndarray:
-    """Простой RC low-pass: y[n] = y[n-1] + a*(x[n]-y[n-1]). Без scipy.
-
-    Чистый python-цикл по сэмплам слишком медленный (1 vCPU), поэтому
-    приближаем поблочно: внутри блока используем кумулятивную свёртку
-    через экспоненциальное окно (векторизовано numpy), блоки стыкуем
-    по последнему значению — для lo-fi эффекта точность не критична.
-    """
-    rc = 1.0 / (2 * np.pi * cutoff_hz)
-    dt = 1.0 / SR
-    a = dt / (rc + dt)
-    out = np.empty_like(signal)
-    prev = 0.0
-    n = len(signal)
-    # веса экспоненциального затухания внутри блока: (1-a)^k
-    idx = np.arange(chunk)
-    decay = (1 - a) ** idx
-    for start in range(0, n, chunk):
-        block = signal[start:start + chunk]
-        m = len(block)
-        d = decay[:m]
-        # y[k] = a * sum_{j<=k} block[j] * (1-a)^(k-j) + prev*(1-a)^(k+1)
-        weighted = block * a / d
-        cum = np.cumsum(weighted) * d
-        cum += prev * d * (1 - a)
-        out[start:start + m] = cum
-        prev = cum[-1]
-    return out
+# Под-жанры внутри lo-fi-зонтика — ротация для разнообразия звучания
+# (и чтобы не попасть под YouTube spam-policy "identical background music
+# across many videos").
+GENRE_PROMPTS = {
+    "anime lofi": (
+        "anime lofi, soft rhodes piano melody, gentle boom bap drums with "
+        "swing, warm bassline, vinyl noise, tape hiss, A minor, 82 BPM, "
+        "instrumental, no vocals, cozy, nostalgic, study beats, Lofi Girl style"
+    ),
+    "jazzhop": (
+        "nujabes style lofi hip hop, jazzy piano chords extended m7 maj9, "
+        "boom bap swing drums, kick snare groove, warm upright bass, vinyl "
+        "crackle, tape saturation, F minor, 78 BPM, instrumental, no vocals, "
+        "melancholic, dusty texture"
+    ),
+    "deep focus ambient": (
+        "deep focus ambient lofi, slow pads, minimal piano, soft filtered "
+        "drums, warm sub bass, vinyl crackle, D minor, 70 BPM, instrumental, "
+        "no vocals, spacious, meditative, calm study music"
+    ),
+    "chillhop": (
+        "chillhop, mellow electric piano, laid back boom bap groove, "
+        "soulful chords maj7, warm bass, vinyl texture, tape warmth, "
+        "C minor, 85 BPM, instrumental, no vocals, relaxed, smooth"
+    ),
+    "rainy night lofi": (
+        "rainy night lofi, soft rhodes and muted guitar, slow swung drums, "
+        "warm round bass, vinyl crackle, light rain ambience, G minor, "
+        "75 BPM, instrumental, no vocals, introspective, cozy, late night"
+    ),
+}
 
 
-def chord_wave(freqs: list[float], duration: float) -> np.ndarray:
-    t = np.linspace(0, duration, int(SR * duration), endpoint=False)
-    wave_ = np.zeros_like(t)
-    for f in freqs:
-        wave_ += np.sin(2 * np.pi * f * t) * 0.5
-        wave_ += np.sin(2 * np.pi * f * 2 * t) * 0.05
-    env = np.ones_like(t)
-    fade = int(SR * 0.3)
-    env[:fade] = np.linspace(0, 1, fade)
-    env[-fade:] = np.linspace(1, 0, fade)
-    return wave_ * env
+def genre_for_mood(mood: str) -> tuple[str, str]:
+    """Детерминированный выбор под-жанра по mood (воспроизводимо, но разнообразно)."""
+    names = list(GENRE_PROMPTS.keys())
+    idx = abs(hash(mood)) % len(names)
+    name = names[idx]
+    return name, GENRE_PROMPTS[name]
 
 
-def vinyl_noise(duration: float, level: float = 0.015) -> np.ndarray:
-    n = int(SR * duration)
-    rng = np.random.default_rng(42)
-    noise = rng.normal(0, 1, n)
-    return noise * level
-
-
-def generate_track(duration_sec: int = 60, seed: int = 0) -> np.ndarray:
-    progression = PROGRESSIONS[seed % len(PROGRESSIONS)]
-    bar_duration = 4.0
-    bars_needed = int(np.ceil(duration_sec / bar_duration))
-
-    chunks = []
-    for i in range(bars_needed):
-        root = progression[i % len(progression)]
-        freqs = chord_freqs(root)
-        chunks.append(chord_wave(freqs, bar_duration))
-    track = np.concatenate(chunks)[: int(SR * duration_sec)]
-
-    track = one_pole_lowpass(track, cutoff_hz=2800)
-    track = track + vinyl_noise(duration_sec)
-
-    peak = np.max(np.abs(track))
-    if peak > 0:
-        track = track / peak * 0.8
-    return track
-
-
-def write_wav(path, samples: np.ndarray) -> None:
-    pcm = (samples * 32767).astype(np.int16)
-    with wave.open(str(path), "wb") as f:
-        f.setnchannels(1)
-        f.setsampwidth(2)
-        f.setframerate(SR)
-        f.writeframes(pcm.tobytes())
+def generate_track(prompt: str, duration_sec: int, seed: int | None = None) -> str:
+    """Вызывает ACE-Step, возвращает путь к сгенерированному mp3 (временный файл gradio)."""
+    client = Client(SPACE)
+    result = client.predict(
+        audio_duration=float(duration_sec),
+        prompt=prompt,
+        lyrics="[instrumental]",
+        infer_step=27,
+        guidance_scale=15.0,
+        scheduler_type="euler",
+        cfg_type="apg",
+        omega_scale=10.0,
+        manual_seeds=str(seed) if seed is not None else None,
+        guidance_interval=0.5,
+        guidance_interval_decay=0.0,
+        min_guidance_scale=3.0,
+        use_erg_tag=True,
+        use_erg_lyric=False,
+        use_erg_diffusion=True,
+        oss_steps=None,
+        guidance_scale_text=0.0,
+        guidance_scale_lyric=0.0,
+        audio2audio_enable=False,
+        ref_audio_strength=0.5,
+        ref_audio_input=None,
+        lora_name_or_path="none",
+        api_name="/__call__",
+    )
+    return result[0]
 
 
 def main() -> None:
-    import os
-    run_dir = latest_run_dir()
-    duration = int(os.environ.get("TRACK_DURATION_SEC", "600"))  # 10 минут по умолчанию
-    seed = abs(hash(run_dir.name)) % 1000
-    track = generate_track(duration_sec=duration, seed=seed)
+    import json
+    import shutil
 
-    out_path = run_dir / "track.wav"
-    write_wav(out_path, track)
-    print(f"track -> {out_path} ({duration}s)")
+    run_dir = latest_run_dir()
+    idea = json.loads((run_dir / "idea.json").read_text(encoding="utf-8"))
+    mood = idea.get("mood", "cozy lofi")
+
+    duration = int(os.environ.get("TRACK_DURATION_SEC", "60"))
+    # ACE-Step Space ограничивает длину одного вызова практичными рамками
+    # (см. slider max=240s в API, но для стабильности очереди ZeroGPU
+    # держим дефолт короче — 60с, видео повторно использует 04_assemble
+    # без зацикливания аудио, если нужен более длинный ролик — увеличить
+    # TRACK_DURATION_SEC, не меняя остальной пайплайн).
+
+    genre_name, prompt = genre_for_mood(mood)
+    seed = abs(hash(run_dir.name)) % (2**31)
+
+    mp3_path = generate_track(prompt, duration_sec=duration, seed=seed)
+
+    out_path = run_dir / "track.mp3"
+    shutil.copy(mp3_path, out_path)
+    (run_dir / "music_meta.json").write_text(
+        json.dumps({"genre": genre_name, "prompt": prompt, "seed": seed, "duration": duration},
+                   ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    print(f"track -> {out_path} (genre={genre_name}, {duration}s)")
 
 
 if __name__ == "__main__":
