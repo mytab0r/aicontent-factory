@@ -74,7 +74,7 @@ def genre_for_mood(mood: str) -> tuple[str, str]:
 
 def generate_track(prompt: str, duration_sec: int, seed: int | None = None) -> str:
     """Вызывает ACE-Step, возвращает путь к сгенерированному mp3 (временный файл gradio)."""
-    client = Client(SPACE, hf_token=os.environ.get("HF_TOKEN") or None)
+    client = Client(SPACE, token=os.environ.get("HF_TOKEN") or None)
     result = client.predict(
         audio_duration=float(duration_sec),
         prompt=prompt,
