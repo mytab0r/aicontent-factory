@@ -46,6 +46,13 @@ GENRE_PROMPTS = {
         "swing, warm bassline, vinyl noise, tape hiss, A minor, 82 BPM, "
         "instrumental, no vocals, cozy, nostalgic, study beats, Lofi Girl style"
     ),
+}
+# ponytail: 8 жанров из конкурентного анализа (DECISIONS.md п.5) отключены
+# из прод-ротации — они никогда не проходили A/B прослушивание владельцем
+# (одобрен был только "anime lofi"). Черновики — ниже, в CANDIDATE_GENRE_PROMPTS,
+# включать обратно в GENRE_PROMPTS по одному, только после присланного
+# семпла и явного одобрения владельцем.
+CANDIDATE_GENRE_PROMPTS = {
     "jazzhop": (
         "nujabes style lofi hip hop, jazzy piano chords extended m7 maj9, "
         "boom bap swing drums, kick snare groove, warm upright bass, vinyl "
