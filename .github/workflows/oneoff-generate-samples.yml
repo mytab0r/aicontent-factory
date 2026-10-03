@@ -1,0 +1,98 @@
+name: oneoff-generate-samples
+on:
+  workflow_dispatch: {}
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - name: deps
+        run: |
+          uv venv .venv
+          uv pip install --python .venv/bin/python gradio_client
+      - name: generate candidate + major-variant samples
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          mkdir -p samples_candidates
+          .venv/bin/python - <<'PY'
+          import os
+          from gradio_client import Client
+
+          SPACE = "ACE-Step/ACE-Step"
+          client = Client(SPACE, token=os.environ.get("HF_TOKEN") or None)
+
+          def gen(name, prompt, duration=30):
+              print(f"-> {name}")
+              result = client.predict(
+                  audio_duration=float(duration),
+                  prompt=prompt,
+                  lyrics="[instrumental]",
+                  infer_step=27,
+                  guidance_scale=15.0,
+                  scheduler_type="euler",
+                  cfg_type="apg",
+                  omega_scale=10.0,
+                  manual_seeds=None,
+                  guidance_interval=0.5,
+                  guidance_interval_decay=0.0,
+                  min_guidance_scale=3.0,
+                  use_erg_tag=True,
+                  use_erg_lyric=False,
+                  use_erg_diffusion=True,
+                  oss_steps=None,
+                  guidance_scale_text=0.0,
+                  guidance_scale_lyric=0.0,
+                  audio2audio_enable=False,
+                  ref_audio_strength=0.5,
+                  ref_audio_input=None,
+                  lora_name_or_path="none",
+                  api_name="/__call__",
+              )
+              import shutil
+              shutil.copy(result[0], f"samples_candidates/{name}.mp3")
+              print(f"   saved samples_candidates/{name}.mp3")
+
+          TRACKS = {
+              "nature_ambient": (
+                  "nature ambient soundscape, soft sustained pads, distant birdsong, "
+                  "gentle flowing water texture, no drums, no percussion, minimal "
+                  "variation designed to loop seamlessly, warm airy, slow and "
+                  "unhurried, instrumental, no vocals, relaxing"
+              ),
+              "meditation_healing": (
+                  "meditation and healing music, slow solo piano phrases with long "
+                  "decay, soft string pad underneath, 60 BPM, no drums, no vocals, "
+                  "spacious reverb, calm and grounding, gentle, instrumental"
+              ),
+              "easy_listening_piano": (
+                  "easy listening solo piano, warm and gentle melodic phrases, light "
+                  "rubato, soft room reverb, no drums, no vocals, 65 BPM, relaxed, "
+                  "comforting, instrumental"
+              ),
+              "sleep_ambient": (
+                  "deep sleep ambient, very slow evolving drone pad, no percussion, "
+                  "no sudden dynamic changes, extremely minimal variation designed to "
+                  "loop seamlessly, soft low frequencies, instrumental, no vocals, "
+                  "hypnotic and slow"
+              ),
+              "anime_lofi_MAJOR_test": (
+                  "anime lofi, soft rhodes piano melody, gentle boom bap drums with "
+                  "swing, warm bassline, vinyl noise, tape hiss, C# major, 82 BPM, "
+                  "instrumental, no vocals, cozy, nostalgic, study beats, Lofi Girl style"
+              ),
+          }
+          for name, prompt in TRACKS.items():
+              try:
+                  gen(name, prompt)
+              except Exception as e:
+                  print(f"FAILED {name}: {e}")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: candidate-samples
+          path: samples_candidates/*.mp3
+          if-no-files-found: warn
