@@ -1,0 +1,42 @@
+name: dd-samples-hourly-tilt-done
+on:
+  schedule:
+    - cron: "23 * * * *"  # каждый час :23 UTC, ~1 мин раннера на попытку
+  workflow_dispatch: {}
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - name: deps
+        run: |
+          uv venv .venv
+          uv pip install --python .venv/bin/python gradio_client
+      - name: generate dd scene samples (fail fast, resume from artifact)
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: .venv/bin/python pipeline/dd_samples.py
+      - name: upload progress artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dd-samples-progress
+          path: samples_candidates/dd_*.mp3
+          if-no-files-found: quiet
+          retention-days: 30
+      - name: done? disable schedule
+        if: success()
+        run: |
+          count=$(ls samples_candidates/dd_*.mp3 2>/dev/null | wc -l)
+          echo "saved: $count/6"
+          # все 6 готовы — глушим часовой крон (workflow disable через API)
+          if [ "$count" -ge 6 ]; then
+            echo "ALL DONE — disabling hourly schedule"
+            gh api -X PUT repos/${{ github.repository }}/actions/workflows/dd-samples-hourly.yml/disabled \
+              -H "Accept: application/vnd.github+json" || true
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
