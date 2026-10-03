@@ -34,6 +34,12 @@ SPACE = "ACE-Step/ACE-Step"
 # Под-жанры внутри lo-fi-зонтика — ротация для разнообразия звучания
 # (и чтобы не попасть под YouTube spam-policy "identical background music
 # across many videos").
+# Под-жанры — НЕ ограничено lofi-hip-hop-зонтиком. Конкурентный анализ
+# (docs/DECISIONS.md п.5) показал, что самые доходные соседние ниши на
+# YouTube (nature ambient, meditation/healing, easy-listening piano) не
+# завязаны на lofi-поджанр вообще, и именно они менее насыщены в 2026м,
+# чем классический lofi hip-hop. ACE-Step берёт любой текстовый
+# жанр-промпт через тот же generate_track() — пайплайн не меняется.
 GENRE_PROMPTS = {
     "anime lofi": (
         "anime lofi, soft rhodes piano melody, gentle boom bap drums with "
@@ -60,6 +66,29 @@ GENRE_PROMPTS = {
         "rainy night lofi, soft rhodes and muted guitar, slow swung drums, "
         "warm round bass, vinyl crackle, light rain ambience, G minor, "
         "75 BPM, instrumental, no vocals, introspective, cozy, late night"
+    ),
+    # Ниши из конкурентного анализа (DECISIONS.md п.5), не lofi-derived:
+    "nature ambient": (
+        "nature ambient soundscape, soft sustained pads, distant birdsong, "
+        "gentle flowing water texture, no drums, no percussion, minimal "
+        "variation designed to loop seamlessly, warm airy, slow and "
+        "unhurried, instrumental, no vocals, relaxing"
+    ),
+    "meditation healing": (
+        "meditation and healing music, slow solo piano phrases with long "
+        "decay, soft string pad underneath, 60 BPM, no drums, no vocals, "
+        "spacious reverb, calm and grounding, gentle, instrumental"
+    ),
+    "easy listening piano": (
+        "easy listening solo piano, warm and gentle melodic phrases, light "
+        "rubato, soft room reverb, no drums, no vocals, 65 BPM, relaxed, "
+        "comforting, instrumental"
+    ),
+    "sleep ambient": (
+        "deep sleep ambient, very slow evolving drone pad, no percussion, "
+        "no sudden dynamic changes, extremely minimal variation designed to "
+        "loop seamlessly, soft low frequencies, instrumental, no vocals, "
+        "hypnotic and slow"
     ),
 }
 
@@ -103,28 +132,66 @@ def generate_track(prompt: str, duration_sec: int, seed: int | None = None) -> s
     return result[0]
 
 
+def chunk_plan(total_sec: int, max_chunk_sec: int = 240) -> list[int]:
+    """Разбивает long-form длительность на куски <= max_chunk_sec для ACE-Step
+    (один вызов практично ограничен ~240с, см. DECISIONS.md п.5). Короткий
+    "сигнатурный" ролик (<= max_chunk_sec) не дробится -- один вызов, как раньше."""
+    if total_sec <= max_chunk_sec:
+        return [total_sec]
+    n = -(-total_sec // max_chunk_sec)  # ceil div
+    base = total_sec // n
+    chunks = [base] * n
+    chunks[-1] += total_sec - base * n  # остаток в последний кусок
+    return chunks
+
+
+def concat_tracks(paths: list[str], out_path) -> None:
+    """Склеивает несколько mp3 в один файл через ffmpeg concat demuxer."""
+    import subprocess
+    import tempfile
+
+    if len(paths) == 1:
+        import shutil
+        shutil.copy(paths[0], out_path)
+        return
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+        for p in paths:
+            f.write(f"file '{p}'\n")
+        list_path = f.name
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path, "-c", "copy", str(out_path)],
+            check=True, capture_output=True,
+        )
+    finally:
+        os.unlink(list_path)
+
+
 def main() -> None:
     import json
-    import shutil
 
     run_dir = latest_run_dir()
     idea = json.loads((run_dir / "idea.json").read_text(encoding="utf-8"))
     mood = idea.get("mood", "cozy lofi")
 
+    # Длительность по умолчанию 60с (сигнатурный клип). Long-form
+    # (sleep/meditation/ambient каналы по конкурентному анализу — часто
+    # 1-3ч, см. DECISIONS.md п.5) запрашивается через TRACK_DURATION_SEC,
+    # дробится chunk_plan() на вызовы ACE-Step <=240с и склеивается
+    # concat_tracks() — пайплайн ниже этой строки не меняется.
     duration = int(os.environ.get("TRACK_DURATION_SEC", "60"))
-    # ACE-Step Space ограничивает длину одного вызова практичными рамками
-    # (см. slider max=240s в API, но для стабильности очереди ZeroGPU
-    # держим дефолт короче — 60с, видео повторно использует 04_assemble
-    # без зацикливания аудио, если нужен более длинный ролик — увеличить
-    # TRACK_DURATION_SEC, не меняя остальной пайплайн).
 
     genre_name, prompt = genre_for_mood(mood)
     seed = abs(hash(run_dir.name)) % (2**31)
 
-    mp3_path = generate_track(prompt, duration_sec=duration, seed=seed)
+    chunks = chunk_plan(duration)
+    chunk_paths = [
+        generate_track(prompt, duration_sec=c, seed=seed + i)
+        for i, c in enumerate(chunks)
+    ]
 
     out_path = run_dir / "track.mp3"
-    shutil.copy(mp3_path, out_path)
+    concat_tracks(chunk_paths, out_path)
     (run_dir / "music_meta.json").write_text(
         json.dumps({"genre": genre_name, "prompt": prompt, "seed": seed, "duration": duration},
                    ensure_ascii=False, indent=2),

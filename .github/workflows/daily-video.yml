@@ -8,11 +8,17 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       ROUTER_BASE_URL: https://9router.pxbt.app/v1
       ROUTER_API_KEY: ${{ secrets.ROUTER_API_KEY }}
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      # DECISIONS.md п.5: конкурентный анализ показал — никто не публикует
+      # 45-секундные видео, формат 10-20 мин "сигнатурный" ролик. Решение
+      # было записано, но не применено в workflow — баг, видео от 2 окт
+      # ушло в паблик 45-секундным. Фикс: 15 минут (900с), дробится
+      # chunk_plan() в 03_music.py на куски <=240с под лимит ACE-Step.
+      TRACK_DURATION_SEC: "900"
     steps:
       - uses: actions/checkout@v4
 

@@ -14,7 +14,10 @@ def main() -> None:
 Верни СТРОГО JSON (без markdown, без пояснений) с полями:
   mood: строка (кратко, как дано)
   cover_prompt: промпт для генерации обложки (на английском, стиль aesthetic lofi album art, без текста на картинке)
-  title: цепляющий заголовок видео на YouTube (английский, до 70 символов, с указанием "lofi" или "ambient")
+  title: заголовок до 70 символов, английский, по формуле топ-каналов ниши
+    (DECISIONS.md п.5): "[Сцена/жанр] + emoji + [use-case] Music to Study/
+    Relax/Sleep/Focus to" — например "Rainy Tokyo Nights 🌧️ Lofi Beats to
+    Study and Relax to". Без фейковых чисел длительности в заголовке.
   description: 2-3 предложения описания видео на английском для YouTube
   tags: список из 8-12 тегов (английские, через запятую в массиве JSON)
 """
