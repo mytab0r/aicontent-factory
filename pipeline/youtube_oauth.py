@@ -48,6 +48,7 @@ PENDING_AUTH_PATH = STATE_DIR / "youtube_oauth_pending.json"
 SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube.readonly",
+    "https://www.googleapis.com/auth/youtube",  # нужен для videos().delete()
 ]
 
 # OOB-флоу google deprecated — используем localhost-редирект, код
