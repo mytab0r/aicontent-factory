@@ -52,10 +52,28 @@ music-gen API (Suno/Udio/ElevenLabs Music и т.п.) за тем же интер
 `-preset ultrafast` — иначе кодирование не укладывается в разумное
 время на 1 vCPU.
 
-## 3. Публикация на YouTube (шаг 05) — блокер
+## 3. Публикация на YouTube (шаг 05) — закрыто
 
-Требует Google Cloud OAuth2 client_id/secret + refresh_token с правом
-`youtube.upload`. Это разовый интерактивный consent-флоу в браузере,
-который не может пройти автономный агент. Эскалировано как blocked
-(kind=capability) — пайплайн 01-04 разработан и провалидирован
-end-to-end без этого шага.
+Требовал Google Cloud OAuth2 client_id/secret + refresh_token с правом
+`youtube.upload`. Владелец провёл разовый интерактивный consent-флоу в
+браузере (создал Google Cloud проект, включил YouTube Data API v3,
+Desktop OAuth client, прислал auth code). `pipeline/youtube_oauth.py
+--check` подтверждает авторизацию, токен хранится в `.state/youtube_token.json`
+(gitignored).
+
+End-to-end прогон выполнен: взят готовый run `runs/20261002_023635/`
+(idea.json/cover.png/track.mp3/video.mp4, 45с), `pipeline/05_publish.py`
+реально опубликовал видео:
+https://www.youtube.com/watch?v=Amn9z3lf5z8
+(containsSyntheticMedia=True, selfDeclaredMadeForKids=False — выставлено
+автоматически в теле запроса).
+
+## 4. YouTube Analytics API (шаг 06) — известное ограничение
+
+`pipeline/06_report.py` падает с `accessNotConfigured`: YouTube
+Analytics API не включён в том же Google Cloud проекте (включена
+только YouTube Data API v3 на шаге выше). Включение API в Cloud Console
+— ещё один разовый ручной шаг для владельца (Library ->
+"YouTube Analytics API" -> Enable), сам скрипт корректен и готов к
+работе сразу после включения. Не блокирует MVP-критерии (публикация
+видео — выполнена), оставлено как follow-up.
