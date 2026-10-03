@@ -1,15 +1,11 @@
 name: oneoff-dd-samples
 on:
-  workflow_dispatch:
-    inputs:
-      max_retries_hours:
-        description: "Сколько часов ждать сброса квоты внутри одного рана"
-        default: "10"
+  workflow_dispatch: {}
 
 jobs:
   generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 660
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
@@ -17,90 +13,20 @@ jobs:
         run: |
           uv venv .venv
           uv pip install --python .venv/bin/python gradio_client
-      - name: generate dd scene samples (waits for quota reset)
+      - name: generate dd scene samples (fail fast, resume on re-dispatch)
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          MAX_HOURS: ${{ github.event.inputs.max_retries_hours }}
-        run: |
-          mkdir -p samples_candidates
-          .venv/bin/python - <<'PY'
-          import os, shutil, time, sys
-          from datetime import datetime, timedelta
-          from pathlib import Path
-          sys.path.insert(0, "pipeline")
-          import dd_channel
-          from gradio_client import Client
-
-          deadline = datetime.utcnow() + timedelta(hours=float(os.environ.get("MAX_HOURS", "10")))
-
-          def client():
-              return Client("ACE-Step/ACE-Step", token=os.environ.get("HF_TOKEN") or None)
-
-          def try_gen(cli, name, prompt, duration=45):
-              result = cli.predict(
-                  audio_duration=float(duration),
-                  prompt=prompt,
-                  lyrics="[instrumental]",
-                  infer_step=27,
-                  guidance_scale=15.0,
-                  scheduler_type="euler",
-                  cfg_type="apg",
-                  omega_scale=10.0,
-                  manual_seeds=None,
-                  guidance_interval=0.5,
-                  guidance_interval_decay=0.0,
-                  min_guidance_scale=3.0,
-                  use_erg_tag=True,
-                  use_erg_lyric=False,
-                  use_erg_diffusion=True,
-                  oss_steps=None,
-                  guidance_scale_text=0.0,
-                  guidance_scale_lyric=0.0,
-                  audio2audio_enable=False,
-                  ref_audio_strength=0.5,
-                  ref_audio_input=None,
-                  lora_name_or_path="none",
-                  api_name="/__call__",
-              )
-              shutil.copy(result[0], f"samples_candidates/dd_{name.replace(' ', '_')}.mp3")
-              print(f"saved dd_{name.replace(' ', '_')}.mp3", flush=True)
-
-          scenes = dd_channel.load_scenes()
-          done = []
-          attempt = 0
-          while len(done) < len(scenes) and datetime.utcnow() < deadline:
-              attempt += 1
-              print(f"--- attempt {attempt}, done={len(done)}/{len(scenes)} ---", flush=True)
-              cli = None
-              for scene in scenes:
-                  if scene["name"] in done:
-                      continue
-                  try:
-                      if cli is None:
-                          cli = client()
-                      try_gen(cli, scene["name"], scene["music_prompt"])
-                      done.append(scene["name"])
-                  except Exception as e:
-                      msg = str(e)
-                      print(f"FAILED {scene['name']}: {msg[:200]}", flush=True)
-                      if "quota" in msg.lower():
-                          # квота кончилась — выходим из попытки, ждём сброса
-                          cli = None
-                          break
-                      time.sleep(20)
-              if len(done) < len(scenes):
-                  print("quota exhausted, sleeping 30 min for reset window", flush=True)
-                  time.sleep(30 * 60)
-
-          print(f"FINAL: {len(done)}/{len(scenes)} scenes generated: {done}", flush=True)
-          Path("samples_candidates/RESULT.txt").write_text(
-              f"{len(done)}/{len(scenes)}: {', '.join(done)}\n", encoding="utf-8"
-          )
-          PY
-      - uses: actions/upload-artifact@v4
+        run: ../.venv/bin/python pipeline/dd_samples.py
+      - name: upload artifact (даже при неполном результате)
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: dd-samples
-          path: |
-            samples_candidates/*.mp3
-            samples_candidates/RESULT.txt
-          if-no-files-found: warn
+          name: dd-samples-${{ github.run_id }}
+          path: samples_candidates/dd_*.mp3
+          if-no-files-found: error
+          retention-days: 30
+      - name: report
+        if: always()
+        run: |
+          count=$(ls samples_candidates/dd_*.mp3 2>/dev/null | wc -l)
+          echo "saved: $count/6 dd samples"
