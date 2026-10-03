@@ -1,0 +1,28 @@
+name: one-off delete bad video
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_id:
+        description: "YouTube video ID to delete"
+        required: true
+
+jobs:
+  delete:
+    runs-on: ubuntu-latest
+    env:
+      YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
+    steps:
+      - run: pip install --quiet google-api-python-client google-auth-oauthlib
+      - run: |
+          python3 - <<'PY'
+          import json, os
+          from google.oauth2.credentials import Credentials
+          from googleapiclient.discovery import build
+
+          creds = Credentials.from_authorized_user_info(json.loads(os.environ["YOUTUBE_TOKEN_JSON"]))
+          yt = build("youtube", "v3", credentials=creds)
+          video_id = "${{ github.event.inputs.video_id }}"
+          yt.videos().delete(id=video_id).execute()
+          print(f"deleted: {video_id}")
+          PY
