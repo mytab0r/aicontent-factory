@@ -15,24 +15,23 @@ jobs:
         run: |
           uv venv .venv
           uv pip install --python .venv/bin/python gradio_client
-      - name: generate dd scene samples (fail fast, resume from artifact)
+      - name: generate dd scene samples (fail fast, resume from git)
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: .venv/bin/python pipeline/dd_samples.py
-      - name: upload progress artifact
+      - name: commit progress to repo (resume state = git files)
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: dd-samples-progress
-          path: samples_candidates/dd_*.mp3
-          if-no-files-found: quiet
-          retention-days: 30
-      - name: done? disable schedule
+        run: |
+          git config user.name "aicontent-factory-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add samples_candidates/dd_*.mp3 2>/dev/null || true
+          git diff --cached --quiet || git commit -m "chore: dd samples progress [skip ci]"
+          git push || true
+      - name: done? disable hourly schedule
         if: success()
         run: |
           count=$(ls samples_candidates/dd_*.mp3 2>/dev/null | wc -l)
           echo "saved: $count/6"
-          # все 6 готовы — глушим часовой крон (workflow disable через API)
           if [ "$count" -ge 6 ]; then
             echo "ALL DONE — disabling hourly schedule"
             gh api -X PUT repos/${{ github.repository }}/actions/workflows/dd-samples-hourly.yml/disabled \
