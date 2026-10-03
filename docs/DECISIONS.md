@@ -157,3 +157,55 @@ YouTube spam-policy). Результаты и архитектурное реш�
 ponytail: пока НЕ трогаем прод-пайплайн (01-06) — это отдельный новый
 модуль (07_clip.py / 08_distribute.py или аналог), подключаемый после
 long-form публикации, не блокирующий существующий daily workflow.
+
+## 7. Архитектура клипинга и дистрибуции — по итогам ресёрча (2026-10-03)
+
+Отчёты: docs/REPORTS/2026-10-03-tooling-survey-clipping.md (инструменты),
+/opt/data/cache/scratch/shortform_monetization_2025.md (экономика),
+постинг-API (TikTok/Shorts/Reels, 26 источников, ledger citations).
+
+Ключевые факты ресёрча, меняющие приоритеты:
+
+1. **Деньги — в long-form, не в шортсах.** Shorts RPM ниши: $0.01-0.05/1k
+   (музыка: 50% пула уходит в Content ID до 45% сплита). Long-form lofi:
+   $1.20-2.50/1k — в 10-50 раз выше. TikTok Creator Rewards платит ТОЛЬКО
+   видео >1 мин (sub-60s = $0), порог 10k подписчиков + 100k просмотров/30д.
+   Instagram Reels — прямых выплат нет вообще (invite-only), $0.
+   => Шортсы = воронка обнаружения, НЕ источник дохода. Основной доход
+   остаётся: long-form YPP (1k subs + 4k watch-hours, ~3-6 мес в нише).
+
+2. **Политический риск важнее технического.** YouTube "inauthentic content"
+   (15.07.2025): шаблонные mass-produced ролики = канал ЦЕЛИКОМ вне
+   монетизации (включая long-form!). TikTok: неоригинальный контент
+   молча лишается For You (без страйков), водяные знаки чужих платформ =
+   авто-дисквалификация. Meta: дубли режут дистрибуцию.
+   => Категорически НЕ постим одинаковые файлы веером. Каждый клип:
+   другой кроп/хук/заголовок/окно нарезки; водяных знаков чужих платформ
+   нет по определению (рендерим сами).
+
+3. **Инструменты: build, don't adopt.** Волна open-source Opus-Clip-клонов
+   2025-26 — transcript-first (Whisper + face-tracking), для faceless
+   музыки не нужна. Реюз: PySceneDetect (BSD-3) для точек склейки,
+   audiospectr (MIT) как референс audio-reactive визуала, остальное —
+   чистый FFmpeg (9:16 crop, drawtext-хук, ebur128-выбор самого громкого
+   окна). SupoClip (AGPL) и Remotion-based (платная лицензия) — skip.
+
+4. **Постинг.** YouTube Shorts — уже автоматизирован (наш youtube_upload
+   в common.py, вертикальный mp3 = Shorts автоматически). TikTok: Direct
+   Post API требует аудит приложения; рабочий путь сейчас — inbox-draft
+   (постинг в чернети, 1 tap руками). IG Reels: Graph API container→publish,
+   OAuth один раз. => MVP: только YouTube Shorts; TikTok/IG после.
+
+5. **Time bomb OAuth:** если OAuth-приложение Google в статусе Testing,
+   refresh-токен умирает через 7 дней → ежедневный крон упадёт.
+   Фикс: владелец в Google Cloud Console → OAuth consent screen →
+   "Publish app" (один клик, без гугл-верификации, warning при новой
+   авторизации — норм). Сделать ДО 2026-10-09.
+
+План реализации (TDD, CI-гейт):
+- 07_clip.py: из готового long-form video.mp4 — 1-3 вертикальных тизера
+  (30-60с, разные окна/кропы/хуки), тесты на plan/dedupe-логику,
+  ffmpeg-часть в CI на Actions.
+- 08_distribute.py: публикация Shorts через существующий OAuth-стек;
+  постинг с вариациями метаданных (анти-шаблон).
+- TikTok/IG — отдельное решение после первых данных по Shorts.
