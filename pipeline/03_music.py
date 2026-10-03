@@ -115,9 +115,24 @@ def genre_for_mood(mood: str) -> tuple[str, str]:
     return name, GENRE_PROMPTS[name]
 
 
-def generate_track(prompt: str, duration_sec: int, seed: int | None = None) -> str:
+def ace_endpoint() -> tuple[str, str | None]:
+    """Endpoint ACE-Step: локальный GPU-ПК (ACE_ENDPOINT) или HF Space.
+
+    Локальный ACE-Step (домашний ПК, RTX 5070 через Tailscale) — тот же
+    Gradio-интерфейс и те же параметры, что у HF Space: gradio_client
+    совместим, пайплайн не меняется. Локальный вызов без токена.
+    """
+    local = os.environ.get("ACE_ENDPOINT")
+    if local:
+        return local, None
+    return SPACE, os.environ.get("HF_TOKEN") or None
+
+
+def generate_track(prompt: str, duration_sec: int, seed: int | None = None,
+                   client_cls=Client) -> str:
     """Вызывает ACE-Step, возвращает путь к сгенерированному mp3 (временный файл gradio)."""
-    client = Client(SPACE, token=os.environ.get("HF_TOKEN") or None)
+    url, token = ace_endpoint()
+    client = client_cls(url, token=token)
     result = client.predict(
         audio_duration=float(duration_sec),
         prompt=prompt,
