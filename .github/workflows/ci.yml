@@ -9,7 +9,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: install test deps
-        run: pip install pillow
+        run: pip install pillow gradio_client
       - name: run tests
         run: |
           set -e
