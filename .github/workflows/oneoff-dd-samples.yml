@@ -16,7 +16,7 @@ jobs:
       - name: generate dd scene samples (fail fast, resume on re-dispatch)
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: ../.venv/bin/python pipeline/dd_samples.py
+        run: .venv/bin/python pipeline/dd_samples.py
       - name: upload artifact (даже при неполном результате)
         if: always()
         uses: actions/upload-artifact@v4
