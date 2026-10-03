@@ -1,16 +1,28 @@
 #!/usr/bin/env python3
 """Шаг 1: через 9router (LLM) сгенерировать идею трека + метаданные YouTube."""
 import json
+import os
 import sys
 
+import dd_channel
 from common import router_post, next_mood, new_run_dir
 
 MODEL = "gemini/gemini-3.8-flash"
 
 
 def main() -> None:
-    mood = next_mood()
-    prompt = f"""Ты продюсер lo-fi/ambient YouTube-канала. Настроение трека: "{mood}".
+    channel = os.environ.get("CHANNEL", "lofi")
+    if channel == "dd":
+        # D&D ambience канал-эксперимент (DECISIONS.md п.8): своя ротация сцен
+        # и своя заголовочная формула, состояние отдельно от lofi-ротации.
+        from common import STATE_DIR
+
+        scene = dd_channel.next_scene(STATE_DIR / "dd_scene_idx.txt")
+        prompt = dd_channel.idea_prompt(scene)
+    else:
+        mood = next_mood()
+        scene = None
+        prompt = f"""Ты продюсер lo-fi/ambient YouTube-канала. Настроение трека: "{mood}".
 Верни СТРОГО JSON (без markdown, без пояснений) с полями:
   mood: строка (кратко, как дано)
   cover_prompt: промпт для генерации обложки (на английском, стиль aesthetic lofi album art, без текста на картинке)
@@ -35,6 +47,9 @@ def main() -> None:
         if content.lower().startswith("json"):
             content = content[4:]
     idea = json.loads(content)
+    if channel == "dd":
+        idea["channel"] = "dd"
+        idea["scene"] = scene["name"] if scene else None
 
     run_dir = new_run_dir()
     out_path = run_dir / "idea.json"

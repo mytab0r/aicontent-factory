@@ -188,6 +188,18 @@ def main() -> None:
     idea = json.loads((run_dir / "idea.json").read_text(encoding="utf-8"))
     mood = idea.get("mood", "cozy lofi")
 
+    # Канал-эксперимент (DECISIONS.md п.8): сцена из idea.json -> промпт сцены
+    if idea.get("channel") == "dd":
+        import dd_channel
+
+        scene_name = idea.get("scene")
+        scene = next((s for s in dd_channel.load_scenes() if s["name"] == scene_name), None)
+        if scene is None:
+            raise SystemExit(f"dd scene not found: {scene_name!r}")
+        genre_name, prompt = scene["name"], scene["music_prompt"]
+    else:
+        genre_name, prompt = genre_for_mood(mood)
+
     # Длительность по умолчанию 60с (сигнатурный клип). Long-form
     # (sleep/meditation/ambient каналы по конкурентному анализу — часто
     # 1-3ч, см. DECISIONS.md п.5) запрашивается через TRACK_DURATION_SEC,
@@ -195,7 +207,6 @@ def main() -> None:
     # concat_tracks() — пайплайн ниже этой строки не меняется.
     duration = int(os.environ.get("TRACK_DURATION_SEC", "60"))
 
-    genre_name, prompt = genre_for_mood(mood)
     seed = abs(hash(run_dir.name)) % (2**31)
 
     chunks = chunk_plan(duration)
