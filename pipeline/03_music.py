@@ -52,11 +52,18 @@ GENRE_PROMPTS = {
 # (одобрен был только "anime lofi"). Черновики — ниже, в CANDIDATE_GENRE_PROMPTS,
 # включать обратно в GENRE_PROMPTS по одному, только после присланного
 # семпла и явного одобрения владельцем.
+# ponytail: тональности ниже поправлены на major по РЕАЛЬНЫМ измеренным
+# данным (tunebat.com, digmyloop.com — аудиоанализ, не стереотип жанра):
+# топовый Lofi Girl трек = C#major/82BPM (не A minor, как было изначально);
+# Nujabes "Luv(sic)" = F major/92BPM (не F minor). "Минор = меланхолия" был
+# моей стереотипной догадкой без проверки, не экспертным выбором. Прод-жанр
+# "anime lofi" (GENRE_PROMPTS выше) НЕ тронут здесь намеренно — его смена
+# тональности тоже требует нового A/B семпла, не блиц-правки.
 CANDIDATE_GENRE_PROMPTS = {
     "jazzhop": (
         "nujabes style lofi hip hop, jazzy piano chords extended m7 maj9, "
         "boom bap swing drums, kick snare groove, warm upright bass, vinyl "
-        "crackle, tape saturation, F minor, 78 BPM, instrumental, no vocals, "
+        "crackle, tape saturation, F major, 92 BPM, instrumental, no vocals, "
         "melancholic, dusty texture"
     ),
     "deep focus ambient": (
@@ -67,7 +74,7 @@ CANDIDATE_GENRE_PROMPTS = {
     "chillhop": (
         "chillhop, mellow electric piano, laid back boom bap groove, "
         "soulful chords maj7, warm bass, vinyl texture, tape warmth, "
-        "C minor, 85 BPM, instrumental, no vocals, relaxed, smooth"
+        "C major, 85 BPM, instrumental, no vocals, relaxed, smooth"
     ),
     "rainy night lofi": (
         "rainy night lofi, soft rhodes and muted guitar, slow swung drums, "
