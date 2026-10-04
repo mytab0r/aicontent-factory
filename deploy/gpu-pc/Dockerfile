@@ -28,8 +28,12 @@ RUN git clone https://github.com/ace-step/ACE-Step.git /tmp/ace \
 
 # torch-тройка СТРОГО из cu128-индекса; bare `torch` в requirements.txt
 # после этого считается уже удовлетворённым
+# ponytail: gradio пин — код ACE-Step (фев 2026) несовместим с gradio 6.x
+# (gr.Audio(show_download_button=...) упал в ACE-Step/acestep/ui/components.py);
+# пин 5.x, поднять при обновлении апстрима.
 RUN pip install --no-cache-dir torch torchvision torchaudio \
       --index-url https://download.pytorch.org/whl/cu128 \
+ && pip install --no-cache-dir "gradio==5.23.0" \
  && pip install --no-cache-dir -r requirements.txt \
  && pip install --no-cache-dir .
 
