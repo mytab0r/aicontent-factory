@@ -1,0 +1,43 @@
+# ============================================================
+# GPU-ПК, вариант без SSH: туннель -> docker-socket-proxy (whitelist API).
+# Требуется только Docker Desktop. Запуск в PowerShell:
+#   docker compose -f .\docker-compose.pc.yml up -d
+# Откат: docker compose -f .\docker-compose.pc.yml down -v
+# ============================================================
+services:
+  # Ограниченный доступ к docker.sock: агенту нужны containers/images/build/volumes,
+  # exec и allow_start/stop запрещены явно.
+  ace-proxy:
+    image: tecnativa/docker-socket-proxy
+    container_name: ace-proxy
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1
+      IMAGES: 1
+      POST: 1            # нужны POST /containers/create, /build
+      BUILD: 1
+      VOLUMES: 1
+      NETWORKS: 1
+      EXEC: 0            # нет exec внутрь контейнеров
+      ALLOW_START: 0
+      ALLOW_STOP: 0
+      ALLOW_RESTARTS: 1  # рестарт только конкретного контейнера по имени
+      LOG: 1
+      INFO: 1
+      PING: 1
+      VERSION: 1
+    volumes:
+      - //var/run/docker.sock:/var/run/docker.sock
+    networks: [acenet]
+
+  # Туннель в той же docker-сети -> проксирует pc.pxbt.app на ace-proxy:2375
+  ace-tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: ace-tunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CF_TUNNEL_TOKEN}
+    depends_on: [ace-proxy]
+    networks: [acenet]
+
+networks:
+  acenet: {}
