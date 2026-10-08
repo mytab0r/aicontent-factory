@@ -34,13 +34,41 @@
   цепочек (генерировались ethers/tronweb/tweetnacl), негативные кейсы,
   KV-заглушка.
 
+## Провайдеры (расширяемо данными)
+
+`config/payment-providers.json` — список провайдеров и их полей (`text` / `secret` /
+`select`, опционально `check`). Новый провайдер = новая запись, UI админки не правится.
+Сейчас: `crypto` (кошельки через подпись) и `paypal` (Client ID, Secret, live/sandbox,
+кнопка «Проверить» = OAuth `client_credentials` к api-m.paypal.com / sandbox).
+Секреты пишутся только в `$DATA_DIR/secrets.json` (chmod 600, вне git), наружу —
+маска; пустое поле при сохранении = оставить прежнее значение.
+
+## Деплой: контейнер, ghcr + Watchtower (основной путь)
+
+`deploy/pay-page/server.mjs` — Node stdlib, те же обработчики из `functions/`,
+KV = `$DATA_DIR/kv.json`. CI: `ci` (тесты + smoke образа) → на master
+`pay-image` пушит `ghcr.io/mytab0r/pay-pxbt:latest` → Watchtower на VPS обновляет.
+
+Однократно на VPS (рядом с `docker-compose.yml` из этой папки):
+1. `.env`: `OWNER_EMAIL`, `CF_ACCESS_TEAM_DOMAIN` (`<team>.cloudflareaccess.com`),
+   `CF_ACCESS_AUD` (AUD-тег приложения Access), `PAY_API_TOKEN` (для создания счетов ботом).
+2. `docker compose up -d`; Cloudflare Tunnel/прокси: `pay.pxbt.app` → `127.0.0.1:8090`.
+3. Zero Trust → Access → приложение `pay.pxbt.app/admin`, `/api/admin/*`, `/api/claim/*`,
+   policy = email владельца. Сервер сам проверяет JWT Access (RS256, aud, iss, exp, email);
+   без настроенных `CF_ACCESS_*` админка закрыта (403).
+
+Создать счёт: `curl -X POST https://pay.pxbt.app/api/invoice -H "authorization: Bearer $PAY_API_TOKEN" -d '{"amount":1}'`.
+
+Ограничение (ponytail): один и тот же перевод может закрыть два счёта на одинаковую
+сумму, созданных до него. Добавить реестр использованных tx, когда счетов станет >1 одновременно.
+
 ## Доступ к /admin
 
 Cloudflare Zero Trust → Access → приложение на `pay.pxbt.app/admin` (и
 `/api/admin/*` + `/api/claim/*`): policy = email владельца. Подпись кошелька —
 второй фактор (адрес не сохранится без валидной подписи).
 
-## Деплой (однократно, из CF dashboard, без wrangler-секрета на сервере)
+## Альтернатива: CF Pages (без контейнера)
 
 1. dash.cloudflare.com → Workers & Pages → Create → Pages → Connect to Git →
    репозиторий `mytab0r/aicontent-factory`, ветка с этой папкой как root

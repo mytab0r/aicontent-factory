@@ -5,7 +5,11 @@
  */
 import { PAIRS } from '../lib/config.js';
 
-export async function onRequestGet() {
+// JSON внутрь <script>: экранируем '<', чтобы данные не закрыли тег
+const inline = (v) => JSON.stringify(v).replace(/</g, '\\u003c');
+
+export async function onRequestGet({ env } = {}) {
+  const providers = (env && env.PROVIDERS) || [];
   const html = `<!doctype html>
 <html lang="ru"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -33,9 +37,11 @@ export async function onRequestGet() {
  <div id="pairs"></div>
  <button class="primary" onclick="savePairs()">Сохранить</button>
 </div>
+<div id="providers"></div>
 <div id="log"></div>
 <script>
-const PAIRS = ${JSON.stringify(PAIRS)};
+const PAIRS = ${inline(PAIRS)};
+const PROVIDERS = ${inline(providers)};
 const CHAINS = { evm: 'evm', tron: 'tron', solana: 'solana' };
 const log = (m) => document.getElementById('log').textContent += m + '\\n';
 
@@ -82,6 +88,55 @@ async function savePairs() {
   const r = await fetch('/api/admin/config', { method: 'PUT', headers: {'content-type':'application/json'}, body: JSON.stringify({ pairs }) });
   log(r.ok ? '✔ пары сохранены' : '✘ ошибка сохранения');
 }
+// Провайдеры с полями описаны данными (config/payment-providers.json): новый провайдер = новая запись, UI не трогаем.
+function renderProviders(list) {
+  const root = document.getElementById('providers');
+  root.textContent = '';
+  for (const p of list.filter((x) => x.fields)) {
+    const card = document.createElement('div'); card.className = 'card';
+    const h = document.createElement('h3'); h.textContent = p.title; card.appendChild(h);
+    for (const f of p.fields) {
+      const lab = document.createElement('label'); lab.className = 'pairline'; lab.textContent = f.label + ' ';
+      let inp;
+      if (f.type === 'select') {
+        inp = document.createElement('select');
+        for (const o of f.options) { const op = document.createElement('option'); op.value = op.textContent = o; inp.appendChild(op); }
+        inp.value = p.values[f.key] || f.options[0];
+      } else {
+        inp = document.createElement('input');
+        inp.type = f.type === 'secret' ? 'password' : 'text';
+        if (f.type === 'secret') { inp.value = ''; inp.placeholder = p.values[f.key] ? p.values[f.key] + ' (сохранён; пусто = не менять)' : 'не задан'; }
+        else inp.value = p.values[f.key] || '';
+      }
+      inp.id = 'pv_' + p.id + '_' + f.key; inp.autocomplete = 'off';
+      lab.appendChild(inp); card.appendChild(lab);
+    }
+    const save = document.createElement('button'); save.className = 'primary'; save.textContent = 'Сохранить';
+    save.onclick = async () => {
+      const body = {};
+      for (const f of p.fields) body[f.key] = document.getElementById('pv_' + p.id + '_' + f.key).value;
+      const r = await fetch('/api/admin/providers/' + p.id, { method: 'PUT', headers: {'content-type':'application/json'}, body: JSON.stringify(body) });
+      const j = await r.json();
+      log(r.ok ? '✔ ' + p.title + ': сохранено' : '✘ ' + p.title + ': ' + (j.error || r.status));
+      if (r.ok) loadProviders();
+    };
+    card.appendChild(save);
+    if (p.check) {
+      const chk = document.createElement('button'); chk.textContent = 'Проверить';
+      chk.onclick = async () => {
+        const j = await (await fetch('/api/admin/providers/' + p.id + '/check', { method: 'POST' })).json();
+        log(j.ok ? '✔ ' + p.title + ': ключи рабочие' + (j.mode ? ' (' + j.mode + ')' : '') : '✘ ' + p.title + ': ' + j.error);
+      };
+      card.appendChild(chk);
+    }
+    root.appendChild(card);
+  }
+}
+async function loadProviders() {
+  const r = await fetch('/api/admin/providers');
+  if (r.ok) renderProviders(await r.json());
+}
+renderProviders(PROVIDERS);
 loadConfig();
 </script>
 </body></html>`;

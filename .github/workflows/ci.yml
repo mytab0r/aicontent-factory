@@ -20,10 +20,24 @@ jobs:
             echo "=== $f ==="
             python "$f"
           done
-      - name: run pay.pxbt.app tests (wallet-verify + api)
+      - name: run pay.pxbt.app tests (wallet-verify + api + server)
         run: |
           set -e
           for f in test/test_*.mjs; do
             echo "=== $f ==="
             node "$f"
           done
+
+  pay-image-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: build + run pay image, healthz 200, /admin 403 без CF Access
+        run: |
+          set -e
+          docker build -q -f deploy/pay-page/Dockerfile -t pay-smoke .
+          docker run -d --name pay -p 8080:8080 pay-smoke
+          for i in $(seq 1 20); do curl -fs http://127.0.0.1:8080/healthz && break; sleep 1; done
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/healthz)" = 200
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/admin)" = 403
+          docker logs pay

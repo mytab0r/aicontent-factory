@@ -1,9 +1,12 @@
 /**
  * GET /i/<id> — страница клиента: сумма, выбор включённой пары, адрес, QR, «только эта сеть».
  */
-import { CONFIG_KEY, enabledPairs, defaultConfig } from '../../lib/config.js';
+import { CONFIG_KEY, enabledPairs, defaultConfig } from '../lib/config.js';
 
 const QR_JS = 'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js';
+
+const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const inline = (v) => JSON.stringify(v).replace(/</g, '\\u003c');
 
 export async function onRequestGet({ env, params }) {
   const raw = await env.KV.get('invoice:' + params.id);
@@ -14,7 +17,7 @@ export async function onRequestGet({ env, params }) {
   const html = `<!doctype html>
 <html lang="ru"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Оплата ${inv.amount} ${inv.currency}</title>
+<title>Оплата ${esc(inv.amount)} ${esc(inv.currency)}</title>
 <script src="${QR_JS}"></script>
 <style>
  body{font-family:system-ui,sans-serif;max-width:520px;margin:0 auto;padding:16px;background:#0f1115;color:#e6e6e6}
@@ -31,8 +34,8 @@ export async function onRequestGet({ env, params }) {
  .hidden{display:none}
 </style></head><body>
 <div class="card">
- <div class="muted">Счёт ${params.id}${inv.memo ? ' · ' + inv.memo : ''}</div>
- <div class="amount">${inv.amount} ${inv.currency}</div>
+ <div class="muted">Счёт ${esc(params.id)}${inv.memo ? ' · ' + esc(inv.memo) : ''}</div>
+ <div class="amount">${esc(inv.amount)} ${esc(inv.currency)}</div>
 </div>
 <div class="card">
  <h3>Выберите способ оплаты</h3>
@@ -46,8 +49,8 @@ export async function onRequestGet({ env, params }) {
  </div>
 </div>
 <script>
-const PAIRS = ${JSON.stringify(pairs)};
-const INV_ID = ${JSON.stringify(params.id)};
+const PAIRS = ${inline(pairs)};
+const INV_ID = ${inline(params.id)};
 let sel = null;
 const el = (h) => { const d = document.createElement('div'); d.innerHTML = h; return d; };
 const box = document.getElementById('pairs');

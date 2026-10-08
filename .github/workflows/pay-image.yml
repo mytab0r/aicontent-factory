@@ -1,0 +1,32 @@
+name: pay-image
+# ghcr.io/mytab0r/pay-pxbt:latest — только после зелёного ci на master; Watchtower на VPS подтянет.
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [master, main]
+jobs:
+  build-push:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/pay-page/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/pay-pxbt:latest
+            ghcr.io/${{ github.repository_owner }}/pay-pxbt:sha-${{ github.event.workflow_run.head_sha }}
