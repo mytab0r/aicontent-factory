@@ -112,6 +112,8 @@ const CHECKS = { paypal_oauth: paypalCheck };
 
 export function makeServer({ dataDir, ownerEmail, apiToken, accessTeam, accessAud }) {
   fs.mkdirSync(dataDir, { recursive: true });
+  // fail fast: root-owned bind-mount иначе даёт EACCES/500 на первой записи
+  try { fs.accessSync(dataDir, fs.constants.W_OK); } catch { throw new Error(`DATA_DIR ${dataDir} не доступен на запись uid ${process.getuid?.()}: chown 1000:1000 на хосте`); }
   const kv = new FileKV(path.join(dataDir, 'kv.json'));
   const secretsFile = path.join(dataDir, 'secrets.json');
   const providers = JSON.parse(fs.readFileSync(PROVIDERS_FILE, 'utf8'));

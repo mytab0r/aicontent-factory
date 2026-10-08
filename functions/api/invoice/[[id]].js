@@ -3,10 +3,11 @@
  * POST /api/invoice/<id>/pay     -> зафиксировать выбор пары
  * GET /api/invoice/<id>/status   -> проверка оплаты по блокчейну
  *
- * Инвойсы в KV: invoice:<id> = { amount, currency, memo, pair, status, createdMs, paid: {...} }
+ * Инвойсы в KV: invoice:<id> = { amount, dueMicro, currency, memo, pair, status, createdMs, paid: {...} }
+ * Реестр tx: paidtx:<chain>:<tx> = <invoice id> — один перевод закрывает только один счёт.
  */
-import { CONFIG_KEY, enabledPairs, defaultConfig } from '../../lib/config.js';
-import { checkPayment } from '../../lib/paycheck.js';
+import { CONFIG_KEY, PAIRS, enabledPairs, defaultConfig } from '../../lib/config.js';
+import { findPayments } from '../../lib/paycheck.js';
 
 const INVOICE_TTL = 60 * 60 * 24 * 30; // 30 дней
 
@@ -52,12 +53,17 @@ export async function onRequestPut({ env, params }) {
   if (inv.paid) return json({ status: 'paid', ...inv.paid });
   if (!inv.pair) return json({ error: 'pair not selected' }, 400);
   try {
-    const res = await checkPayment(inv.pair.chain, inv.pair.address, inv.amount, inv.createdMs);
-    if (res.found) {
+    const pair = { ...PAIRS[inv.pair.id], address: inv.pair.address };
+    for (const m of await findPayments(pair, pair.address, inv.dueMicro, inv.createdMs)) {
+      // ponytail: get+put не атомарны в CF KV; в контейнере (FileKV, один процесс) гонки нет.
+      const key = `paidtx:${pair.chain}:${m.tx}`;
+      const owner = await env.KV.get(key);
+      if (owner && owner !== params.id) continue; // tx уже закрыл другой счёт
+      await env.KV.put(key, params.id);
       inv.status = 'paid';
-      inv.paid = res;
+      inv.paid = { found: true, ...m };
       await env.KV.put('invoice:' + params.id, JSON.stringify(inv), { expirationTtl: INVOICE_TTL });
-      return json({ status: 'paid', ...res });
+      return json({ status: 'paid', ...inv.paid });
     }
     return json({ status: 'pending' });
   } catch (e) {

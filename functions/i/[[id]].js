@@ -36,6 +36,7 @@ export async function onRequestGet({ env, params }) {
 <div class="card">
  <div class="muted">Счёт ${esc(params.id)}${inv.memo ? ' · ' + esc(inv.memo) : ''}</div>
  <div class="amount">${esc(inv.amount)} ${esc(inv.currency)}</div>
+ <div class="muted">Переведите сумму ТОЧНО до последнего знака — по ней счёт находит ваш платёж.</div>
 </div>
 <div class="card">
  <h3>Выберите способ оплаты</h3>
@@ -78,7 +79,7 @@ document.getElementById('check').onclick = async () => {
   st.textContent = 'Проверяем блокчейн…';
   const r = await fetch('/api/invoice/' + INV_ID, { method: 'PUT' });
   const j = await r.json();
-  if (j.status === 'paid') { st.className = 'ok'; st.textContent = '✅ Оплата найдена: ' + j.amount + ' USDT, tx ' + j.tx; }
+  if (j.status === 'paid') { st.className = 'ok'; st.textContent = '✅ Оплата найдена: ' + j.amount + ' ' + sel.asset + ', tx ' + j.tx; }
   else if (j.status === 'pending') st.textContent = 'Пока не найдено. Перевод может занять ~1 минуту — проверьте ещё раз.';
   else st.textContent = 'Ошибка: ' + (j.error || 'неизвестная');
 };

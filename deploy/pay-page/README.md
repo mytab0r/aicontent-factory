@@ -16,7 +16,9 @@
   `@noble/{secp256k1,ed25519,hashes}` (MIT, `functions/vendor/`), никаких
   внешних npm-зависимостей.
 - `functions/lib/config.js` — конфиг в KV (`config`): публичные адреса +
-  включённые пары. `PAIRS` — известные пары монета+сеть.
+  включённые пары. `PAIRS` — известные пары монета+сеть с контрактом и decimals
+  (сверены `decimals()` on-chain): USDT на Tron/Ethereum/Polygon/Arbitrum (6), USDT BSC (18),
+  USDC на Base (6; нативного USDT в Base нет).
 - `functions/lib/paycheck.js` — проверка оплаты: Tronscan
   `token_trc20/transfers` (аналог autopilot/crypto.py), для EVM —
   `eth_getLogs` Transfer(to=адрес) на публичных RPC publicnode.com;
@@ -52,15 +54,21 @@ KV = `$DATA_DIR/kv.json`. CI: `ci` (тесты + smoke образа) → на ma
 Однократно на VPS (рядом с `docker-compose.yml` из этой папки):
 1. `.env`: `OWNER_EMAIL`, `CF_ACCESS_TEAM_DOMAIN` (`<team>.cloudflareaccess.com`),
    `CF_ACCESS_AUD` (AUD-тег приложения Access), `PAY_API_TOKEN` (для создания счетов ботом).
-2. `docker compose up -d`; Cloudflare Tunnel/прокси: `pay.pxbt.app` → `127.0.0.1:8090`.
+2. `mkdir -p data && sudo chown 1000:1000 data` (процесс в контейнере — uid 1000 `node`;
+   root-owned каталог = контейнер не стартует с ошибкой про chown), затем `docker compose up -d`; Cloudflare Tunnel/прокси: `pay.pxbt.app` → `127.0.0.1:8090`.
 3. Zero Trust → Access → приложение `pay.pxbt.app/admin`, `/api/admin/*`, `/api/claim/*`,
    policy = email владельца. Сервер сам проверяет JWT Access (RS256, aud, iss, exp, email);
    без настроенных `CF_ACCESS_*` админка закрыта (403).
 
 Создать счёт: `curl -X POST https://pay.pxbt.app/api/invoice -H "authorization: Bearer $PAY_API_TOKEN" -d '{"amount":1}'`.
 
-Ограничение (ponytail): один и тот же перевод может закрыть два счёта на одинаковую
-сумму, созданных до него. Добавить реестр использованных tx, когда счетов станет >1 одновременно.
+Сопоставление оплаты: адрес у всех счетов общий, поэтому сумма счёта уникальна —
+к сумме (в центах) добавляется случайный хвост 1..999 микроюнитов (`1.000437`), клиент
+видит и платит ровно её, проверка — точное совпадение в 6-знаковых микроюнитах.
+Каждый засчитанный tx пишется в KV `paidtx:<chain>:<tx>` = id счёта: один перевод закрывает
+только один счёт. Недоплата/переплата/перевод без хвоста счёт не закрывают — разбор вручную.
+Ponytail: хвостов 999 на одну базовую сумму; коллизия возможна при сотнях одновременно
+открытых счетов на одну сумму — тогда перейти на уникальный адрес на счёт.
 
 ## Доступ к /admin
 
