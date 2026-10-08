@@ -52,7 +52,10 @@ const b64u = (s) => Buffer.from(s, 'base64url');
 let certCache = { at: 0, keys: [] };
 /** Cloudflare Access JWT -> email владельца или null. */
 async function accessEmail(request, { team, aud, owner }) {
-  if (!team || !aud || !owner) return null;
+  // CF_ACCESS_AUD может быть списком через запятую: JWT несёт aud того приложения
+  // Access, которым закрыт конкретный путь (/admin, /api/admin, /api/claim).
+  const audsEnv = String(aud || '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (!team || !audsEnv.length || !owner) return null;
   const cookie = (request.headers.get('cookie') || '').match(/CF_Authorization=([^;]+)/);
   const token = request.headers.get('cf-access-jwt-assertion') || (cookie && cookie[1]);
   if (!token) return null;
@@ -70,7 +73,7 @@ async function accessEmail(request, { team, aud, owner }) {
     const key = await crypto.subtle.importKey('jwk', jwk, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']);
     const ok = await crypto.subtle.verify('RSASSA-PKCS1-v1_5', key, b64u(s), new TextEncoder().encode(h + '.' + p));
     const auds = [].concat(claims.aud);
-    if (!ok || !auds.includes(aud) || claims.iss !== `https://${team}` || !(claims.exp * 1000 > Date.now())) return null;
+    if (!ok || !auds.some((x) => audsEnv.includes(x)) || claims.iss !== `https://${team}` || !(claims.exp * 1000 > Date.now())) return null;
     return String(claims.email || '').toLowerCase() === owner.toLowerCase() ? claims.email : null;
   } catch {
     return null;
