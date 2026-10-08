@@ -24,7 +24,7 @@ const claims = (email, extra = {}) => ({ email, aud: [AUD], iss: 'https://' + TE
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pay-'));
 const OWNER = 'owner@example.com';
-const srv = makeServer({ dataDir: dir, ownerEmail: OWNER, apiToken: 'tok123', accessTeam: TEAM, accessAud: AUD });
+const srv = makeServer({ dataDir: dir, ownerEmail: OWNER, apiToken: 'tok123', accessTeam: TEAM, accessAud: AUD, proxySecret: 'sso-secret-123' });
 await new Promise((r) => srv.listen(0, '127.0.0.1', r));
 const base = 'http://127.0.0.1:' + srv.address().port;
 
@@ -54,6 +54,10 @@ try {
   assert.strictEqual((await req('/admin', { headers: H(jwt(claims(OWNER), 'k1', evil)) })).status, 403, 'подпись');
   assert.strictEqual((await req('/admin', { headers: { cookie: 'CF_Authorization=' + jwt(claims(OWNER)) } })).status, 200, 'cookie CF_Authorization');
   assert.strictEqual((await req('/api/claim/nonce', { method: 'POST', body: '{"chain":"evm"}' })).status, 403);
+  // Zoraxy SSO: верный секрет пускает, неверный/пустой нет
+  assert.strictEqual((await req('/admin', { headers: { 'x-pay-proxy-auth': 'sso-secret-123' } })).status, 200, 'sso ok');
+  assert.strictEqual((await req('/admin', { headers: { 'x-pay-proxy-auth': 'wrong' } })).status, 403, 'sso wrong');
+  assert.strictEqual((await req('/admin', { headers: { 'x-pay-proxy-auth': '' } })).status, 403, 'sso empty');
   const adm = await req('/admin', { headers: owner });
   assert.strictEqual(adm.status, 200);
   assert.match(await adm.text(), /PayPal/, 'админка рендерит провайдеров из данных');
