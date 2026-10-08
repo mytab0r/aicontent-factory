@@ -8,12 +8,22 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
       - name: install test deps
         run: pip install pillow gradio_client
-      - name: run tests
+      - name: run python tests
         run: |
           set -e
           for f in pipeline/test_*.py; do
             echo "=== $f ==="
             python "$f"
+          done
+      - name: run pay.pxbt.app tests (wallet-verify + api)
+        run: |
+          set -e
+          for f in test/test_*.mjs; do
+            echo "=== $f ==="
+            node "$f"
           done
