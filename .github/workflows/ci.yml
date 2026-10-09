@@ -51,7 +51,7 @@ jobs:
           for i in $(seq 1 20); do curl -fs $H/healthz && break; sleep 1; done
           test "$(curl -s -o /dev/null -w '%{http_code}' $H/healthz)" = 200
           test "$(curl -s -o /dev/null -w '%{http_code}' $H/admin)" = 403
-          id=$(curl -fs -X POST $H/api/invoice -H 'authorization: Bearer smoketok' -d '{"amount":1}' | sed -n 's/.*"id":"\([a-z0-9]*\)".*/\1/p')
+          id=$(curl -fs -X POST $H/api/invoice -H "authorization: Bearer $TOK" -d '{"amount":1}' | sed -n 's/.*"id":"\([a-z0-9]*\)".*/\1/p')
           test -n "$id"
           test "$(curl -s -o /dev/null -w '%{http_code}' $H/i/$id)" = 200
           sudo grep -q "invoice:$id" data/kv.json
