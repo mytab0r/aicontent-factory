@@ -35,6 +35,8 @@ jobs:
       - name: build + run pay image (bind-mount ./data как в compose), healthz, /admin 403, запись счёта
         run: |
           set -e
+          # self-hosted DooD: контейнеры живут на хосте, а не в раннере. Уникальное имя + уборка + доступ по IP
+          N=pay-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT; trap "docker rm -f $N >/dev/null 2>&1 || true" EXIT
           docker build -q -f deploy/pay-page/Dockerfile -t pay-smoke .
           # root-owned каталог: контейнер должен упасть сразу с понятной ошибкой, а не 500 позже
           sudo mkdir -p /tmp/pay-root && sudo chown root:root /tmp/pay-root
@@ -43,12 +45,13 @@ jobs:
           grep -q 'chown 1000:1000' err.txt
           # путь из README: mkdir + chown 1000:1000
           mkdir -p data && sudo chown 1000:1000 data
-          docker run -d --name pay -p 8080:8080 -v "$PWD/data:/data" -e PAY_API_TOKEN=smoketok pay-smoke
-          for i in $(seq 1 20); do curl -fs http://127.0.0.1:8080/healthz && break; sleep 1; done
-          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/healthz)" = 200
-          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/admin)" = 403
-          id=$(curl -fs -X POST http://127.0.0.1:8080/api/invoice -H 'authorization: Bearer smoketok' -d '{"amount":1}' | sed -n 's/.*"id":"\([a-z0-9]*\)".*/\1/p')
+          docker run -d --name $N -v "$PWD/data:/data" -e PAY_API_TOKEN=smoketok pay-smoke
+          H=http://$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' $N):8080
+          for i in $(seq 1 20); do curl -fs $H/healthz && break; sleep 1; done
+          test "$(curl -s -o /dev/null -w '%{http_code}' $H/healthz)" = 200
+          test "$(curl -s -o /dev/null -w '%{http_code}' $H/admin)" = 403
+          id=$(curl -fs -X POST $H/api/invoice -H 'authorization: Bearer smoketok' -d '{"amount":1}' | sed -n 's/.*"id":"\([a-z0-9]*\)".*/\1/p')
           test -n "$id"
-          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/i/$id)" = 200
+          test "$(curl -s -o /dev/null -w '%{http_code}' $H/i/$id)" = 200
           sudo grep -q "invoice:$id" data/kv.json
-          docker logs pay
+          docker logs $N
