@@ -12,19 +12,7 @@ jobs:
       contents: read
       packages: write
     steps:
-      # torch cu128 (~6 GB распакованный) не влезает в стандартный runner (~14 GB free)
-      - name: free disk space
-        uses: jlumbroso/free-disk-space@main
-        with:
-          tool-cache: true
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: true
-          swap-storage: true
       - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -35,5 +23,8 @@ jobs:
           context: deploy/gpu-pc
           push: true
           tags: ghcr.io/mytab0r/ace-step-cu128:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      # ponytail: build on PC docker (self-hosted); layer cache stays local.
+      # Remove only dangling layers and build cache older than 7d; live images untouched.
+      - name: prune garbage
+        if: always()
+        run: docker image prune -f && docker builder prune -f --filter until=168h
