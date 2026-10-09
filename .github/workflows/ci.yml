@@ -2,7 +2,7 @@ name: ci
 on: [push, pull_request]
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, pc]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -29,7 +29,7 @@ jobs:
           done
 
   pay-image-smoke:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, pc]
     steps:
       - uses: actions/checkout@v4
       - name: build + run pay image (bind-mount ./data как в compose), healthz, /admin 403, запись счёта

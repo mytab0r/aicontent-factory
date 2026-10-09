@@ -7,7 +7,7 @@ on:
         default: "loop"
 jobs:
   loop:
-    runs-on: [self-hosted, pc-acf]
+    runs-on: [self-hosted, pc]
     timeout-minutes: 120
     steps:
       - name: check comfy
