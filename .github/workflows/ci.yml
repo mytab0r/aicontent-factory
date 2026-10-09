@@ -16,7 +16,6 @@ jobs:
       - name: run python tests
         run: |
           set -e
-          TOK=smoke-$GITHUB_RUN_ID  # не литерал: редактор секретов агента заменял его на ***
           for f in pipeline/test_*.py; do
             echo "=== $f ==="
             python "$f"
@@ -37,6 +36,7 @@ jobs:
         run: |
           set -e
           # self-hosted DooD: контейнеры живут на хосте, а не в раннере. Уникальное имя + уборка + доступ по IP
+          TOK=smoke-$GITHUB_RUN_ID  # не литерал: редактор секретов агента заменял его на ***; в этом job, не в test
           N=pay-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT; trap "docker rm -f $N >/dev/null 2>&1 || true" EXIT
           docker build -q -f deploy/pay-page/Dockerfile -t pay-smoke .
           # root-owned каталог: контейнер должен упасть сразу с понятной ошибкой, а не 500 позже
