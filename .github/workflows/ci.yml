@@ -25,13 +25,17 @@ jobs:
           sudo apt-get update -qq || true
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -f -qq ffmpeg || true
           # прерванный apt оставил битые (нулевые) .so; apt-reinstall блокируется ошибкой
-          # postinst fontconfig — качаем .deb напрямую и ставим dpkg -i, переопределяя битые файлы
+          # postinst fontconfig — переустанавливаем ВСЕ пакеты с битыми файлами разом:
+          # debsums-подход дорог, вместо него md5sum -c по всем lib* и reinstall через
+          # apt-get --reinstall (dpkg ставит файлы до postinst, так что fontconfig-ошибка
+          # уже не мешает восстановлению файлов).
           cd /tmp
-          for p in libdrm2 libfontconfig1 libavutil58 libavcodec60 libavformat60 libswscale7 libswresample4 libavfilter9 libavdevice60; do
-            apt-get download "$p" 2>/dev/null || true
-          done
-          sudo dpkg -i --force-overwrite ./*.deb || true
-          # ffmpeg мог остаться unpacked из-за fontconfig — финальный прогон
+          sudo dpkg -C | awk '/^ [a-z0-9+.-]+/ {print $NF}' | sort -u > /tmp/broken.txt || true
+          echo "broken packages:"; cat /tmp/broken.txt
+          if [ -s /tmp/broken.txt ]; then
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --reinstall $(cat /tmp/broken.txt) || \
+              (xargs apt-get download < /tmp/broken.txt 2>/dev/null || true; sudo dpkg -i --force-overwrite ./*.deb || true)
+          fi
           sudo DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
           cd "$GITHUB_WORKSPACE"
           command -v ffmpeg
