@@ -12,7 +12,7 @@ jobs:
         with:
           node-version: "20"
       - name: install test deps
-        run: pip install pillow gradio_client
+        run: pip install pillow gradio_client numpy
       - name: run python tests
         run: |
           set -e
