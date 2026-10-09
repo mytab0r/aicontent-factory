@@ -18,8 +18,13 @@ jobs:
           # fontconfig postinst падает на regenerating fonts cache в контейнере без /proc
           # монтирований для fontconfig — не критично для ffmpeg CLI, чиним форсом.
           sudo dpkg --configure -a || true
+          # fontconfig postinst (fc-cache) падает в раннер-контейнере — чиним окружение и повторяем
+          sudo mkdir -p /var/cache/fontconfig /usr/share/fonts /var/lib/dpkg/updates
+          sudo fc-cache -f -v >/dev/null 2>&1 || true
+          sudo DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
           sudo apt-get update -qq || true
-          sudo apt-get install -y -f -qq ffmpeg fontconfig || sudo apt-get install -y -qq --reinstall fontconfig ffmpeg
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -f -qq ffmpeg || \
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --reinstall fontconfig ffmpeg || true
           command -v ffmpeg
           ffmpeg -version | head -1
           pip install pillow gradio_client numpy
