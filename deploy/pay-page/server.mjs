@@ -6,7 +6,8 @@
  * Админка (/admin, /api/admin/*, /api/claim/*): только владелец через Cloudflare Access —
  * JWT из Cf-Access-Jwt-Assertion проверяется по ключам команды (RS256, aud, iss, exp, email).
  * Без CF_ACCESS_TEAM_DOMAIN/CF_ACCESS_AUD админка закрыта (fail closed).
- * Env: PORT, DATA_DIR, OWNER_EMAIL, CF_ACCESS_TEAM_DOMAIN, CF_ACCESS_AUD, PAY_API_TOKEN.
+ * Либо Zoraxy SSO: заголовок X-Pay-Proxy-Auth == PROXY_AUTH_SECRET (Zoraxy шлёт его только на пути под SSO).
+ * Env: PORT, DATA_DIR, OWNER_EMAIL, CF_ACCESS_TEAM_DOMAIN, CF_ACCESS_AUD, PAY_API_TOKEN, PROXY_AUTH_SECRET.
  */
 import http from 'node:http';
 import fs from 'node:fs';
@@ -113,7 +114,7 @@ async function paypalCheck(v) {
 }
 const CHECKS = { paypal_oauth: paypalCheck };
 
-export function makeServer({ dataDir, ownerEmail, apiToken, accessTeam, accessAud }) {
+export function makeServer({ dataDir, ownerEmail, apiToken, accessTeam, accessAud, proxySecret }) {
   fs.mkdirSync(dataDir, { recursive: true });
   // fail fast: root-owned bind-mount иначе даёт EACCES/500 на первой записи
   try { fs.accessSync(dataDir, fs.constants.W_OK); } catch { throw new Error(`DATA_DIR ${dataDir} не доступен на запись uid ${process.getuid?.()}: chown 1000:1000 на хосте`); }
@@ -141,7 +142,9 @@ export function makeServer({ dataDir, ownerEmail, apiToken, accessTeam, accessAu
       return h ? h(ctx({ id: mm[1] })) : json({ error: 'method' }, 405);
     }
 
-    const isOwner = !!(await accessEmail(request, auth));
+    // Zoraxy SSO (логин/пароль) перед админкой: Zoraxy добавляет секретный заголовок только после входа
+    const viaSso = !!proxySecret && safeEq(request.headers.get('x-pay-proxy-auth') || '', proxySecret);
+    const isOwner = viaSso || !!(await accessEmail(request, auth));
     const bearer = (request.headers.get('authorization') || '').replace(/^Bearer /, '');
     if (p === '/api/invoice' && m === 'POST') {
       if (!isOwner && !(apiToken && safeEq(bearer, apiToken))) return json({ error: 'forbidden' }, 403);
@@ -219,6 +222,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     apiToken: e.PAY_API_TOKEN,
     accessTeam: e.CF_ACCESS_TEAM_DOMAIN,
     accessAud: e.CF_ACCESS_AUD,
+    proxySecret: e.PROXY_AUTH_SECRET,
   });
   srv.listen(Number(e.PORT || 8080), '0.0.0.0', () => console.log('pay.pxbt.app listening on', e.PORT || 8080));
 }
