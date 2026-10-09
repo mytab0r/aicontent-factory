@@ -1,0 +1,56 @@
+name: oneoff-loop-generate
+on:
+  workflow_dispatch:
+    inputs:
+      image_name:
+        description: "run artifact name prefix"
+        default: "loop"
+jobs:
+  loop:
+    runs-on: [self-hosted, pc-acf]
+    timeout-minutes: 120
+    steps:
+      - name: check comfy
+        run: |
+          curl -s -m 10 http://comfyui:8188/system_stats || (docker ps --format '{{.Names}}' && exit 1)
+      - name: render loop clip
+        run: |
+          mkdir -p out
+          curl -s -m 10 http://comfyui:8188/system_stats
+          # сам рендер запускает loop_generate внутри раннера: репо чекаутим ниже
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - name: deps
+        run: |
+          uv venv .venv
+          uv pip install --python .venv/bin/python numpy
+      - name: generate
+        run: |
+          mkdir -p runs/loopgen/raw
+          # тестовая картинка: 832x480 серый градиент с шумом (синтетика, без 02_cover)
+          .venv/bin/python - <<'PY'
+          import zlib, struct, random
+          random.seed(7)
+          w, h = 832, 480
+          rows = []
+          for y in range(h):
+              row = bytearray([0])
+              for x in range(w):
+                  v = 128 + int(40 * ((x + y) % 256) / 256) + random.randint(-6, 6)
+                  row += bytes([max(0, min(255, v)), v // 2 + 64, v // 3 + 85])
+              rows.append(bytes(row))
+          raw = b"".join(rows)
+          def chunk(tag, data):
+              c = struct.pack(">I", len(data)) + tag + data
+              return c + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+          png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+                 + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+          open("runs/loopgen/raw/source.png", "wb").write(png)
+          print("source.png written", len(png))
+          PY
+          .venv/bin/python pipeline/loop_generate.py --image runs/loopgen/raw/source.png --out-dir runs/loopgen/raw --endpoint http://comfyui:8188 --attempts 1 --seed 42
+      - name: upload frames artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: loopgen-frames
+          path: runs/loopgen/raw/
