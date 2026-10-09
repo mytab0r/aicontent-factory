@@ -25,19 +25,27 @@ jobs:
           sudo apt-get update -qq || true
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -f -qq ffmpeg || true
           # прерванный apt оставил битые (нулевые) .so; apt-reinstall блокируется ошибкой
-          # postinst fontconfig — переустанавливаем ВСЕ пакеты с битыми файлами разом:
-          # debsums-подход дорог, вместо него md5sum -c по всем lib* и reinstall через
-          # apt-get --reinstall (dpkg ставит файлы до postinst, так что fontconfig-ошибка
-          # уже не мешает восстановлению файлов).
-          cd /tmp
-          sudo dpkg -C | awk '/^ [a-z0-9+.-]+/ {print $NF}' | sort -u > /tmp/broken.txt || true
-          echo "broken packages:"; cat /tmp/broken.txt
-          if [ -s /tmp/broken.txt ]; then
-            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --reinstall $(cat /tmp/broken.txt) || \
-              (xargs apt-get download < /tmp/broken.txt 2>/dev/null || true; sudo dpkg -i --force-overwrite ./*.deb || true)
+          # postinst fontconfig. dpkg -V находит пакеты с повреждёнными файлами (missing/
+          # checksum fail), ставим их .deb напрямую (dpkg распаковывает файлы ДО postinst,
+          # так что fontconfig-ошибка файлам не мешает).
+          broken=""
+          for p in $(dpkg -l | awk '/^ii/{print $2}'); do
+            if ! sudo dpkg -V "$p" >/dev/null 2>&1; then
+              case "$p" in *:amd64) p="${p%:amd64}";; esac
+              broken="$broken $p"
+            fi
+          done
+          echo "broken:$broken"
+          if [ -n "$broken" ]; then
+            cd /tmp
+            # по одному: битые пакеты не должны остановить чинить остальные
+            for p in $broken; do
+              apt-get download "$p" >/dev/null 2>&1 && sudo dpkg -i --force-overwrite "./*.deb" >/dev/null 2>&1 || echo "skip $p"
+              sudo rm -f ./*.deb
+            done
+            cd "$GITHUB_WORKSPACE"
           fi
           sudo DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
-          cd "$GITHUB_WORKSPACE"
           command -v ffmpeg
           ffmpeg -version | head -1
           pip install pillow gradio_client numpy
