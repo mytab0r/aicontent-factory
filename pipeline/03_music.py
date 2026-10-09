@@ -212,6 +212,10 @@ def main() -> None:
         if scene is None:
             raise SystemExit(f"dd scene not found: {scene_name!r}")
         genre_name, prompt = scene["name"], scene["music_prompt"]
+    elif os.environ.get("GENRE"):
+        # several videos/day, one per genre (workflow matrix sets GENRE)
+        genre_name = os.environ["GENRE"]
+        prompt = {**CANDIDATE_GENRE_PROMPTS, **GENRE_PROMPTS}[genre_name]
     else:
         genre_name, prompt = genre_for_mood(mood)
 
