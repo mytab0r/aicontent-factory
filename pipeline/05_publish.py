@@ -24,6 +24,26 @@ def _get_youtube_service():
     return build("youtube", "v3", credentials=creds)
 
 
+def playlist_title(genre: str) -> str:
+    return f"{genre.title()} Beats"
+
+
+def add_to_genre_playlist(youtube, video_id: str, genre: str) -> str:
+    """One playlist per genre: reuse by title, create on first use (public)."""
+    title = playlist_title(genre)
+    # ponytail: first page (50) only; paginate when channel has >50 playlists
+    items = youtube.playlists().list(part="snippet", mine=True, maxResults=50).execute().get("items", [])
+    pid = next((i["id"] for i in items if i["snippet"]["title"] == title), None)
+    if pid is None:
+        pid = youtube.playlists().insert(part="snippet,status", body={
+            "snippet": {"title": title, "description": f"{genre} - instrumental, AI-generated"},
+            "status": {"privacyStatus": "public"},
+        }).execute()["id"]
+    youtube.playlistItems().insert(part="snippet", body={"snippet": {
+        "playlistId": pid, "resourceId": {"kind": "youtube#video", "videoId": video_id}}}).execute()
+    return pid
+
+
 def publish(run_dir: Path) -> str:
     from googleapiclient.http import MediaFileUpload
 
@@ -61,6 +81,10 @@ def publish(run_dir: Path) -> str:
             print(f"upload {int(status.progress() * 100)}%")
 
     video_id = response["id"]
+    meta = run_dir / "music_meta.json"
+    if meta.exists():
+        genre = json.loads(meta.read_text(encoding="utf-8"))["genre"]
+        print(f"playlist -> {add_to_genre_playlist(youtube, video_id, genre)} ({genre})")
     url = f"https://www.youtube.com/watch?v={video_id}"
     print(f"OK: опубликовано {url}")
     return url

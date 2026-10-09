@@ -7,6 +7,13 @@ on:
 
 jobs:
   build:
+    # one video per genre per day, each into its own playlist (05_publish.py).
+    # Only owner-approved genres here (A/B rule); add after sample approval.
+    strategy:
+      max-parallel: 1  # single GPU
+      fail-fast: false
+      matrix:
+        genre: ["anime lofi"]
     runs-on: [self-hosted, pc]
     timeout-minutes: 45
     env:
@@ -19,8 +26,12 @@ jobs:
       # ушло в паблик 45-секундным. Фикс: 15 минут (900с), дробится
       # chunk_plan() в 03_music.py на куски <=240с под лимит ACE-Step.
       TRACK_DURATION_SEC: "900"
+      GENRE: ${{ matrix.genre }}
+      ACE_ENDPOINT: http://ace-step:7865/  # PC GPU via docker net gpu-net
     steps:
       - uses: actions/checkout@v4
+        with:
+          clean: true  # self-hosted: wipe previous runs/ so disk doesn't grow
 
       - uses: astral-sh/setup-uv@v3
 
@@ -72,6 +83,6 @@ jobs:
       - name: upload run artifact
         uses: actions/upload-artifact@v4
         with:
-          name: video-${{ github.run_id }}
+          name: video-${{ github.run_id }}-${{ strategy.job-index }}
           path: runs/*/video.mp4
           retention-days: 14

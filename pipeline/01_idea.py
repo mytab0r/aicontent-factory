@@ -20,7 +20,7 @@ def main() -> None:
         scene = dd_channel.next_scene(STATE_DIR / "dd_scene_idx.txt")
         prompt = dd_channel.idea_prompt(scene)
     else:
-        mood = next_mood()
+        mood = os.environ.get("GENRE") or next_mood()
         scene = None
         prompt = f"""Ты продюсер lo-fi/ambient YouTube-канала. Настроение трека: "{mood}".
 Верни СТРОГО JSON (без markdown, без пояснений) с полями:
