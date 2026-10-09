@@ -25,22 +25,20 @@ jobs:
           sudo apt-get update -qq || true
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -f -qq ffmpeg || true
           # прерванный apt оставил битые (нулевые) .so; apt-reinstall блокируется ошибкой
-          # postinst fontconfig. dpkg -V находит пакеты с повреждёнными файлами (missing/
-          # checksum fail), ставим их .deb напрямую (dpkg распаковывает файлы ДО postinst,
-          # так что fontconfig-ошибка файлам не мешает).
+          # postinst fontconfig. Ищем пакеты, у которых файлы в /lib и /usr нулевого размера
+          # (симптом прерванной распаковки), и ставим их .deb напрямую — dpkg распаковывает
+          # файлы ДО postinst, так что fontconfig-ошибка восстановлению не мешает.
           broken=""
-          for p in $(dpkg -l | awk '/^ii/{print $2}'); do
-            if ! sudo dpkg -V "$p" >/dev/null 2>&1; then
-              case "$p" in *:amd64) p="${p%:amd64}";; esac
-              broken="$broken $p"
-            fi
+          for f in $(sudo find /lib /usr/lib /usr/bin -xdev -type f -size 0 2>/dev/null); do
+            p=$(sudo dpkg -S "$f" 2>/dev/null | cut -d: -f1) || continue
+            broken="$broken $p"
           done
+          broken=$(echo $broken | tr ' ' '\n' | sort -u | tr '\n' ' ')
           echo "broken:$broken"
           if [ -n "$broken" ]; then
             cd /tmp
-            # по одному: битые пакеты не должны остановить чинить остальные
             for p in $broken; do
-              apt-get download "$p" >/dev/null 2>&1 && sudo dpkg -i --force-overwrite "./*.deb" >/dev/null 2>&1 || echo "skip $p"
+              apt-get download "$p" >/dev/null 2>&1 && sudo dpkg -i --force-overwrite ./*.deb >/dev/null 2>&1 || echo "skip $p"
               sudo rm -f ./*.deb
             done
             cd "$GITHUB_WORKSPACE"
