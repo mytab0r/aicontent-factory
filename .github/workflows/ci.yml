@@ -14,6 +14,8 @@ jobs:
       - name: install test deps
         run: |
           set -e
+          # self-hosted runner: чиним сломанное dpkg-состояние после прерванных прогонов
+          sudo dpkg --configure -a || true
           command -v ffmpeg >/dev/null || (apt-get update -qq && apt-get install -y -qq ffmpeg)
           pip install pillow gradio_client numpy
       - name: run python tests
