@@ -79,7 +79,8 @@ jobs:
           sudo rm -rf data && mkdir -p data && sudo chown 1000:1000 data
           docker rm -f pay >/dev/null 2>&1 || true
           docker run -d --name pay -p 8080:8080 -v "$PWD/data:/data" -e PAY_API_TOKEN=smoketok pay-smoke
-          for i in $(seq 1 20); do curl -fs http://127.0.0.1:8080/healthz && break; sleep 1; done
+          docker inspect pay --format 'uid_in_image={{.Config.User}}'
+          for i in $(seq 1 20); do docker logs pay >&2; curl -fs http://127.0.0.1:8080/healthz && break; sleep 1; done
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/healthz)" = 200
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/admin)" = 403
           id=$(curl -fs -X POST http://127.0.0.1:8080/api/invoice -H 'authorization: Bearer smoketok' -d '{"amount":1}' | sed -n 's/.*"id":"\([a-z0-9]*\)".*/\1/p')
