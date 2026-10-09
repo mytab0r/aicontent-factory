@@ -23,8 +23,10 @@ jobs:
           sudo fc-cache -f -v >/dev/null 2>&1 || true
           sudo DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
           sudo apt-get update -qq || true
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -f -qq ffmpeg || \
-            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --reinstall fontconfig ffmpeg || true
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -f -qq ffmpeg || true
+          # прерванный apt оставил битые (нулевые) .so — переустановить пострадавшие пакеты начисто
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --reinstall \
+            libdrm2 fontconfig libfontconfig1 libavcodec60 libavformat60 libavutil58 libswscale7 libswresample4 || true
           command -v ffmpeg
           ffmpeg -version | head -1
           pip install pillow gradio_client numpy
