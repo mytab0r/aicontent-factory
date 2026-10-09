@@ -16,6 +16,7 @@ jobs:
       - name: run python tests
         run: |
           set -e
+          TOK=smoke-$GITHUB_RUN_ID  # не литерал: редактор секретов агента заменял его на ***
           for f in pipeline/test_*.py; do
             echo "=== $f ==="
             python "$f"
@@ -45,7 +46,7 @@ jobs:
           grep -q 'chown 1000:1000' err.txt
           # путь из README: mkdir + chown 1000:1000
           mkdir -p data && sudo chown 1000:1000 data
-          docker run -d --name $N -v "$PWD/data:/data" -e PAY_API_TOKEN=smoketok pay-smoke
+          docker run -d --name $N -v "$PWD/data:/data" -e PAY_API_TOKEN=$TOK pay-smoke
           H=http://$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' $N):8080
           for i in $(seq 1 20); do curl -fs $H/healthz && break; sleep 1; done
           test "$(curl -s -o /dev/null -w '%{http_code}' $H/healthz)" = 200
