@@ -76,7 +76,7 @@ jobs:
           cat err.txt
           grep -q 'chown 1000:1000' err.txt
           # путь из README: mkdir + chown 1000:1000
-          mkdir -p data && sudo chown 1000:1000 data
+          sudo rm -rf data && mkdir -p data && sudo chown 1000:1000 data
           docker rm -f pay >/dev/null 2>&1 || true
           docker run -d --name pay -p 8080:8080 -v "$PWD/data:/data" -e PAY_API_TOKEN=smoketok pay-smoke
           for i in $(seq 1 20); do curl -fs http://127.0.0.1:8080/healthz && break; sleep 1; done
