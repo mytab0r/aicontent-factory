@@ -93,4 +93,3 @@ jobs:
           test "$(curl -s -o /dev/null -w '%{http_code}' $H/i/$id)" = 200
           $R "grep -q 'invoice:$id' /h/$N/kv.json"
           docker logs $N
-
