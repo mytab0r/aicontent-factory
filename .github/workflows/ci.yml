@@ -24,9 +24,16 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
           sudo apt-get update -qq || true
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -f -qq ffmpeg || true
-          # прерванный apt оставил битые (нулевые) .so — переустановить пострадавшие пакеты начисто
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --reinstall \
-            libdrm2 fontconfig libfontconfig1 libavcodec60 libavformat60 libavutil58 libswscale7 libswresample4 || true
+          # прерванный apt оставил битые (нулевые) .so; apt-reinstall блокируется ошибкой
+          # postinst fontconfig — качаем .deb напрямую и ставим dpkg -i, переопределяя битые файлы
+          cd /tmp
+          for p in libdrm2 libfontconfig1 libavutil58 libavcodec60 libavformat60 libswscale7 libswresample4 libavfilter9 libavdevice60; do
+            apt-get download "$p" 2>/dev/null || true
+          done
+          sudo dpkg -i --force-overwrite ./*.deb || true
+          # ffmpeg мог остаться unpacked из-за fontconfig — финальный прогон
+          sudo DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
+          cd "$GITHUB_WORKSPACE"
           command -v ffmpeg
           ffmpeg -version | head -1
           pip install pillow gradio_client numpy
