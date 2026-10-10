@@ -40,6 +40,9 @@ jobs:
           set -e
           docker rm -f comfyui >/dev/null 2>&1 || true
           for v in comfy-models comfy-output comfy-input; do docker volume create $v >/dev/null; done
+          # YAML путей моделей нужен контейнеру при старте (CMD --extra-model-paths-config)
+          docker run --rm -v comfy-models:/models -v "$PWD/deploy/gpu-pc/comfyui/extra_model_paths.yaml:/src.yaml:ro" \
+            alpine:3.20 cp /src.yaml /models/extra_model_paths.yaml
           docker build -q -f deploy/gpu-pc/comfyui/Dockerfile -t comfyui-wan22:local deploy/gpu-pc/comfyui
           # сеть раннера: docker compose создаёт <project>_default; реальное имя
           # берём из контейнера раннера, а не угадываем (имя не gh-runner-..._default)
