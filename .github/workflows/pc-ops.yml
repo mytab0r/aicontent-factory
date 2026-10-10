@@ -10,7 +10,7 @@ on:
         description: "status | deploy-comfyui | download-models"
         default: "status"
         type: choice
-        options: [status, deploy-comfyui, download-models]
+        options: [status, deploy-comfyui, download-models, comfy-object-list]
 
 jobs:
   ops:
@@ -69,6 +69,24 @@ jobs:
             case "$ST" in exited*|dead*) echo "=== comfyui died, logs:"; docker logs --tail 80 comfyui 2>&1; exit 1;; esac
           done
           echo "comfyui не поднялся за 300с"; docker logs --tail 80 comfyui 2>&1 || true; exit 1
+
+      - name: pc-ops comfy-object-list
+        if: ${{ inputs.action == 'comfy-object-list' }}
+        run: |
+          set -e
+          curl -s -m 10 "http://$(docker inspect comfyui --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'):8188/object_info" -o /tmp/oi.json
+          python3 - <<'PY'
+          import json
+          oi = json.load(open('/tmp/oi.json'))
+          def names(cls, key):
+              inp = oi.get(cls, {}).get('input', {}).get('required', {})
+              return inp.get(key, [[], {}])[0]
+          print('UNETLoader unet_name:', names('UNETLoader', 'unet_name'))
+          print('LoraLoaderModelOnly lora_name:', names('LoraLoaderModelOnly', 'lora_name'))
+          print('CLIPLoader clip_name:', names('CLIPLoader', 'clip_name'))
+          print('VAELoader vae_name:', names('VAELoader', 'vae_name'))
+          print('CLIPVisionLoader clip_name:', names('CLIPVisionLoader', 'clip_name'))
+          PY
 
       - name: pc-ops download-models
         if: ${{ inputs.action == 'download-models' }}
