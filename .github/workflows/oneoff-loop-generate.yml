@@ -40,8 +40,13 @@ jobs:
                 echo "comfyui ready"; break
               fi
             done
+            # диагностика: что ComfyUI реально видит после свежего recreate
+            OIP=$(docker inspect comfyui --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
+            echo "=== /models на volume ==="
+            docker run --rm -v comfy-models:/models:ro alpine:3.20 find /models -maxdepth 2 -type f | sort
+            echo "=== object_info списки ==="
+            curl -s -m 20 "http://$OIP:8188/object_info" | docker run --rm -i python:3.12-slim python -c "import json,sys; oi=json.load(sys.stdin); g=lambda c,k: oi.get(c,{}).get('input',{}).get('required',{}).get(k,[[],{}])[0]; print('OBJDUMP unet:',g('UNETLoader','unet_name')); print('OBJDUMP clip:',g('CLIPLoader','clip_name')); print('OBJDUMP vae:',g('VAELoader','vae_name')); print('OBJDUMP lora:',g('LoraLoaderModelOnly','lora_name'))"
           fi
-          # резолвим IP comfyui (runner не в netns comfyui, alias не виден);
           # порт из runner-контейнера напрямую тоже может быть не виден — пробуем оба пути
           CID=$(docker ps --filter name=comfyui --format '{{.ID}}' | head -1)
           IP=$(docker inspect "$CID" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
