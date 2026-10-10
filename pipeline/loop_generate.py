@@ -127,8 +127,8 @@ def render(png: Path, out_dir: Path, prompt: str, neg: str, seed: int,
                    f"&subfolder={urllib.parse.quote(img.get('subfolder', ''))}"
                    f"&type={img.get('type', 'output')}")
             data = urllib.request.urlopen(comfy_endpoint() + url, timeout=120).read()
-            # нормализуем имя: кадры лягут как 00001.png... (ffmpeg %05d ждёт нумерацию с 1)
-            dst = out_dir / f"{len(outs) + 1:05d}.png"
+            # нормализуем имя: кадры лягут как 00000.png..N-1 (контракт loop_build.py:97)
+            dst = out_dir / f"{len(outs):05d}.png"
             dst.write_bytes(data)
             outs.append(dst)
     outs.sort()
