@@ -43,7 +43,7 @@ jobs:
           docker build -q -f deploy/gpu-pc/comfyui/Dockerfile -t comfyui-wan22:local deploy/gpu-pc/comfyui
           # сеть раннера: docker compose создаёт <project>_default; реальное имя
           # берём из контейнера раннера, а не угадываем (имя не gh-runner-..._default)
-          NET=$(docker inspect gh-runner-aicontent-factory --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}')
+          NET=$(docker network ls --format '{{.Name}}' | grep -v '^bridge$\|^host$\|^none$' | while read n; do docker network inspect "$n" --format '{{range .Containers}}{{$v := printf "%s\n" .Name}}{{printf "%s" $v}}{{end}}' | grep -qx 'gh-runner-aicontent-factory' && echo "$n" && break; done)
           echo "runner network: $NET"
           docker run -d --name comfyui \
             --gpus all \
