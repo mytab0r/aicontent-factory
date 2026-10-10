@@ -3,12 +3,21 @@ name: oneoff-loop-generate
 # + encode + seam check + тайминги (бюджет E <= 900с, spec-seamless-loop.md §5).
 # Артефакты: runs/loopgen/ (loop.mp4, отчёты, тайминги, кадры).
 # Финальный concat 1ч делает сервер (loop_build.py final) — он дешёвый (-c copy).
+#
+# mode=calibrate: только генерация (перебор сидов) со статистикой прегейта в
+#   логе — для калибровки порогов B1-B4 по реальному контенту (§5: пороги v1
+#   калибруются на первых прогонах, изменения — в DECISIONS.md). Job зелёный,
+#   даже если гейт красный.
+# mode=final: полный прогон — upscale, encode, seam-гейт (exit 1 при провале),
+#   dossier (seam_strip.png / seam_preview.mp4 / run.json / seam_report.json),
+#   concat до 1ч трека + проверки C1-C4 + ffprobe финала.
 on:
   workflow_dispatch:
     inputs:
-      image_name:
-        description: "run artifact name prefix"
-        default: "loop"
+      mode:
+        description: "calibrate | final"
+        default: "final"
+        type: string
 jobs:
   loop:
     runs-on: [self-hosted, pc]
@@ -40,70 +49,145 @@ jobs:
                 echo "comfyui ready"; break
               fi
             done
-            # диагностика: что ComfyUI реально видит после свежего recreate
-            OIP=$(docker inspect wan22 --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
-            echo "=== /models на volume ==="
-            docker run --rm -v wan-models:/models:ro alpine:3.20 find /models -maxdepth 2 -type f | sort
-            echo "=== object_info списки ==="
-            curl -s -m 20 "http://$OIP:8188/object_info" | docker run --rm -i python:3.12-slim python -c "import json,sys; oi=json.load(sys.stdin); g=lambda c,k: oi.get(c,{}).get('input',{}).get('required',{}).get(k,[[],{}])[0]; print('OBJDUMP unet:',g('UNETLoader','unet_name')); print('OBJDUMP clip:',g('CLIPLoader','clip_name')); print('OBJDUMP vae:',g('VAELoader','vae_name')); print('OBJDUMP lora:',g('LoraLoaderModelOnly','lora_name'))"
           fi
-          # порт из runner-контейнера напрямую тоже может быть не виден — пробуем оба пути
           CID=$(docker ps --filter name=wan22 --format '{{.ID}}' | head -1)
           IP=$(docker inspect "$CID" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
           echo "comfyui IP: $IP"
           echo "COMFY_IP=$IP" >> "$GITHUB_ENV"
           curl -s -m 10 "http://$IP:8188/system_stats" || exit 1
-      - name: generate + upscale (timed)
+      - name: generate (timed, seed scan + pregate, real cover)
         run: |
-          mkdir -p runs/loopgen/raw runs/loopgen/upscaled
-          # тестовая картинка: 832x480 серый градиент с шумом (синтетика, без 02_cover)
-          .venv/bin/python - <<'PY'
-          import zlib, struct, random
-          random.seed(7)
-          w, h = 832, 480
-          rows = []
-          for y in range(h):
-              row = bytearray([0])
-              for x in range(w):
-                  v = 128 + int(40 * ((x + y) % 256) / 256) + random.randint(-6, 6)
-                  row += bytes([max(0, min(255, v)), v // 2 + 64, v // 3 + 85])
-              rows.append(bytes(row))
-          raw = b"".join(rows)
-          def chunk(tag, data):
-              c = struct.pack(">I", len(data)) + tag + data
-              return c + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
-          png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
-                 + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
-          open("runs/loopgen/raw/source.png", "wb").write(png)
-          print("source.png written", len(png))
-          PY
-          echo "=== step1 generate (ComfyUI Wan2.2 FLF2V) ===" | tee runs/loopgen/steps.log
+          mkdir -p runs/loopgen/raw
+          cp config/assets/loop_cover_tavern_832x480.png runs/loopgen/raw/source.png
+          # пик VRAM во время генерации (§5 E) — через gpu-контейнер comfyui
+          ( while true; do docker exec wan22 nvidia-smi --query-gpu=memory.used --format=csv,noheader 2>/dev/null; sleep 2; done > runs/loopgen/vram.log ) &
+          VRAMPID=$!
+          trap "kill $VRAMPID 2>/dev/null" EXIT
+          echo "=== step1 generate (ComfyUI Wan2.2 FLF2V, real cover, seed scan) ===" | tee runs/loopgen/steps.log
           T0=$(date +%s)
+          set +e
           .venv/bin/python pipeline/loop_generate.py --image runs/loopgen/raw/source.png \
-              --out-dir runs/loopgen/raw --endpoint "http://$COMFY_IP:8188" --attempts 8 --seed 42
-          echo "generate_elapsed_s=$(( $(date +%s) - T0 ))" | tee -a runs/loopgen/steps.log
+              --out-dir runs/loopgen/raw --endpoint "http://$COMFY_IP:8188" --attempts 8 \
+              2>&1 | tee runs/loopgen/generate.log
+          GRC=${PIPESTATUS[0]}
+          set -e
+          echo "generate_elapsed_s=$(( $(date +%s) - T0 )) generate_rc=$GRC" | tee -a runs/loopgen/steps.log
+          if [ "${{ inputs.mode }}" != "calibrate" ] && [ "$GRC" != "0" ]; then
+            echo "generate/gate fail (rc=$GRC)" | tee -a runs/loopgen/steps.log; exit 1
+          fi
+      - name: upscale 832x480 -> 1920x1080 (timed)
+        if: ${{ inputs.mode != 'calibrate' }}
+        run: |
+          mkdir -p runs/loopgen/upscaled
           echo "=== step3 upscale 832x480 -> 1920x1080 (lanczos) ===" | tee -a runs/loopgen/steps.log
           T0=$(date +%s)
           ffmpeg -y -v error -framerate 24 -i runs/loopgen/raw/%05d.png \
               -vf "scale=1920:1080:flags=lanczos" -pix_fmt yuv420p \
               -start_number 0 runs/loopgen/upscaled/%05d.png
           echo "upscale_elapsed_s=$(( $(date +%s) - T0 ))" | tee -a runs/loopgen/steps.log
-      - name: encode loop.mp4 + seam check (closed GOP)
+      - name: encode loop.mp4 + seam gate (timed)
+        if: ${{ inputs.mode != 'calibrate' }}
         run: |
           set -o pipefail
+          echo "=== step4 encode loop.mp4 (closed GOP) + seam_check gate ===" | tee -a runs/loopgen/steps.log
+          T0=$(date +%s)
           .venv/bin/python pipeline/loop_build.py encode runs/loopgen/upscaled runs/loopgen/loop.mp4 --fps 24 \
             2>&1 | tee runs/loopgen/encode_seam.log
-      - name: upload loopgen artifact
+          echo "encode_elapsed_s=$(( $(date +%s) - T0 ))" | tee -a runs/loopgen/steps.log
+      - name: seam_report.json (machine-readable)
+        if: ${{ inputs.mode != 'calibrate' }}
+        run: |
+          .venv/bin/python pipeline/seam_check.py runs/loopgen/loop.mp4 --json runs/loopgen/seam_report.json
+      - name: dossier D — seam_strip.png + seam_preview.mp4
+        if: ${{ inputs.mode != 'calibrate' }}
+        run: |
+          N=$(ffprobe -v error -select_streams v:0 -count_frames \
+              -show_entries stream=nb_read_frames -of csv=p=0 runs/loopgen/loop.mp4)
+          echo "loop frames: $N"
+          # кадры N-3..N-1 | 0..2 — стык крупно (spec §5 D)
+          ffmpeg -y -v error -i runs/loopgen/loop.mp4 -vf \
+            "select='eq(n,$((N-3)))+eq(n,$((N-2)))+eq(n,$((N-1)))+eq(n,0)+eq(n,1)+eq(n,2)',scale=480:270,tile=6x1" \
+            -frames:v 1 runs/loopgen/seam_strip.png
+          # 3 цикла подряд (~10с) — то, что видит зритель на стыке
+          printf "file 'loop.mp4'\nfile 'loop.mp4'\nfile 'loop.mp4'\n" > runs/loopgen/preview_list.txt
+          ffmpeg -y -v error -f concat -safe 0 -i runs/loopgen/preview_list.txt \
+            -c copy runs/loopgen/seam_preview.mp4
+      - name: track 1h + final concat + C1-C4
+        if: ${{ inputs.mode != 'calibrate' }}
+        run: |
+          echo "=== step6 track (lavfi 1h) + concat -c copy до T=3600 + аудио ===" | tee -a runs/loopgen/steps.log
+          ffmpeg -y -v error -filter_complex \
+            "sine=frequency=110:duration=3600,volume=0.25[s];anoisesrc=colour=brown:duration=3600:amplitude=0.04[n];[s][n]amix=inputs=2:duration=first,aformat=sample_rates=44100:channel_layouts=mono" \
+            runs/loopgen/track.wav
+          T0=$(date +%s)
+          set -o pipefail
+          .venv/bin/python pipeline/loop_build.py final runs/loopgen/loop.mp4 runs/loopgen/track.wav runs/loopgen/final.mp4 --fps 24 \
+            2>&1 | tee runs/loopgen/final_report.log
+          echo "final_elapsed_s=$(( $(date +%s) - T0 ))" | tee -a runs/loopgen/steps.log
+          # C-проверки уже заассерчены внутри build_final; сохраняем полный ffprobe финала
+          ffprobe -v error -show_format -show_streams -of json runs/loopgen/final.mp4 \
+            > runs/loopgen/ffprobe_final.json
+          ls -la runs/loopgen/final.mp4
+          mkdir -p runs/loopgen/final_frames
+          ffmpeg -y -v error -ss 0.2    -i runs/loopgen/final.mp4 -frames:v 1 runs/loopgen/final_frames/f_0s.png
+          ffmpeg -y -v error -ss 1800   -i runs/loopgen/final.mp4 -frames:v 1 runs/loopgen/final_frames/f_1800s.png
+          ffmpeg -y -v error -ss 3599.5 -i runs/loopgen/final.mp4 -frames:v 1 runs/loopgen/final_frames/f_3599s.png
+      - name: run.json (inputs/seed/models/timings/versions)
+        if: ${{ inputs.mode != 'calibrate' }}
+        run: |
+          .venv/bin/python - <<'PY'
+          import json, re, subprocess
+          from pathlib import Path
+          d = Path("runs/loopgen")
+          steps = {}
+          for ln in (d / "steps.log").read_text().splitlines():
+              m = re.match(r"(\w+)_elapsed_s=(\d+)", ln)
+              if m: steps[m.group(1)] = int(m.group(2))
+          meta = json.loads((d / "raw" / "generate_meta.json").read_text())
+          wf = json.loads(Path("deploy/gpu-pc/comfyui/wan22_flf2v_loop.json").read_text())
+          models = {n["class_type"]: n["inputs"].get(k) for n in wf["nodes"].values()
+                    for k in ("unet_name", "clip_name", "vae_name", "lora_name")
+                    if n.get("class_type") in ("UNETLoader", "CLIPLoader", "VAELoader", "LoraLoaderModelOnly")
+                    and k in n.get("inputs", {})}
+          ffv = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True).stdout.splitlines()[0]
+          br = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
+          run = {
+              "mode": "final",
+              "inputs": {"image": "config/assets/loop_cover_tavern_832x480.png",
+                          "prompt": meta.get("prompt"), "neg": meta.get("neg"),
+                          "width": meta.get("width"), "height": meta.get("height"),
+                          "length": meta.get("length"), "fps": 24,
+                          "track": "runs/loopgen/track.wav (lavfi sine110+brown noise, T=3600s)"},
+              "seed_accepted": meta.get("accepted_seed"),
+              "seeds_tried": meta.get("seeds"),
+              "closure": meta.get("closure"),
+              "models": models,
+              "timings_s": steps,
+              "versions": {"ffmpeg": ffv, "comfyui_image": "comfyui-wan22:local", "branch": br},
+              "verdict_D": None,
+          }
+          (d / "run.json").write_text(json.dumps(run, ensure_ascii=False, indent=2))
+          print(json.dumps(run, ensure_ascii=False, indent=2))
+          PY
+      - name: upload loopgen artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: loopgen
           path: |
-            runs/loopgen/loop.mp4
-            runs/loopgen/*.log
+            runs/loopgen/steps.log
+            runs/loopgen/generate.log
+            runs/loopgen/vram.log
+            runs/loopgen/encode_seam.log
+            runs/loopgen/final_report.log
+            runs/loopgen/seam_report.json
+            runs/loopgen/seam_strip.png
+            runs/loopgen/seam_preview.mp4
+            runs/loopgen/run.json
+            runs/loopgen/ffprobe_final.json
+            runs/loopgen/final_frames/*.png
             runs/loopgen/raw/generate_meta.json
-            runs/loopgen/raw/00000.png
-            runs/loopgen/raw/00080.png
+            runs/loopgen/loop.mp4
           if-no-files-found: warn
       - name: upload full frames (fallback, big)
         if: failure()

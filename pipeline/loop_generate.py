@@ -158,10 +158,13 @@ def main() -> None:
     sys.path.insert(0, str(Path(__file__).parent))
     import seam_check
 
+    # фиксированный --seed не закрепляет последующие попытки: рандомные сида —
+    # база для честной калибровки порогов B (§5), cache-hit с одним сидом
+    # выдаёт вырожденные метрики (med_jump_y ~0)
     seeds = []
     last_rep = None
     for attempt in range(args.attempts):
-        seed = args.seed if args.seed is not None and attempt == 0 else random.randrange(2**31)
+        seed = (args.seed + attempt) if args.seed is not None else random.randrange(2**31)
         seeds.append(seed)
         print(f"[attempt {attempt + 1}/{args.attempts}] seed={seed}", flush=True)
         frames = render(Path(args.image), out_dir, args.prompt, args.neg, seed,
@@ -175,6 +178,7 @@ def main() -> None:
         last_rep = rep
         if rep["ok"] and preg["ok"]:
             meta = {"seeds": seeds, "accepted_seed": seed, "closure": rep,
+                    "seam_pregate": preg,
                     "workflow": str(WORKFLOW), "width": args.width,
                     "height": args.height, "length": args.length,
                     "prompt": args.prompt, "neg": args.neg,
