@@ -80,7 +80,7 @@ jobs:
           echo "=== step1 generate (ComfyUI Wan2.2 FLF2V) ===" | tee runs/loopgen/steps.log
           T0=$(date +%s)
           .venv/bin/python pipeline/loop_generate.py --image runs/loopgen/raw/source.png \
-              --out-dir runs/loopgen/raw --endpoint "http://$COMFY_IP:8188" --attempts 1 --seed 42
+              --out-dir runs/loopgen/raw --endpoint "http://$COMFY_IP:8188" --attempts 3 --seed 42
           echo "generate_elapsed_s=$(( $(date +%s) - T0 ))" | tee -a runs/loopgen/steps.log
           echo "=== step3 upscale 832x480 -> 1920x1080 (lanczos) ===" | tee -a runs/loopgen/steps.log
           T0=$(date +%s)
