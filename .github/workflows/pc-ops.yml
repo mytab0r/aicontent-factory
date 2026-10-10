@@ -105,6 +105,6 @@ jobs:
             cp /models/../extra_model_paths.yaml /models/extra_model_paths.yaml 2>/dev/null || true
             echo '=== models ==='; ls -la diffusion_models loras text_encoders vae clip_vision
           "
-          # extra_model_paths.yaml из репо (обещает /models/<класс>/<файл>)
-          docker cp deploy/gpu-pc/comfyui/extra_model_paths.yaml comfyui:/models/extra_model_paths.yaml 2>/dev/null || \
-            docker run --rm -v comfy-models:/models -v $PWD/deploy/gpu-pc/comfyui/extra_model_paths.yaml:/src.yaml:ro alpine:3.20 cp /src.yaml /models/extra_model_paths.yaml
+          # extra_model_paths.yaml в volume (stdin: монтирование файла ненадёжно)
+          docker run --rm -i -v comfy-models:/models alpine:3.20 \
+            sh -c 'cat > /models/extra_model_paths.yaml' < deploy/gpu-pc/comfyui/extra_model_paths.yaml
