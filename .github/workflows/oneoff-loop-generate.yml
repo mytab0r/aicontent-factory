@@ -1,4 +1,8 @@
 name: oneoff-loop-generate
+# Разовый рендер loop-клипа Wan2.2 FLF2V на ПК (self-hosted runner) + upscale
+# + encode + seam check + тайминги (бюджет E <= 900с, spec-seamless-loop.md §5).
+# Артефакты: runs/loopgen/ (loop.mp4, отчёты, тайминги, кадры).
+# Финальный concat 1ч делает сервер (loop_build.py final) — он дешёвый (-c copy).
 on:
   workflow_dispatch:
     inputs:
@@ -10,23 +14,18 @@ jobs:
     runs-on: [self-hosted, pc]
     timeout-minutes: 120
     steps:
-      - name: check comfy
-        run: |
-          curl -s -m 10 http://comfyui:8188/system_stats || (docker ps --format '{{.Names}}' && exit 1)
-      - name: render loop clip
-        run: |
-          mkdir -p out
-          curl -s -m 10 http://comfyui:8188/system_stats
-          # сам рендер запускает loop_generate внутри раннера: репо чекаутим ниже
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
       - name: deps
         run: |
           uv venv .venv
           uv pip install --python .venv/bin/python numpy
-      - name: generate
+      - name: comfy reachable
         run: |
-          mkdir -p runs/loopgen/raw
+          curl -s -m 10 http://comfyui:8188/system_stats || { docker ps --format '{{.Names}}'; exit 1; }
+      - name: generate + upscale (timed)
+        run: |
+          mkdir -p runs/loopgen/raw runs/loopgen/upscaled
           # тестовая картинка: 832x480 серый градиент с шумом (синтетика, без 02_cover)
           .venv/bin/python - <<'PY'
           import zlib, struct, random
@@ -48,9 +47,38 @@ jobs:
           open("runs/loopgen/raw/source.png", "wb").write(png)
           print("source.png written", len(png))
           PY
-          .venv/bin/python pipeline/loop_generate.py --image runs/loopgen/raw/source.png --out-dir runs/loopgen/raw --endpoint http://comfyui:8188 --attempts 1 --seed 42
-      - name: upload frames artifact
+          echo "=== step1 generate (ComfyUI Wan2.2 FLF2V) ===" | tee runs/loopgen/steps.log
+          /usr/bin/time -v -o runs/loopgen/t_generate.txt -a runs/loopgen/steps.log \
+            .venv/bin/python pipeline/loop_generate.py --image runs/loopgen/raw/source.png \
+              --out-dir runs/loopgen/raw --endpoint http://comfyui:8188 --attempts 1 --seed 42
+          echo "=== step3 upscale 832x480 -> 1920x1080 (lanczos) ===" | tee -a runs/loopgen/steps.log
+          /usr/bin/time -v -o runs/loopgen/t_upscale.txt -a runs/loopgen/steps.log \
+            ffmpeg -y -v error -framerate 24 -i runs/loopgen/raw/%05d.png \
+              -vf "scale=1920:1080:flags=lanczos" -pix_fmt yuv420p \
+              runs/loopgen/upscaled/%05d.png
+          grep -hE "Elapsed|Maximum resident" runs/loopgen/t_generate.txt runs/loopgen/t_upscale.txt | tee -a runs/loopgen/steps.log || true
+      - name: encode loop.mp4 + seam check (closed GOP)
+        run: |
+          .venv/bin/python pipeline/loop_build.py encode runs/loopgen/upscaled runs/loopgen/loop.mp4 --fps 24 \
+            2>&1 | tee runs/loopgen/encode_seam.log
+      - name: upload loopgen artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: loopgen-frames
-          path: runs/loopgen/raw/
+          name: loopgen
+          path: |
+            runs/loopgen/loop.mp4
+            runs/loopgen/*.log
+            runs/loopgen/t_generate.txt
+            runs/loopgen/t_upscale.txt
+            runs/loopgen/raw/generate_meta.json
+            runs/loopgen/raw/00000.png
+            runs/loopgen/raw/00080.png
+          if-no-files-found: warn
+      - name: upload full frames (fallback, big)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: loopgen-frames-full
+          path: runs/loopgen/
+          if-no-files-found: warn

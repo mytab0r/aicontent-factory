@@ -1,0 +1,75 @@
+name: pc-ops
+# Обслуживание GPU-стека на ПК владельца через туннель pc.pxbt.app ->
+# docker-socket-proxy (EXEC/START/STOP запрещены на прокси).
+# Что умеет: поднять/обновить comfyui (build+create), пересоздать pc-ops,
+# статус контейнеров/дисков. Рендер и encode НЕ здесь (см. oneoff-loop-generate).
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "status | deploy-comfyui | recreate-pcops"
+        default: "status"
+        type: choice
+        options: [status, deploy-comfyui, recreate-pcops]
+
+jobs:
+  ops:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: pc-ops status
+        if: ${{ inputs.action == 'status' }}
+        run: |
+          set -e
+          echo "=== containers ==="
+          curl -fsS -m 20 http://ace-proxy:2375/containers/json?all=1 | python3 -c "
+          import json,sys
+          for c in json.load(sys.stdin):
+              print(c['Names'][0].lstrip('/'), c['State'], c['Status'])"
+          echo "=== volumes ==="
+          curl -fsS -m 20 http://ace-proxy:2375/volumes | python3 -c "
+          import json,sys
+          for v in json.load(sys.stdin).get('Volumes') or []:
+              print(v['Name'])"
+          echo "=== comfyui health ==="
+          docker ps --filter name=comfyui --format '{{.Names}} {{.Status}}'
+          curl -s -m 10 http://comfyui:8188/system_stats | head -c 600 || true
+          echo
+
+      - name: pc-ops deploy-comfyui (build image + create container)
+        if: ${{ inputs.action == 'deploy-comfyui' }}
+        run: |
+          set -e
+          cd deploy/gpu-pc
+          docker build -f comfyui/Dockerfile -t comfyui-wan22:local ./comfyui
+          # удалить старый контейнер, если прокси даёт (нет: DELETE запрещён) — тогда ошибку игнорируем
+          curl -s -o /dev/null -X DELETE http://ace-proxy:2375/containers/comfyui || true
+          # путь к моделям на хосте Windows; создать заранее
+          docker volume create comfy-models || true
+          docker volume create comfy-output || true
+          docker volume create comfy-input || true
+          ID=$(curl -fsS -X POST http://ace-proxy:2375/containers/create?name=comfyui \
+            -H 'Content-Type: application/json' -d '{
+            "Image": "comfyui-wan22:local",
+            "HostConfig": {
+              "Runtime": "nvidia",
+              "PortBindings": {"8188/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8188"}]},
+              "Binds": [
+                "comfy-models:/models",
+                "comfy-output:/app/output",
+                "comfy-input:/app/input"
+              ]
+            },
+            "NetworkingConfig": {"EndpointsConfig": {"bridge": {}}},
+            "Labels": {"com.docker.compose.project": "aicontent-factory"}
+          }' | python3 -c "import json,sys; print(json.load(sys.stdin)['Id'])")
+          echo "created $ID"
+
+      - name: pc-ops recreate-pcops
+        if: ${{ inputs.action == 'recreate-pcops' }}
+        run: |
+          set -e
+          cd deploy/gpu-pc/pc-ops
+          docker compose up -d --build
