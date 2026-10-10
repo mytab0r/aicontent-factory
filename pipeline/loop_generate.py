@@ -34,10 +34,10 @@ WORKFLOW = REPO / "deploy" / "gpu-pc" / "comfyui" / "wan22_flf2v_loop.json"
 
 DEFAULT_PROMPT = (
     "static camera, subtle continuous motion in the scene, gentle ambient "
-    "movement, soft lighting, no camera movement, seamless loop"
+    "movement, soft lighting, no camera movement, seamless loop, constant brightness, constant exposure, no flicker"
 )
 DEFAULT_NEG = (
-    "色调艳丽，过曝，静态，细节模糊不清，字幕，画风，突然的剧烈运动，镜头切换，"
+    "色调艳丽，过曝，静态，细节模糊不清，字幕，画风，突然的剧烈运动，镜头切换，亮度变化，闪烁，曝光变化，"
     "抖动，最差质量，低质量，JPEG压缩残留，畸形的，毁容的"
 )
 
