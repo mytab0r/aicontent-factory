@@ -188,6 +188,8 @@ def _closure_pair(last_png: Path, first_png: Path) -> dict:
     """Метрика A на паре PNG (Y-канал, полный размер)."""
     import numpy as np
 
+    import seam_check
+
     def gray(p: Path) -> np.ndarray:
         raw = subprocess.run(
             ["ffmpeg", "-v", "error", "-i", str(p), "-pix_fmt", "gray",
