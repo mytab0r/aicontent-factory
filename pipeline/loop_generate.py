@@ -169,9 +169,11 @@ def main() -> None:
         assert len(frames) == args.length, f"ожидалось {args.length} кадров, пришло {len(frames)}"
         # Closure A (§5): SSIM(last, first)>=0.98 ИЛИ PSNR>=35 dB
         rep = _closure_pair(frames[-1], frames[0])
-        print(json.dumps({"seed": seed, "closure": rep}, ensure_ascii=False), flush=True)
+        preg = _seam_pregate(frames)
+        print(json.dumps({"seed": seed, "closure": rep, "seam_pregate": preg},
+                         ensure_ascii=False), flush=True)
         last_rep = rep
-        if rep["ok"]:
+        if rep["ok"] and preg["ok"]:
             meta = {"seeds": seeds, "accepted_seed": seed, "closure": rep,
                     "workflow": str(WORKFLOW), "width": args.width,
                     "height": args.height, "length": args.length,
@@ -203,6 +205,25 @@ def _closure_pair(last_png: Path, first_png: Path) -> dict:
         return np.frombuffer(raw, dtype=np.uint8).reshape(h, w)
 
     return seam_check.closure_metrics(gray(last_png), gray(first_png))
+
+
+def _seam_pregate(frames: list) -> dict:
+    """Pre-gate B1/B3 (+Y-часть B4) по raw-кадрам до encode (§5)."""
+    import numpy as np
+
+    import seam_check
+
+    def gray(p: Path) -> np.ndarray:
+        raw = subprocess.run(
+            ["ffmpeg", "-v", "error", "-i", str(p), "-pix_fmt", "gray",
+             "-f", "rawvideo", "-"], capture_output=True, check=True).stdout
+        return np.frombuffer(raw, dtype=np.uint8)
+
+    ys = [gray(p) for p in frames]
+    rep = seam_check.seam_metrics(ys)
+    # UV-дрейф на pre-gate недоступен (PNG->gray), полный B4 гоняет check_file по loop.mp4
+    rep["ok"] = all(c["ok"] for c in rep["checks"] if c["id"] in ("B1", "B3"))
+    return rep
 
 
 if __name__ == "__main__":
