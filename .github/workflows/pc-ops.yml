@@ -37,6 +37,10 @@ jobs:
           JN=$(docker ps -a --format '{{.Names}}' | grep -i "janitor\|cleanup\|prune" | head -1 || true)
           if [ -n "$JN" ]; then
             docker inspect "$JN" --format 'image={{.Config.Image}} cmd={{json .Config.Cmd}} env={{json .Config.Env}} labels={{json .Config.Labels}} restart={{.HostConfig.RestartPolicy.Name}}'
+            echo "--- janitor mounts ---"
+            docker inspect "$JN" --format '{{json .Mounts}}'
+            echo "--- janitor.sh ---"
+            docker exec "$JN" cat /j/janitor.sh 2>&1 | head -80 || echo "exec недоступен"
           else
             echo "janitor-подобный контейнер не найден"
           fi
