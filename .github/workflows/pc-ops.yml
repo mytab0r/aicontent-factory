@@ -83,11 +83,17 @@ jobs:
             mkdir -p diffusion_models loras text_encoders vae clip_vision
             base22='https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files'
             base21='https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files'
-            dl() {  # dl <url> <dest>
-              if [ -s \"\$2\" ]; then echo \"EXISTS \$2\"; return 0; fi
+            dl() {  # dl <url> <dest> — докачка: HF рвёт длинные соединения (SSL eof ~4 мин)
+              if [ -s \"$2\" ]; then echo \"EXISTS \$2\"; return 0; fi
               echo \"GET \$2\"
-              curl -fL --retry 5 --retry-delay 10 -o \"\$2.part\" \"\$1\" \
-                && mv \"\$2.part\" \"\$2\" && echo \"OK \$2\" || { echo \"FAIL \$2\"; return 1; }
+              for a in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+                curl -fL -C - --retry 3 --retry-delay 10 --speed-time 60 --speed-limit 10000 \\
+                  -o \"\$2.part\" \"\$1\" \\
+                  && mv \"\$2.part\" \"\$2\" && echo \"OK \$2\" && return 0
+                echo \"retry \$a \$2 (после -C - докачка продолжится)\"
+                sleep 10
+              done
+              echo \"FAIL \$2\"; return 1
             }
             dl \$base22/diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors
             dl \$base22/diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors
