@@ -220,9 +220,11 @@ def _seam_pregate(frames: list) -> dict:
         return np.frombuffer(raw, dtype=np.uint8)
 
     ys = [gray(p) for p in frames]
-    rep = seam_check.seam_metrics(ys)
-    # UV-дрейф на pre-gate недоступен (PNG->gray), полный B4 гоняет check_file по loop.mp4
-    rep["ok"] = all(c["ok"] for c in rep["checks"] if c["id"] in ("B1", "B3"))
+    yavg = [float(y.mean()) for y in ys]
+    rep = seam_check.seam_metrics(ys, yavg=np.array(yavg))
+    # Y-дрейф (B4) виден уже на raw-кадрах; UV-дрейф гоняет check_file по loop.mp4
+    rep["ok"] = all(c["ok"] for c in rep["checks"]
+                    if c["id"] in ("B1", "B3", "B4"))
     return rep
 
 
