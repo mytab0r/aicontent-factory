@@ -41,9 +41,13 @@ jobs:
           docker rm -f comfyui >/dev/null 2>&1 || true
           for v in comfy-models comfy-output comfy-input; do docker volume create $v >/dev/null; done
           docker build -q -f deploy/gpu-pc/comfyui/Dockerfile -t comfyui-wan22:local deploy/gpu-pc/comfyui
+          # сеть раннера: docker compose создаёт <project>_default; реальное имя
+          # берём из контейнера раннера, а не угадываем (имя не gh-runner-..._default)
+          NET=$(docker inspect gh-runner-aicontent-factory --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}')
+          echo "runner network: $NET"
           docker run -d --name comfyui \
             --gpus all \
-            --network gh-runner-aicontent-factory_default \
+            --network "$NET" \
             --network-alias comfyui \
             -v comfy-models:/models \
             -v comfy-output:/app/output \
