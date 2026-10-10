@@ -23,14 +23,14 @@ jobs:
       - name: comfy reachable
         run: |
           # comfyui может отсутствовать (janitor удалил контейнер) — пересоздаём из образа
-          if [ -z "$(docker ps -q --filter name=comfyui)" ]; then
+          if [ -z "$(docker ps -q --filter name=wan22)" ]; then
             echo "comfyui нет — пересоздаю из comfyui-wan22:local"
-            for v in comfy-models comfy-output comfy-input; do docker volume create $v >/dev/null; done
+            for v in wan-models wan-output wan-input; do docker volume create $v >/dev/null; done
             NET=$(docker network ls --format '{{.Name}}' | grep -v '^bridge$\|^host$\|^none$' | while read n; do docker network inspect "$n" --format '{{range .Containers}}{{printf "%s\n" .Name}}{{end}}' | grep -qx 'gh-runner-aicontent-factory' && echo "$n" && break; done)
-            docker run --rm -i -v comfy-models:/models alpine:3.20 \
+            docker run --rm -i -v wan-models:/models alpine:3.20 \
               sh -c 'cat > /models/extra_model_paths.yaml' < deploy/gpu-pc/comfyui/extra_model_paths.yaml
-            docker run -d --name comfyui --gpus all --network "$NET" --network-alias comfyui \
-              -v comfy-models:/models -v comfy-output:/app/output -v comfy-input:/app/input \
+            docker run -d --name wan22 --gpus all --network "$NET" --network-alias comfyui \
+              -v wan-models:/models -v wan-output:/app/output -v wan-input:/app/input \
               comfyui-wan22:local
             for i in $(seq 1 60); do
               sleep 5
@@ -43,12 +43,12 @@ jobs:
             # диагностика: что ComfyUI реально видит после свежего recreate
             OIP=$(docker inspect comfyui --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
             echo "=== /models на volume ==="
-            docker run --rm -v comfy-models:/models:ro alpine:3.20 find /models -maxdepth 2 -type f | sort
+            docker run --rm -v wan-models:/models:ro alpine:3.20 find /models -maxdepth 2 -type f | sort
             echo "=== object_info списки ==="
             curl -s -m 20 "http://$OIP:8188/object_info" | docker run --rm -i python:3.12-slim python -c "import json,sys; oi=json.load(sys.stdin); g=lambda c,k: oi.get(c,{}).get('input',{}).get('required',{}).get(k,[[],{}])[0]; print('OBJDUMP unet:',g('UNETLoader','unet_name')); print('OBJDUMP clip:',g('CLIPLoader','clip_name')); print('OBJDUMP vae:',g('VAELoader','vae_name')); print('OBJDUMP lora:',g('LoraLoaderModelOnly','lora_name'))"
           fi
           # порт из runner-контейнера напрямую тоже может быть не виден — пробуем оба пути
-          CID=$(docker ps --filter name=comfyui --format '{{.ID}}' | head -1)
+          CID=$(docker ps --filter name=wan22 --format '{{.ID}}' | head -1)
           IP=$(docker inspect "$CID" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
           echo "comfyui IP: $IP"
           echo "COMFY_IP=$IP" >> "$GITHUB_ENV"
