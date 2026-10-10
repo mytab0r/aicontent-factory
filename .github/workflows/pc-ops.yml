@@ -77,7 +77,7 @@ jobs:
             if curl -fsS -m 5 http://comfyui:8188/system_stats >/dev/null 2>&1; then
               echo "comfyui UP after $((i*5))s"; exit 0
             fi
-            ST=$(docker inspect comfyui --format '{{.State.Status}} exit={{.State.ExitCode}}' 2>/dev/null || true)
+            ST=$(docker inspect wan22 --format '{{.State.Status}} exit={{.State.ExitCode}}' 2>/dev/null || true)
             echo "t=$((i*5))s state: ${ST:-gone}"
             case "$ST" in exited*|dead*) echo "=== comfyui died, logs:"; docker logs --tail 80 comfyui 2>&1; exit 1;; esac
           done
@@ -87,7 +87,7 @@ jobs:
         if: ${{ inputs.action == 'comfy-object-list' }}
         run: |
           set -e
-          curl -s -m 10 "http://$(docker inspect comfyui --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'):8188/object_info" -o /tmp/oi.json
+          curl -s -m 10 "http://$(docker inspect wan22 --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'):8188/object_info" -o /tmp/oi.json
           python3 - <<'PY'
           import json
           oi = json.load(open('/tmp/oi.json'))
