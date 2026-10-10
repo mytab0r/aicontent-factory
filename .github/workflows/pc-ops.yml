@@ -33,6 +33,15 @@ jobs:
           docker volume ls --format '{{.Name}}'
           echo "=== gpu ==="
           nvidia-smi --query-gpu=name,memory.used,memory.total --format=csv,noheader || true
+          echo "=== janitor ==="
+          JN=$(docker ps -a --format '{{.Names}}' | grep -i "janitor\|cleanup\|prune" | head -1 || true)
+          if [ -n "$JN" ]; then
+            docker inspect "$JN" --format 'image={{.Config.Image}} cmd={{json .Config.Cmd}} env={{json .Config.Env}} labels={{json .Config.Labels}} restart={{.HostConfig.RestartPolicy.Name}}'
+          else
+            echo "janitor-подобный контейнер не найден"
+          fi
+          echo "=== volumes size ==="
+          docker system df -v 2>/dev/null | grep -A2 "Local Volumes space" || docker system df | tail -3
 
       - name: pc-ops deploy-comfyui
         if: ${{ inputs.action == 'deploy-comfyui' }}
