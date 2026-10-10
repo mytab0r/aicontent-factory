@@ -90,6 +90,7 @@ jobs:
           echo "upscale_elapsed_s=$(( $(date +%s) - T0 ))" | tee -a runs/loopgen/steps.log
       - name: encode loop.mp4 + seam check (closed GOP)
         run: |
+          set -o pipefail
           .venv/bin/python pipeline/loop_build.py encode runs/loopgen/upscaled runs/loopgen/loop.mp4 --fps 24 \
             2>&1 | tee runs/loopgen/encode_seam.log
       - name: upload loopgen artifact
