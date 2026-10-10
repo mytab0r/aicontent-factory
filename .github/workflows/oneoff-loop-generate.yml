@@ -36,7 +36,9 @@ jobs:
               sleep 5
               ST=$(docker inspect comfyui --format '{{.State.Status}} exit={{.State.ExitCode}}' 2>/dev/null || true)
               case "$ST" in exited*|dead*) echo "comfyui died:"; docker logs --tail 40 comfyui 2>&1; exit 1;; esac
-              curl -fsS -m 5 http://127.0.0.1:8188/system_stats >/dev/null 2>&1 && break || true
+              if curl -fsS -m 5 "http://$(docker inspect comfyui --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 2>/dev/null):8188/system_stats" >/dev/null 2>&1; then
+                echo "comfyui ready"; break
+              fi
             done
           fi
           # резолвим IP comfyui (runner не в netns comfyui, alias не виден);
