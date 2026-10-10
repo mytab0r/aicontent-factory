@@ -22,13 +22,30 @@ jobs:
           uv pip install --python .venv/bin/python numpy
       - name: comfy reachable
         run: |
-          # резолвим IP comfyui в его сети (runner не в netns comfyui, alias не виден)
+          # comfyui может отсутствовать (janitor удалил контейнер) — пересоздаём из образа
+          if [ -z "$(docker ps -q --filter name=comfyui)" ]; then
+            echo "comfyui нет — пересоздаю из comfyui-wan22:local"
+            for v in comfy-models comfy-output comfy-input; do docker volume create $v >/dev/null; done
+            NET=$(docker network ls --format '{{.Name}}' | grep -v '^bridge$\|^host$\|^none$' | while read n; do docker network inspect "$n" --format '{{range .Containers}}{{printf "%s\n" .Name}}{{end}}' | grep -qx 'gh-runner-aicontent-factory' && echo "$n" && break; done)
+            docker run --rm -i -v comfy-models:/models alpine:3.20 \
+              sh -c 'cat > /models/extra_model_paths.yaml' < deploy/gpu-pc/comfyui/extra_model_paths.yaml
+            docker run -d --name comfyui --gpus all --network "$NET" --network-alias comfyui \
+              -v comfy-models:/models -v comfy-output:/app/output -v comfy-input:/app/input \
+              comfyui-wan22:local
+            for i in $(seq 1 60); do
+              sleep 5
+              ST=$(docker inspect comfyui --format '{{.State.Status}} exit={{.State.ExitCode}}' 2>/dev/null || true)
+              case "$ST" in exited*|dead*) echo "comfyui died:"; docker logs --tail 40 comfyui 2>&1; exit 1;; esac
+              curl -fsS -m 5 http://127.0.0.1:8188/system_stats >/dev/null 2>&1 && break || true
+            done
+          fi
+          # резолвим IP comfyui (runner не в netns comfyui, alias не виден);
+          # порт из runner-контейнера напрямую тоже может быть не виден — пробуем оба пути
           CID=$(docker ps --filter name=comfyui --format '{{.ID}}' | head -1)
-          [ -n "$CID" ] || { echo "comfyui container not running"; docker ps -a --format '{{.Names}} {{.Status}}'; exit 1; }
-          IP=$(docker inspect "$CID" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}')
+          IP=$(docker inspect "$CID" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
           echo "comfyui IP: $IP"
-          echo "COMFY_IP=$(echo $IP | cut -d' ' -f1)" >> "$GITHUB_ENV"
-          curl -s -m 10 "http://$COMFY_IP:8188/system_stats" || exit 1
+          echo "COMFY_IP=$IP" >> "$GITHUB_ENV"
+          curl -s -m 10 "http://$IP:8188/system_stats" || exit 1
       - name: generate + upscale (timed)
         run: |
           mkdir -p runs/loopgen/raw runs/loopgen/upscaled
