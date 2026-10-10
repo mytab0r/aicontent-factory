@@ -54,6 +54,8 @@ jobs:
             echo "=== $f ==="
             python "$f"
           done
+      - name: recheck_blockers selftest
+        run: python recheck_blockers.py --selftest
       - name: run pay.pxbt.app tests (wallet-verify + api + server)
         run: |
           set -e
