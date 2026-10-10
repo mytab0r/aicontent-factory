@@ -53,15 +53,18 @@ jobs:
             -v comfy-output:/app/output \
             -v comfy-input:/app/input \
             comfyui-wan22:local
-          # ждём HTTP (первый старт: импорт torch, ~1-3 мин)
+          # ждём HTTP (первый старт: импорт torch, ~1-3 мин); каждый круг — статус
+          # контейнера, при смерти сразу тащим логи и падаем с диагнозом
           for i in $(seq 1 60); do
             sleep 5
             if curl -fsS -m 5 http://comfyui:8188/system_stats >/dev/null 2>&1; then
               echo "comfyui UP after $((i*5))s"; exit 0
             fi
-            docker ps --filter name=comfyui --format '{{.Status}}'
+            ST=$(docker inspect comfyui --format '{{.State.Status}} exit={{.State.ExitCode}}' 2>/dev/null || true)
+            echo "t=$((i*5))s state: ${ST:-gone}"
+            case "$ST" in exited*|dead*) echo "=== comfyui died, logs:"; docker logs --tail 80 comfyui 2>&1; exit 1;; esac
           done
-          echo "comfyui не поднялся за 300с"; docker logs --tail 50 comfyui; exit 1
+          echo "comfyui не поднялся за 300с"; docker logs --tail 80 comfyui 2>&1 || true; exit 1
 
       - name: pc-ops download-models
         if: ${{ inputs.action == 'download-models' }}
