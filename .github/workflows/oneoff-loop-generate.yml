@@ -67,7 +67,7 @@ jobs:
           T0=$(date +%s)
           set +e
           .venv/bin/python pipeline/loop_generate.py --image runs/loopgen/raw/source.png \
-              --out-dir runs/loopgen/raw --endpoint "http://$COMFY_IP:8188" --attempts 8 \
+              --out-dir runs/loopgen/raw --endpoint "http://$COMFY_IP:8188" --attempts 4 \
               2>&1 | tee runs/loopgen/generate.log
           GRC=${PIPESTATUS[0]}
           set -e

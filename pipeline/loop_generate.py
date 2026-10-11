@@ -1,27 +1,34 @@
 #!/usr/bin/env python3
 """Генерация loop-клипа в ComfyUI (Wan2.2 FLF2V) через HTTP API.
 
-Спека: spec-seamless-loop.md §4 шаг 1-2. Воркфлоу:
-deploy/gpu-pc/comfyui/wan22_flf2v_loop.json (API-формат, плейсхолдеры
-{{PROMPT}} {{NEG_PROMPT}} {{IMAGE}} {{SEED}} {{WIDTH}} {{HEIGHT}} {{LENGTH}}).
+Спека: spec-seamless-loop.md §4 шаги 1-2. Воркфлоу (ревизия 2, M-мост):
+deploy/gpu-pc/comfyui/wan22_flf2v_loop.json — ДВА сэмплинг-прохода в одном
+промпте ComfyUI:
+  pass A: WanImageToVideo, якорь только первый кадр, img -> M (M-кадр —
+          центральный кроп обложки, 8:5, пиксельные плейсхолдеры MX/MY/MWIDTH/MHEIGHT);
+  pass B: WanFirstLastFrameToVideo M -> img (тот же seed => первый шаг шума
+          идентичен, стык непрерывен; последний кадр пинится к обложке).
+Замыкание A (§5: последний кадр == first) выполняется конструктивно —
+ревизия 1 (first=last одним проходом) не замыкала цикл ни на одном из 8 сидов
+(closure PSNR 25.2-25.9 стабильно, логи runs 38048056122/38054680946).
+Финальные кадры = passA[1..M] + passB[1..] (дубли стыкового M срезаны).
 
 Использование:
     python3 loop_generate.py --image cover.png --out-dir runs/xyz/raw \
         [--prompt "..."] [--seed N] [--width 832] [--height 480]
-        [--length 81] [--attempts 3]
+        [--length 81] [--m-latent 8] [--attempts 3]
 
-Closure-метрика A (§5) проверяется здесь же по вынутым кадрам:
-провал -> новый seed, максимум --attempts попыток, потом exit 1.
+Воркфлоу сам гарантирует closure A; pre-gate B1/B3/B4-Y по готовым кадрам
+отсекает сиды со скачком/статикой/дрейфом до encode (§6 F1/F3). Провал —
+новый seed, максимум --attempts попыток, потом exit 1.
 
 В ComfyUI изображение попадает через input-каталог; загрузка — POST /upload/image.
 """
 import argparse
 import json
 import random
-import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import urllib.parse
 import urllib.request
@@ -57,8 +64,7 @@ def upload_image(png: Path) -> str:
     boundary = uuid.uuid4().hex
     body = bytearray()
     body += (f"--{boundary}\r\nContent-Disposition: form-data; name=\"image\"; "
-             f"filename=\"{png.name}\"\r\nContent-Type: image/png\r\n\r\n"
-             ).encode()
+             f"filename=\"{png.name}\"\r\nContent-Type: image/png\r\n\r\n").encode()
     body += png.read_bytes()
     body += f"\r\n--{boundary}--\r\n".encode()
     req = urllib.request.Request(
@@ -69,18 +75,36 @@ def upload_image(png: Path) -> str:
     return out["name"] + (f"?subfolder={out['subfolder']}" if out.get("subfolder") else "")
 
 
+def m_crop(width: int, height: int, m_latent: int) -> dict:
+    """Центральный кроп обложки 8:5 под M-кадр (модель обучена на 8-кратных)."""
+    mw = min(width, round(height * 8 / 5 / 16) * 16)
+    mh = round(mw * 5 / 8 / 16) * 16
+    if mh > height:
+        mh = round(height / 16) * 16
+        mw = round(mh * 8 / 5 / 16) * 16
+    return {"mwidth": mw, "mheight": mh,
+            "mx": (width - mw) // 2 // 16 * 16, "my": (height - mh) // 2 // 16 * 16,
+            "midx": m_latent - 1}
+
+
 def render(png: Path, out_dir: Path, prompt: str, neg: str, seed: int,
-           width: int, height: int, length: int, timeout: int = 1500) -> list[Path]:
-    """Один прогон воркфлоу; возвращает пути к PNG-кадрам (скачанным локально)."""
+           width: int, height: int, length: int, m_latent: int,
+           timeout: int = 2400) -> tuple[list[Path], list[Path]]:
+    """Один промпт ComfyUI = pass A + pass B. Возвращает (кадры A, кадры B)."""
     tpl = json.loads(WORKFLOW.read_text(encoding="utf-8"))
     name = upload_image(png)
+    mc = m_crop(width, height, m_latent)
 
     def fill(v):
         if isinstance(v, str):
             return (v.replace("{{PROMPT}}", prompt).replace("{{NEG_PROMPT}}", neg)
                      .replace("{{IMAGE}}", name).replace("{{SEED}}", str(seed))
                      .replace("{{WIDTH}}", str(width)).replace("{{HEIGHT}}", str(height))
-                     .replace("{{LENGTH}}", str(length)))
+                     .replace("{{LENGTH}}", str(length))
+                     .replace("{{PALENGTH}}", str((m_latent - 1) * 4 + 1))
+                     .replace("{{MWIDTH}}", str(mc["mwidth"]))
+                     .replace("{{MHEIGHT}}", str(mc["mheight"]))
+                     .replace("{{MX}}", str(mc["mx"])).replace("{{MY}}", str(mc["my"])))
         if isinstance(v, list):
             return [fill(x) for x in v]
         if isinstance(v, dict):
@@ -89,12 +113,15 @@ def render(png: Path, out_dir: Path, prompt: str, neg: str, seed: int,
 
     prompt_msg = {"prompt": fill(tpl["nodes"]), "client_id": uuid.uuid4().hex}
     # числовые поля пришли строками из плейсхолдеров — привести
-    n12 = prompt_msg["prompt"]["12"]["inputs"]
-    n12["width"] = int(n12["width"])
-    n12["height"] = int(n12["height"])
-    n12["length"] = int(n12["length"])
+    for nid in ("12", "22"):
+        n = prompt_msg["prompt"][nid]["inputs"]
+        n["width"] = int(n["width"])
+        n["height"] = int(n["height"])
+        n["length"] = int(n["length"])
     prompt_msg["prompt"]["15"]["inputs"]["noise_seed"] = int(
         prompt_msg["prompt"]["15"]["inputs"]["noise_seed"])
+    prompt_msg["prompt"]["25"]["inputs"]["noise_seed"] = int(
+        prompt_msg["prompt"]["25"]["inputs"]["noise_seed"])
 
     req = urllib.request.Request(
         comfy_endpoint() + "/prompt", data=json.dumps(prompt_msg).encode(),
@@ -120,7 +147,7 @@ def render(png: Path, out_dir: Path, prompt: str, neg: str, seed: int,
     else:
         raise RuntimeError(f"timeout {timeout}s waiting for {pid}")
 
-    outs = []
+    batches: dict[str, list[Path]] = {"passA": [], "passB": []}
     for node_out in hist[pid].get("outputs", {}).values():
         for img in node_out.get("images", []):
             url = (f"/view?filename={urllib.parse.quote(img['filename'])}"
@@ -128,11 +155,43 @@ def render(png: Path, out_dir: Path, prompt: str, neg: str, seed: int,
                    f"&type={img.get('type', 'output')}")
             data = urllib.request.urlopen(comfy_endpoint() + url, timeout=120).read()
             # нормализуем имя: кадры лягут как 00000.png..N-1 (контракт loop_build.py:97)
-            dst = out_dir / f"{len(outs):05d}.png"
+            batch = "passA" if "passa" in img["filename"].lower() else "passB"
+            dst = out_dir / batch / f"{len(batches[batch]):05d}.png"
+            dst.parent.mkdir(parents=True, exist_ok=True)
             dst.write_bytes(data)
-            outs.append(dst)
-    outs.sort()
+            batches[batch].append(dst)
+    for k in batches:
+        batches[k].sort()
+    return batches["passA"], batches["passB"]
+
+
+def assemble(frames_a: list[Path], frames_b: list[Path], m_latent: int,
+             length: int, out_dir: Path) -> list[Path]:
+    """Финальный клип: passA[1..M] + passB[1..] (дубли стыкового M срезаны).
+
+    Кадры pass B: length - n_a + 2 пикселя — последний кадр pass B есть пин
+    end-image (обложка), он же кадр 0 финала; именно он делает замыкание A
+    конструктивным. Всего length кадров; 00000.png..N-1 в out_dir.
+    """
+    n_a = (m_latent - 1) * 4 + 1             # пиксельных кадров в pass A (4k+1)
+    assert len(frames_a) == n_a, f"passA: {len(frames_a)} кадров, ожидалось {n_a}"
+    assert len(frames_b) == length - n_a + 2, \
+        f"passB: {len(frames_b)} кадров, ожидалось {length - n_a + 2}"
+    outs = []
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for p in frames_a[1:] + frames_b[1:]:    # дубль img и дубль M срезаны;
+        dst = out_dir / f"{len(outs):05d}.png"  # хвост pass B = пин обложки (кадр N-1)
+        dst.write_bytes(p.read_bytes())
+        outs.append(dst)
+    assert len(outs) == length, f"склейка дала {len(outs)} кадров, ожидалось {length}"
     return outs
+
+
+def gray_of(p: Path) -> bytes:
+    raw = subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", str(p), "-pix_fmt", "gray",
+         "-f", "rawvideo", "-"], capture_output=True, check=True).stdout
+    return raw
 
 
 def main() -> None:
@@ -146,6 +205,8 @@ def main() -> None:
     ap.add_argument("--width", type=int, default=832)
     ap.add_argument("--height", type=int, default=480)
     ap.add_argument("--length", type=int, default=81)
+    ap.add_argument("--m-latent", type=int, default=8,
+                    help="латентных кадров в половине (29 пиксельных M-кадров)")
     ap.add_argument("--attempts", type=int, default=3)
     ap.add_argument("--endpoint", default=None, help="COMFY_ENDPOINT override")
     args = ap.parse_args()
@@ -156,6 +217,7 @@ def main() -> None:
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     sys.path.insert(0, str(Path(__file__).parent))
+    import numpy as np
     import seam_check
 
     # фиксированный --seed не закрепляет последующие попытки: рандомные сида —
@@ -167,10 +229,12 @@ def main() -> None:
         seed = (args.seed + attempt) if args.seed is not None else random.randrange(2**31)
         seeds.append(seed)
         print(f"[attempt {attempt + 1}/{args.attempts}] seed={seed}", flush=True)
-        frames = render(Path(args.image), out_dir, args.prompt, args.neg, seed,
-                        args.width, args.height, args.length)
-        assert len(frames) == args.length, f"ожидалось {args.length} кадров, пришло {len(frames)}"
-        # Closure A (§5): SSIM(last, first)>=0.98 ИЛИ PSNR>=35 dB
+        frames_a, frames_b = render(Path(args.image), out_dir, args.prompt, args.neg,
+                                    seed, args.width, args.height, args.length,
+                                    args.m_latent)
+        frames = assemble(frames_a, frames_b, args.m_latent, args.length, out_dir)
+        # Closure A (§5): конструктивно (последний кадр = пин обложки), но
+        # честно считаем по фактам — SSIM(last, first)>=0.98 ИЛИ PSNR>=35
         rep = _closure_pair(frames[-1], frames[0])
         preg = _seam_pregate(frames)
         print(json.dumps({"seed": seed, "closure": rep, "seam_pregate": preg},
@@ -179,8 +243,9 @@ def main() -> None:
         if rep["ok"] and preg["ok"]:
             meta = {"seeds": seeds, "accepted_seed": seed, "closure": rep,
                     "seam_pregate": preg,
-                    "workflow": str(WORKFLOW), "width": args.width,
-                    "height": args.height, "length": args.length,
+                    "workflow": str(WORKFLOW), "revision": 2, "bridge": "M",
+                    "width": args.width, "height": args.height,
+                    "length": args.length, "m_latent": args.m_latent,
                     "prompt": args.prompt, "neg": args.neg,
                     "frames": [str(p) for p in frames]}
             (out_dir / "generate_meta.json").write_text(

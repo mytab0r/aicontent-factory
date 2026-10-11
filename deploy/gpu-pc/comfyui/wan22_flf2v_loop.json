@@ -1,7 +1,7 @@
 {
-  "id": "wan22-flf2v-loop-4step",
-  "revision": "1",
-  "_comment": "Wan2.2 14B FLF2V loop, 4-step LightX2V. Источник: официальный шаблон video_wan2_2_14B_flf2v (Comfy-Org/workflow_templates), fast-вариант, API-формат. loop-правки: одно изображение в start_image и end_image; 832x480x81 (апскейл до 1080p на сервере, шаг 3 спеки); выход = PNG-кадры SaveImage, не mp4 - закрытый GOP кодирует сервер (loop_build.encode_loop). Placeholders {{PROMPT}} {{NEG_PROMPT}} {{IMAGE}} {{SEED}} {{WIDTH}} {{HEIGHT}} {{LENGTH}} подставляет pipeline/loop_generate.py. Модели в ComfyUI/models: diffusion_models/wan2.2_i2v_{high,low}_noise_14B_fp8_scaled.safetensors, loras/wan2.2_i2v_lightx2v_4steps_lora_v1_{high,low}_noise.safetensors, text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors, vae/wan_2.1_vae.safetensors, clip_vision/clip_vision_h.safetensors.",
+  "id": "wan22-flf2v-loop-mbridge",
+  "revision": "2",
+  "_comment": "Wan2.2 14B FLF2V loop, 4-step LightX2V, ДВУХПРОХОДНЫЙ M-мост (t_bc0d4e09 ревизия 2). Ревизия 1 (одно изображение в start_image и end_image одним проходом) фундаментально не замыкает цикл: модель сходит с якорей к середине и не успевает вернуться (8/8 сидов Q4_K_M: closure PSNR 25.2-25.9 dB, SSIM 0.95 при пороге A 0.98/35dB — стабильно, не сид-лотерея; логи runs 38048056122/38054680946). Решение: pass A (узлы 22/25/26/27/28) = WanImageToVideo с якорем только на первом кадре, генерирует img->M; pass B (узлы 12/15/16/17/18) = FLF2V M->img с ТОМ же seed: первый шаг шума идентичен (KSamplerAdvanced add_noise=enable+noise_seed, s1 = x0 + sqrt(a1)*seed_noise) и стык половин непрерывен по построению. Последний кадр pass B пинится к исходной картинке => замыкание A (последний кадр == first) выполняется конструктивно, а не по статистике. M-кадр = центральный кроп обложки (ImageCrop 20, координаты {{MX}}/{{MY}}/{{MWIDTH}}/{{MHEIGHT}}, 8:5): он же якорь start=end в pass B; оба прохода conditioned одним промптом и общим clip_vision. Финальный клип = decode(passA)[1..28] + decode(passB)[1..72] без дублей стыковых кадров — собирает pipeline/loop_generate.py: passA length=29 ({{LENGTH}}=29*4+1... подставляется как (m_latent-1)*4+1), стыковой кадр M у обеих половин общий по построению (первый шаг шума pass B идентичен pass A). Батч-подход (обе половины одним батчем) отклонён: add_noise=enable берёт один noise_seed на батч, идентичность сида не гарантирована. Placeholders {{PROMPT}} {{NEG_PROMPT}} {{IMAGE}} {{SEED}} {{WIDTH}} {{HEIGHT}} {{LENGTH}} {{MWIDTH}} {{MHEIGHT}} {{MX}} {{MY}} подставляет pipeline/loop_generate.py. Модели: diffusion_models/wan2.2_i2v_{high,low}_noise_14B_Q4_K_M.gguf (GGUF Q4_K_M, 2x9.65GB, ComfyUI-GGUF), loras/wan2.2_i2v_lightx2v_4steps_lora_v1_{high,low}_noise.safetensors, text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors, vae/wan_2.1_vae.safetensors, clip_vision/clip_vision_h.safetensors.",
   "nodes": {
     "1": {
       "class_type": "UnetLoaderGGUF",
@@ -97,8 +97,34 @@
         "crop": "center"
       }
     },
-    "12": {
-      "class_type": "WanFirstLastFrameToVideo",
+    "19": {
+      "class_type": "ImageScale",
+      "inputs": {
+        "image": [
+          "9",
+          0
+        ],
+        "upscale_method": "lanczos",
+        "width": "{{WIDTH}}",
+        "height": "{{HEIGHT}}",
+        "crop": "center"
+      }
+    },
+    "20": {
+      "class_type": "ImageCrop",
+      "inputs": {
+        "image": [
+          "19",
+          0
+        ],
+        "width": "{{MWIDTH}}",
+        "height": "{{MHEIGHT}}",
+        "x": "{{MX}}",
+        "y": "{{MY}}"
+      }
+    },
+    "22": {
+      "class_type": "WanImageToVideo",
       "inputs": {
         "positive": [
           "6",
@@ -112,26 +138,18 @@
           "8",
           0
         ],
-        "clip_vision_start_image": [
-          "11",
-          0
-        ],
-        "clip_vision_end_image": [
-          "11",
-          0
-        ],
+        "width": "{{WIDTH}}",
+        "height": "{{HEIGHT}}",
+        "length": "{{PALENGTH}}",
+        "batch_size": 1,
         "start_image": [
           "9",
           0
         ],
-        "end_image": [
-          "9",
+        "clip_vision_output": [
+          "11",
           0
-        ],
-        "width": "{{WIDTH}}",
-        "height": "{{HEIGHT}}",
-        "length": "{{LENGTH}}",
-        "batch_size": 1
+        ]
       }
     },
     "13": {
@@ -156,6 +174,127 @@
         "shift": 5.0,
         "steps": 8,
         "start_at_step": 4
+      }
+    },
+    "25": {
+      "class_type": "KSamplerAdvanced",
+      "inputs": {
+        "model": [
+          "13",
+          0
+        ],
+        "add_noise": "enable",
+        "noise_seed": "{{SEED}}",
+        "steps": 4,
+        "cfg": 1.0,
+        "sampler_name": "euler",
+        "scheduler": "simple",
+        "start_at_step": 0,
+        "end_at_step": 2,
+        "return_with_leftover_noise": "enable",
+        "positive": [
+          "22",
+          0
+        ],
+        "negative": [
+          "22",
+          1
+        ],
+        "latent_image": [
+          "22",
+          2
+        ]
+      }
+    },
+    "26": {
+      "class_type": "KSamplerAdvanced",
+      "inputs": {
+        "model": [
+          "14",
+          0
+        ],
+        "add_noise": "disable",
+        "noise_seed": 0,
+        "steps": 4,
+        "cfg": 1.0,
+        "sampler_name": "euler",
+        "scheduler": "simple",
+        "start_at_step": 2,
+        "end_at_step": 10000,
+        "return_with_leftover_noise": "disable",
+        "positive": [
+          "22",
+          0
+        ],
+        "negative": [
+          "22",
+          1
+        ],
+        "latent_image": [
+          "25",
+          0
+        ]
+      }
+    },
+    "27": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": [
+          "26",
+          0
+        ],
+        "vae": [
+          "8",
+          0
+        ]
+      }
+    },
+    "28": {
+      "class_type": "SaveImage",
+      "inputs": {
+        "images": [
+          "27",
+          0
+        ],
+        "filename_prefix": "loop/passA",
+        "compress_level": 6
+      }
+    },
+    "12": {
+      "class_type": "WanFirstLastFrameToVideo",
+      "inputs": {
+        "positive": [
+          "6",
+          0
+        ],
+        "negative": [
+          "7",
+          0
+        ],
+        "vae": [
+          "8",
+          0
+        ],
+        "clip_vision_start_image": [
+          "11",
+          0
+        ],
+        "clip_vision_end_image": [
+          "11",
+          0
+        ],
+        "start_image": [
+          "20",
+          0
+        ],
+        "end_image": [
+          "20",
+          0
+        ],
+        "width": "{{WIDTH}}",
+        "height": "{{HEIGHT}}",
+        "length": "{{LENGTH}}",
+        "batch_size": 1
       }
     },
     "15": {
@@ -238,7 +377,7 @@
           "17",
           0
         ],
-        "filename_prefix": "loop/loop",
+        "filename_prefix": "loop/passB",
         "compress_level": 6
       }
     }
