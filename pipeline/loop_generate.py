@@ -203,7 +203,7 @@ def assemble(frames_a: list[Path], frames_b: list[Path], m_latent: int,
     return outs
 
 
-TAIL_BLEND_FRAMES = 7   # не 9: предпоследний кадр должен заметно отличаться от
+TAIL_BLEND_FRAMES = 6   # не 9/7: предпоследний кадр должен заметно отличаться от
                         # cover, иначе B2 (d_seam >= 0.25*med) режет как фриз
 HEAD_BLEND_FRAMES = 4
 
