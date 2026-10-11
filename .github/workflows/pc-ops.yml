@@ -100,6 +100,8 @@ jobs:
           print('VAELoader vae_name:', names('VAELoader', 'vae_name'))
           print('CLIPVisionLoader clip_name:', names('CLIPVisionLoader', 'clip_name'))
           PY
+          echo "=== volume wan-models ==="
+          docker run --rm -v wan-models:/models alpine:3.20 sh -c 'du -sh /models 2>/dev/null; ls -la /models; for d in diffusion_models loras text_encoders vae clip_vision unet; do echo "-- $d"; ls -la /models/$d 2>/dev/null | tail -n +2; done'
 
       - name: pc-ops download-models
         if: ${{ inputs.action == 'download-models' }}
