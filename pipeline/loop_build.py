@@ -226,6 +226,7 @@ def main() -> None:
     pf.add_argument("loop")
     pf.add_argument("track")
     pf.add_argument("final")
+    pf.add_argument("--fps", type=int, default=24)
     args = ap.parse_args()
 
     if args.cmd == "encode":
