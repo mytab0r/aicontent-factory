@@ -17,6 +17,11 @@ def test_bridge_lengths():
     nodes = tpl["nodes"]
     assert nodes["22"]["inputs"]["length"] == "{{PALENGTH}}", "passA длина"
     assert nodes["12"]["inputs"]["length"] == "{{PBLENGTH}}", "passB длина"
+    # ревизия 2c: хвост пинится к ОБЛОЖКЕ (node 9), не к M-кропу (node 20) —
+    # иначе клип дрейфует от source и не возвращается (run 38141438694:
+    # drift 8→41 MAD, хвост 35.7, closure PSNR 14)
+    assert nodes["12"]["inputs"]["end_image"] == ["9", 0], "end_image = обложка"
+    assert nodes["12"]["inputs"]["start_image"] == ["20", 0], "start_image = M-кроп"
 
     length, m_latent = 81, 8
     n_a = (m_latent - 1) * 4 + 1                      # 29 кадров passA
