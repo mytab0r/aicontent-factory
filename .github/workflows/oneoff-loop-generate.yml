@@ -28,7 +28,7 @@ jobs:
       - name: deps
         run: |
           uv venv .venv
-          uv pip install --python .venv/bin/python numpy
+          uv pip install --python .venv/bin/python numpy pillow
       - name: comfy reachable
         run: |
           # comfyui может отсутствовать (janitor удалил контейнер) — пересоздаём из образа
