@@ -2,9 +2,10 @@ name: pc-ops
 # Обслуживание GPU-стека на ПК владельца. Воркер идёт self-hosted runner'ом,
 # докер-сокет хоста доступен напрямую (gh-runner контейнер с сокетом).
 # Умеет: статус; deploy-comfyui (сборка образа + запуск с GPU + сеть runner);
-# download-models (Wan2.2 FLF2V fp8-набор ~17 GB в volume acf-wan-models).
+# download-models (Wan2.2 FLF2V fp8-набор + GGUF Q4_K_M UNET-ы, суммарно ~36 GB
+# в volume acf-wan-models; M-мост ревизии 2 грузит GGUF через UnetLoaderGGUF —
+# fp8-UNET-ы для 12GB VRAM не влезают).
 # Имена acf-*: janitor хоста чистит ^wan*/^comfy* — их использовать нельзя.
-# GGUF Q4_K_M НЕ качаем: workflow ревизии 2 (M-мост) использует fp8 UNETLoader.
 on:
   workflow_dispatch:
     inputs:
@@ -137,6 +138,9 @@ jobs:
             dl \$base21/clip_vision/clip_vision_h.safetensors clip_vision/clip_vision_h.safetensors
             dl \$base22/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors loras/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors
             dl \$base22/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors loras/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors
+            mkdir -p unet
+            dl 'https://huggingface.co/bullerwins/Wan2.2-I2V-A14B-GGUF/resolve/main/wan2.2_i2v_high_noise_14B_Q4_K_M.gguf' unet/wan2.2_i2v_high_noise_14B_Q4_K_M.gguf
+            dl 'https://huggingface.co/bullerwins/Wan2.2-I2V-A14B-GGUF/resolve/main/wan2.2_i2v_low_noise_14B_Q4_K_M.gguf' unet/wan2.2_i2v_low_noise_14B_Q4_K_M.gguf
             cp /models/../extra_model_paths.yaml /models/extra_model_paths.yaml 2>/dev/null || true
             echo '=== models ==='; ls -la diffusion_models loras text_encoders vae clip_vision
           "
