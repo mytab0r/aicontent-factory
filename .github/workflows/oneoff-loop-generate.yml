@@ -32,28 +32,28 @@ jobs:
       - name: comfy reachable
         run: |
           # comfyui может отсутствовать (janitor удалил контейнер) — пересоздаём из образа
-          if [ -z "$(docker ps -q --filter name=wan22)" ]; then
-            echo "comfyui нет — пересоздаю из comfyui-wan22:local"
+          if [ -z "$(docker ps -q --filter name=acf-comfy)" ]; then
+            echo "comfyui нет — пересоздаю из acf-comfyui-wan22:local"
             # janitor может стереть и образ — ребилдим (кэш слоёв обычно жив)
-            docker image inspect comfyui-wan22:local >/dev/null 2>&1 || \
-              docker build -q -f deploy/gpu-pc/comfyui/Dockerfile -t comfyui-wan22:local deploy/gpu-pc/comfyui
-            for v in wan-models wan-output wan-input; do docker volume create $v >/dev/null; done
+            docker image inspect acf-comfyui-wan22:local >/dev/null 2>&1 || \
+              docker build -q -f deploy/gpu-pc/comfyui/Dockerfile -t acf-comfyui-wan22:local deploy/gpu-pc/comfyui
+            for v in acf-wan-models acf-wan-output acf-wan-input; do docker volume create $v >/dev/null; done
             NET=$(docker network ls --format '{{.Name}}' | grep -v '^bridge$\|^host$\|^none$' | while read n; do docker network inspect "$n" --format '{{range .Containers}}{{printf "%s\n" .Name}}{{end}}' | grep -qx 'gh-runner-aicontent-factory' && echo "$n" && break; done)
-            docker run --rm -i -v wan-models:/models alpine:3.20 \
+            docker run --rm -i -v acf-wan-models:/models alpine:3.20 \
               sh -c 'cat > /models/extra_model_paths.yaml' < deploy/gpu-pc/comfyui/extra_model_paths.yaml
-            docker run -d --name wan22 --gpus all --network "$NET" --network-alias comfyui \
-              -v wan-models:/models -v wan-output:/app/output -v wan-input:/app/input \
-              comfyui-wan22:local
+            docker run -d --name acf-comfy --gpus all --network "$NET" --network-alias comfyui \
+              -v acf-wan-models:/models -v acf-wan-output:/app/output -v acf-wan-input:/app/input \
+              acf-comfyui-wan22:local
             for i in $(seq 1 60); do
               sleep 5
-              ST=$(docker inspect wan22 --format '{{.State.Status}} exit={{.State.ExitCode}}' 2>/dev/null || true)
-              case "$ST" in exited*|dead*) echo "comfyui died:"; docker logs --tail 40 wan22 2>&1; exit 1;; esac
-              if curl -fsS -m 5 "http://$(docker inspect wan22 --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 2>/dev/null):8188/system_stats" >/dev/null 2>&1; then
+              ST=$(docker inspect acf-comfy --format '{{.State.Status}} exit={{.State.ExitCode}}' 2>/dev/null || true)
+              case "$ST" in exited*|dead*) echo "comfyui died:"; docker logs --tail 40 acf-comfy 2>&1; exit 1;; esac
+              if curl -fsS -m 5 "http://$(docker inspect acf-comfy --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 2>/dev/null):8188/system_stats" >/dev/null 2>&1; then
                 echo "comfyui ready"; break
               fi
             done
           fi
-          CID=$(docker ps --filter name=wan22 --format '{{.ID}}' | head -1)
+          CID=$(docker ps --filter name=acf-comfy --format '{{.ID}}' | head -1)
           IP=$(docker inspect "$CID" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
           echo "comfyui IP: $IP"
           echo "COMFY_IP=$IP" >> "$GITHUB_ENV"
@@ -63,7 +63,7 @@ jobs:
           mkdir -p runs/loopgen/raw
           cp config/assets/loop_cover_tavern_832x480.png runs/loopgen/raw/source.png
           # пик VRAM во время генерации (§5 E) — через gpu-контейнер comfyui
-          ( while true; do docker exec wan22 nvidia-smi --query-gpu=memory.used --format=csv,noheader 2>/dev/null; sleep 2; done > runs/loopgen/vram.log ) &
+          ( while true; do docker exec acf-comfy nvidia-smi --query-gpu=memory.used --format=csv,noheader 2>/dev/null; sleep 2; done > runs/loopgen/vram.log ) &
           VRAMPID=$!
           trap "kill $VRAMPID 2>/dev/null" EXIT
           echo "=== step1 generate (ComfyUI Wan2.2 FLF2V, real cover, seed scan) ===" | tee runs/loopgen/steps.log
@@ -166,7 +166,7 @@ jobs:
               "closure": meta.get("closure"),
               "models": models,
               "timings_s": steps,
-              "versions": {"ffmpeg": ffv, "comfyui_image": "comfyui-wan22:local", "branch": br},
+              "versions": {"ffmpeg": ffv, "comfyui_image": "acf-comfyui-wan22:local", "branch": br},
               "verdict_D": None,
           }
           (d / "run.json").write_text(json.dumps(run, ensure_ascii=False, indent=2))
