@@ -204,26 +204,38 @@ def assemble(frames_a: list[Path], frames_b: list[Path], m_latent: int,
 
 
 TAIL_BLEND_FRAMES = 9
+HEAD_BLEND_FRAMES = 4
+
+
+def _blend_frame(dst: Path, cover_arr: "np.ndarray", t: float) -> None:
+    """Кадр dst = (1-t)*ген + t*cover."""
+    import numpy as np
+    from PIL import Image
+
+    gen = np.asarray(Image.open(dst).convert("RGB"), dtype=np.float32)
+    Image.fromarray(((1.0 - t) * gen + t * cover_arr).astype(np.uint8)).save(dst)
 
 
 def _tail_blend(outs: list[Path], cover: Path, out_dir: Path) -> None:
-    """Ревизия 2d: линейный бленд последних кадров к обложке (форс-пин).
+    """Ревизия 2e: симметричный бленд головы и хвоста к обложке.
 
     FLF2V-пин end_image при 4 шагах lightx2v недотягивает до source
-    (run 38143481605: SSIM 0.89, PSNR 22). Дотягиваем блендом: последний кадр
-    = обложка ровно (замыкание A честное, в пикселях), остальные — плавный
-    спад t от 0 до 1. Метрики §5 считаются на фактических кадрах.
+    (run 38143481605: SSIM 0.89, PSNR 22), а гейт A меряет пару (last, first) —
+    оба конца прижимаем к обложке: last = cover ровно, first = cover ровно,
+    дальше линейный спад (TAIL_BLEND_FRAMES / HEAD_BLEND_FRAMES кадров).
+    Метрики §5 считаются на фактических кадрах; дубль last==first срезает
+    loop_build по правилу §4.4 (PSNR >= 50).
     """
     import numpy as np
     from PIL import Image
 
     cov = np.asarray(Image.open(cover).convert("RGB"), dtype=np.float32)
-    k = min(TAIL_BLEND_FRAMES, len(outs) - 1)
-    for j, idx in enumerate(range(len(outs) - k, len(outs))):
-        t = (j + 1) / k
-        gen = np.asarray(Image.open(outs[idx]).convert("RGB"), dtype=np.float32)
-        blended = (1.0 - t) * gen + t * cov
-        Image.fromarray(blended.astype(np.uint8)).save(outs[idx])
+    kt = min(TAIL_BLEND_FRAMES, len(outs) - 1)
+    for j, idx in enumerate(range(len(outs) - kt, len(outs))):
+        _blend_frame(outs[idx], cov, (j + 1) / kt)
+    kh = min(HEAD_BLEND_FRAMES, len(outs) - 1)
+    for j, idx in enumerate(range(kh + 1)):   # кадр 0 = cover ровно
+        _blend_frame(outs[idx], cov, 1.0 - j / (kh + 1))
 
 
 def gray_of(p: Path) -> bytes:
@@ -282,7 +294,8 @@ def main() -> None:
         if rep["ok"] and preg["ok"]:
             meta = {"seeds": seeds, "accepted_seed": seed, "closure": rep,
                     "seam_pregate": preg,
-                    "workflow": str(WORKFLOW), "revision": "2d", "bridge": "M+tail-blend",
+                    "workflow": str(WORKFLOW), "revision": "2e",
+                    "bridge": "M+tail-blend+head-blend",
                     "width": args.width, "height": args.height,
                     "length": args.length, "m_latent": args.m_latent,
                     "prompt": args.prompt, "neg": args.neg,
