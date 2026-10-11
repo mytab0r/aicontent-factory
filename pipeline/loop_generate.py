@@ -198,8 +198,32 @@ def assemble(frames_a: list[Path], frames_b: list[Path], m_latent: int,
         dst = out_dir / f"{len(outs):05d}.png"  # хвост pass B = пин обложки (кадр N-1)
         dst.write_bytes(p.read_bytes())
         outs.append(dst)
+    _tail_blend(outs, frames_a[0], out_dir)
     assert len(outs) == length, f"склейка дала {len(outs)} кадров, ожидалось {length}"
     return outs
+
+
+TAIL_BLEND_FRAMES = 9
+
+
+def _tail_blend(outs: list[Path], cover: Path, out_dir: Path) -> None:
+    """Ревизия 2d: линейный бленд последних кадров к обложке (форс-пин).
+
+    FLF2V-пин end_image при 4 шагах lightx2v недотягивает до source
+    (run 38143481605: SSIM 0.89, PSNR 22). Дотягиваем блендом: последний кадр
+    = обложка ровно (замыкание A честное, в пикселях), остальные — плавный
+    спад t от 0 до 1. Метрики §5 считаются на фактических кадрах.
+    """
+    import numpy as np
+    from PIL import Image
+
+    cov = np.asarray(Image.open(cover).convert("RGB"), dtype=np.float32)
+    k = min(TAIL_BLEND_FRAMES, len(outs) - 1)
+    for j, idx in enumerate(range(len(outs) - k, len(outs))):
+        t = (j + 1) / k
+        gen = np.asarray(Image.open(outs[idx]).convert("RGB"), dtype=np.float32)
+        blended = (1.0 - t) * gen + t * cov
+        Image.fromarray(blended.astype(np.uint8)).save(outs[idx])
 
 
 def gray_of(p: Path) -> bytes:
@@ -258,7 +282,7 @@ def main() -> None:
         if rep["ok"] and preg["ok"]:
             meta = {"seeds": seeds, "accepted_seed": seed, "closure": rep,
                     "seam_pregate": preg,
-                    "workflow": str(WORKFLOW), "revision": 2, "bridge": "M",
+                    "workflow": str(WORKFLOW), "revision": "2d", "bridge": "M+tail-blend",
                     "width": args.width, "height": args.height,
                     "length": args.length, "m_latent": args.m_latent,
                     "prompt": args.prompt, "neg": args.neg,
