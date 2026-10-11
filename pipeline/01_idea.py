@@ -7,7 +7,8 @@ import sys
 import dd_channel
 from common import router_post, next_mood, new_run_dir
 
-MODEL = "gemini/gemini-3.8-flash"
+# ponytail: фолбэк по списку; квота gemini кончается -> следующая модель
+MODELS = ["gemini/gemini-3.8-flash", "auto-worker-combo", "cx/gpt-5.5"]
 
 
 def main() -> None:
@@ -33,12 +34,21 @@ def main() -> None:
   description: 2-3 предложения описания видео на английском для YouTube
   tags: список из 8-12 тегов (английские, через запятую в массиве JSON)
 """
-    resp = router_post("/chat/completions", {
-        "model": MODEL,
-        "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 1500,
-        "stream": False,
-    })
+    resp, err = None, None
+    for model in MODELS:
+        try:
+            resp = router_post("/chat/completions", {
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 1500,
+                "stream": False,
+            })
+            break
+        except RuntimeError as e:
+            print(f"model {model} failed: {e}"[:300])
+            err = e
+    if resp is None:
+        raise err
     content = resp["choices"][0]["message"]["content"].strip()
     # LLM иногда оборачивает в ```json ... ``` — срезаем
     if content.startswith("```"):
