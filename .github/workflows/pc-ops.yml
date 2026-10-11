@@ -136,8 +136,8 @@ jobs:
             dl \$base22/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors loras/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors
             dl \$base22/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors loras/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors
             mkdir -p unet
-            dl 'https://huggingface.co/bullerwins/Wan2.2-I2V-A14B-GGUF/resolve/main/high_noise/wan2.2_i2v_high_noise_14B_Q4_K_M.gguf' unet/wan2.2_i2v_high_noise_14B_Q4_K_M.gguf
-            dl 'https://huggingface.co/bullerwins/Wan2.2-I2V-A14B-GGUF/resolve/main/low_noise/wan2.2_i2v_low_noise_14B_Q4_K_M.gguf' unet/wan2.2_i2v_low_noise_14B_Q4_K_M.gguf
+            dl 'https://huggingface.co/bullerwins/Wan2.2-I2V-A14B-GGUF/resolve/main/wan2.2_i2v_high_noise_14B_Q4_K_M.gguf' unet/wan2.2_i2v_high_noise_14B_Q4_K_M.gguf
+            dl 'https://huggingface.co/bullerwins/Wan2.2-I2V-A14B-GGUF/resolve/main/wan2.2_i2v_low_noise_14B_Q4_K_M.gguf' unet/wan2.2_i2v_low_noise_14B_Q4_K_M.gguf
             cp /models/../extra_model_paths.yaml /models/extra_model_paths.yaml 2>/dev/null || true
             echo '=== models ==='; ls -la diffusion_models loras text_encoders vae clip_vision
           "
