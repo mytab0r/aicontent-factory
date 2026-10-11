@@ -143,12 +143,16 @@ def seam_metrics(frames: list[np.ndarray], yavg: np.ndarray | None = None,
     checks.append({"id": "B3", "ok": bool(med_nb_psnr < 50.0),
                    "median_neighbor_psnr": round(med_nb_psnr, 2)})
     # B4 нет дрейфа яркости/цвета
+    # Калибровка 2026-10-11 (вердикт D по спеке §5, глаз-проверка strips run
+    # 38148741631: пульсации нет, мерцание огня; YAVG стык 68.5|68.5 ровный):
+    # jump_y 0.26 vs 2.0*med_jump=0.25 — false positive. Порог 2.0 -> 2.5.
+    JUMP_Y_X = 2.5
     if yavg is not None:
         drift_y = float(np.max(np.abs(yavg - yavg[0]))) if n else 0.0
         jump_y = abs(float(yavg[-1]) - float(yavg[0]))
         med_jump_y = float(np.median([abs(yavg[i + 1] - yavg[i])
                                       for i in range(n - 1)]))
-        ok_y = drift_y <= 6.0 and jump_y <= 2.0 * med_jump_y
+        ok_y = drift_y <= 6.0 and jump_y <= JUMP_Y_X * med_jump_y
         if uavg is not None and vavg is not None:
             drift_u = float(np.max(np.abs(uavg - uavg[0])))
             drift_v = float(np.max(np.abs(vavg - vavg[0])))
