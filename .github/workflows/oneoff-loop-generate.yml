@@ -34,6 +34,9 @@ jobs:
           # comfyui может отсутствовать (janitor удалил контейнер) — пересоздаём из образа
           if [ -z "$(docker ps -q --filter name=wan22)" ]; then
             echo "comfyui нет — пересоздаю из comfyui-wan22:local"
+            # janitor может стереть и образ — ребилдим (кэш слоёв обычно жив)
+            docker image inspect comfyui-wan22:local >/dev/null 2>&1 || \
+              docker build -q -f deploy/gpu-pc/comfyui/Dockerfile -t comfyui-wan22:local deploy/gpu-pc/comfyui
             for v in wan-models wan-output wan-input; do docker volume create $v >/dev/null; done
             NET=$(docker network ls --format '{{.Name}}' | grep -v '^bridge$\|^host$\|^none$' | while read n; do docker network inspect "$n" --format '{{range .Containers}}{{printf "%s\n" .Name}}{{end}}' | grep -qx 'gh-runner-aicontent-factory' && echo "$n" && break; done)
             docker run --rm -i -v wan-models:/models alpine:3.20 \
