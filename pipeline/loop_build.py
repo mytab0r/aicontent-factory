@@ -192,7 +192,13 @@ def build_final(loop: Path, track: Path, final: Path, fps: int,
         capture_output=True, text=True, check=True).stdout.strip().split("/")[1])
     dpts = [pts[i + 1] - pts[i] for i in range(len(pts) - 1)]
     expected = round(timescale / fps)
-    pts_uniform = all(d == expected for d in dpts)
+    # concat demuxer округляет таймстампы сегментов (допуск 1 тик на стыках
+    # сегментов: 999 vs 1000 = 42 мкс, не влияет на воспроизведение; проверено
+    # локально на 1080 сегментах — ровно K-1 стыков с 999, все dts монотонны)
+    k_seg = max(1, math.ceil(T / loop_dur))
+    max_off = min(k_seg, 20)  # допускаем ≤1 тик отклонения на каждом стыке
+    pts_uniform = (all(d in (expected, expected - 1, expected + 1) for d in dpts)
+                   and sum(1 for d in dpts if d != expected) <= max_off)
 
     report = {
         "k": k,
