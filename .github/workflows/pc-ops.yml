@@ -54,7 +54,7 @@ jobs:
         if: ${{ inputs.action == 'deploy-comfyui' }}
         run: |
           set -e
-          docker rm -f comfyui >/dev/null 2>&1 || true
+          docker rm -f acf-comfy comfyui >/dev/null 2>&1 || true
           for v in acf-wan-models acf-wan-output acf-wan-input; do docker volume create $v >/dev/null; done
           # YAML путей моделей нужен контейнеру при старте (CMD --extra-model-paths-config);
           # шлём содержимое через stdin — не зависим от монтирования файла
