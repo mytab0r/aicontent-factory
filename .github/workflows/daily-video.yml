@@ -66,8 +66,8 @@ jobs:
           if [ -n "$YOUTUBE_TOKEN_JSON" ]; then
             mkdir -p ../.state
             printf '%s' "$YOUTUBE_TOKEN_JSON" > ../.state/youtube_token.json
-            pip install --quiet google-api-python-client google-auth-oauthlib
-            python3 05_publish.py
+            uv pip install --quiet --python ../.venv/bin/python google-api-python-client google-auth-oauthlib
+            ../.venv/bin/python 05_publish.py
           else
             echo "skip: секрет YOUTUBE_TOKEN_JSON не задан, публикация отложена"
           fi

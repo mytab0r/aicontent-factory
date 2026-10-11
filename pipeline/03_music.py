@@ -189,7 +189,7 @@ def concat_tracks(paths: list[str], out_path) -> None:
         list_path = f.name
     try:
         subprocess.run(
-            ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path, "-c", "copy", str(out_path)],
+            ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path, str(out_path)],  # куски ACE-Step не mp3: -c copy даёт exit 234,
             check=True, capture_output=True,
         )
     finally:
