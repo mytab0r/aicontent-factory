@@ -102,6 +102,7 @@ def render(png: Path, out_dir: Path, prompt: str, neg: str, seed: int,
                      .replace("{{WIDTH}}", str(width)).replace("{{HEIGHT}}", str(height))
                      .replace("{{LENGTH}}", str(length))
                      .replace("{{PALENGTH}}", str((m_latent - 1) * 4 + 1))
+                     .replace("{{PBLENGTH}}", str(length - ((m_latent - 1) * 4 + 1) + 2))
                      .replace("{{MWIDTH}}", str(mc["mwidth"]))
                      .replace("{{MHEIGHT}}", str(mc["mheight"]))
                      .replace("{{MX}}", str(mc["mx"])).replace("{{MY}}", str(mc["my"])))

@@ -293,7 +293,7 @@
         ],
         "width": "{{WIDTH}}",
         "height": "{{HEIGHT}}",
-        "length": "{{LENGTH}}",
+        "length": "{{PBLENGTH}}",
         "batch_size": 1
       }
     },
