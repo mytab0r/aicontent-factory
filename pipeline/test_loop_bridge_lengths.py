@@ -21,6 +21,9 @@ def test_bridge_lengths():
     length, m_latent = 81, 8
     n_a = (m_latent - 1) * 4 + 1                      # 29 кадров passA
     pb = length - n_a + 2                             # 54 кадра passB
+    from loop_generate import pb_pixels
+    assert pb_pixels(length, m_latent) == 57          # 4*15-3, ближайшее >= 54
+    assert pb_pixels(length, m_latent) >= pb
     filled = {
         "{{PALENGTH}}": n_a,
         "{{PBLENGTH}}": pb,

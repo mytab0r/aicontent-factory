@@ -75,6 +75,16 @@ def upload_image(png: Path) -> str:
     return out["name"] + (f"?subfolder={out['subfolder']}" if out.get("subfolder") else "")
 
 
+def pb_pixels(length: int, m_latent: int) -> int:
+    """Сколько пиксельных кадров запрашивать у FLF2V (node 12).
+
+    Декод Wan даёт 4n-3 кадров на n латентов, поэтому want=54 недостижимо
+    напрямую: запрашиваем ближайшее 4n-3 >= want (57), лишние срезает assemble.
+    """
+    want = length - (m_latent - 1) * 4 - 1 + 2
+    return 4 * -(-(want + 3) // 4) - 3
+
+
 def m_crop(width: int, height: int, m_latent: int) -> dict:
     """Центральный кроп обложки 8:5 под M-кадр (модель обучена на 8-кратных)."""
     mw = min(width, round(height * 8 / 5 / 16) * 16)
@@ -102,7 +112,7 @@ def render(png: Path, out_dir: Path, prompt: str, neg: str, seed: int,
                      .replace("{{WIDTH}}", str(width)).replace("{{HEIGHT}}", str(height))
                      .replace("{{LENGTH}}", str(length))
                      .replace("{{PALENGTH}}", str((m_latent - 1) * 4 + 1))
-                     .replace("{{PBLENGTH}}", str(length - ((m_latent - 1) * 4 + 1) + 2))
+                     .replace("{{PBLENGTH}}", str(pb_pixels(length, m_latent)))
                      .replace("{{MWIDTH}}", str(mc["mwidth"]))
                      .replace("{{MHEIGHT}}", str(mc["mheight"]))
                      .replace("{{MX}}", str(mc["mx"])).replace("{{MY}}", str(mc["my"])))
@@ -176,8 +186,12 @@ def assemble(frames_a: list[Path], frames_b: list[Path], m_latent: int,
     """
     n_a = (m_latent - 1) * 4 + 1             # пиксельных кадров в pass A (4k+1)
     assert len(frames_a) == n_a, f"passA: {len(frames_a)} кадров, ожидалось {n_a}"
-    assert len(frames_b) == length - n_a + 2, \
-        f"passB: {len(frames_b)} кадров, ожидалось {length - n_a + 2}"
+    want_b = length - n_a + 2
+    # FLF2V декодирует кратно сетке 4n-3 (см. pb_pixels) — может дать > want_b;
+    # лишний хвост срезаем, последний оставленный кадр = пин end-image.
+    assert len(frames_b) >= want_b, \
+        f"passB: {len(frames_b)} кадров, ожидалось >= {want_b}"
+    frames_b = frames_b[:want_b]
     outs = []
     out_dir.mkdir(parents=True, exist_ok=True)
     for p in frames_a[1:] + frames_b[1:]:    # дубль img и дубль M срезаны;
