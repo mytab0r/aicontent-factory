@@ -37,9 +37,18 @@ jobs:
         with:
           clean: true  # self-hosted: wipe previous runs/ so disk doesn't grow
 
+      # schedule опаздывает до 18:41 UTC -> второй long-form за сутки (12.10). Ручной dispatch = намеренный.
+      - name: guard (один long-form в сутки)
+        id: guard
+        if: github.event_name == 'schedule'
+        working-directory: pipeline
+        run: python3 watchdog.py --guard
+
       - uses: astral-sh/setup-uv@v3
+        if: steps.guard.outputs.published != '1'
 
       - name: install deps
+        if: steps.guard.outputs.published != '1'
         run: |
           # apt на self-hosted раннере падал exit 100 (lock/битый dpkg) — ffmpeg уже стоит -> пропуск
           command -v ffmpeg || { sudo dpkg --configure -a || true; for i in 1 2 3; do sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg && break; sleep 20; done; }
@@ -48,22 +57,27 @@ jobs:
           uv pip install --python .venv/bin/python pillow gradio_client
 
       - name: 01 idea
+        if: steps.guard.outputs.published != '1'
         working-directory: pipeline
         run: ../.venv/bin/python 01_idea.py
 
       - name: 02 cover
+        if: steps.guard.outputs.published != '1'
         working-directory: pipeline
         run: ../.venv/bin/python 02_cover.py
 
       - name: 03 music (ACE-Step)
+        if: steps.guard.outputs.published != '1'
         working-directory: pipeline
         run: ../.venv/bin/python 03_music.py
 
       - name: 04 assemble (ffmpeg)
+        if: steps.guard.outputs.published != '1'
         working-directory: pipeline
         run: ../.venv/bin/python 04_assemble.py
 
       - name: 05 publish (skips if no YouTube token secret)
+        if: steps.guard.outputs.published != '1'
         working-directory: pipeline
         env:
           YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
@@ -78,6 +92,7 @@ jobs:
           fi
 
       - name: 07 shorts (2 x 9:16 из long-form, ссылка на него)
+        if: steps.guard.outputs.published != '1'
         working-directory: pipeline
         run: |
           if [ -f ../.state/youtube_token.json ]; then
@@ -88,6 +103,7 @@ jobs:
           fi
 
       - name: TG report (ролик + шортсы)
+        if: steps.guard.outputs.published != '1'
         working-directory: pipeline
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
@@ -96,6 +112,7 @@ jobs:
         run: python3 watchdog.py --report || true
 
       - name: commit mood rotation state
+        if: steps.guard.outputs.published != '1'
         run: |
           git config user.name "aicontent-factory-bot"
           git config user.email "actions@users.noreply.github.com"
@@ -115,6 +132,7 @@ jobs:
           python3 -c "from common import tg_send; tg_send('❌ daily-video (${{ matrix.genre }}) упал. Лог: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}. Если причина invalid_grant — перевыпусти токен: python3 pipeline/youtube_oauth.py --auth-url')"
 
       - name: upload run artifact
+        if: steps.guard.outputs.published != '1'
         uses: actions/upload-artifact@v4
         with:
           name: video-${{ github.run_id }}-${{ strategy.job-index }}

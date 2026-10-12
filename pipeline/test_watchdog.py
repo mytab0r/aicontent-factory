@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from watchdog import decide, report_text, videos_on
+from watchdog import already_published, decide, report_text, videos_on
 
 # образец реального фида канала (сокращён)
 RSS = """<?xml version="1.0" encoding="UTF-8"?>
@@ -69,6 +69,15 @@ def test_report_text():
         (d / "shorts.json").write_text(json.dumps({"ids": ["s1", "s2"], "windows": []}))
         t = report_text(d, [])
         assert "watch?v=abc" in t and "shorts/s1" in t and "Шортс 2" in t
+
+
+def test_already_published():
+    """Дубли 12.10: schedule опоздал до 18:41 и выпустил второй long-form. Shorts не считаются."""
+    rss = RSS.replace("Late night", "Late night pt.1 #Shorts")
+    assert already_published(RSS, D11)
+    assert not already_published(rss, D12)  # только Shorts за день
+    assert not already_published(RSS, D13)
+
 
 
 if __name__ == "__main__":
