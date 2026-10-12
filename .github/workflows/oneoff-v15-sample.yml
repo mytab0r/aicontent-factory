@@ -1,6 +1,8 @@
 name: oneoff-v15-sample
 # Разовый семпл ACE-Step 1.5 (MIT) через HF Space: одна цельная генерация, тональность/темп зафиксированы.
-on: workflow_dispatch
+on:
+  workflow_dispatch: {}
+  push: {branches: ["exp/v15-sample"]}
 jobs:
   s:
     runs-on: [self-hosted, pc]
