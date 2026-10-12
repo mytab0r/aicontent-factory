@@ -24,8 +24,10 @@ jobs:
             api_name="/generation_wrapper")
           def walk(x):
               if isinstance(x, str) and os.path.isfile(x): yield x
-              elif isinstance(x, dict): [ (yield y) for v in x.values() for y in walk(v) ]
-              elif isinstance(x, (list, tuple)): [ (yield y) for v in x for y in walk(v) ]
+              elif isinstance(x, dict):
+                  for v in x.values(): yield from walk(v)
+              elif isinstance(x, (list, tuple)):
+                  for v in x: yield from walk(v)
           for i, f in enumerate(p for p in walk(r) if p.endswith((".mp3", ".wav", ".flac"))):
               shutil.copy(f, f"out/v15_{i}{os.path.splitext(f)[1]}"); print(f)
           PY
