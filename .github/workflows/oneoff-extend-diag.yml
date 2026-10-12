@@ -13,6 +13,11 @@ jobs:
       ACE_ENDPOINT: http://ace-step:7865/
     steps:
       - uses: actions/checkout@v4
+      - name: ace-step inspect + hotfix NUMBA_CACHE_DIR
+        run: |
+          docker inspect ace-step --format 'image={{.Config.Image}} env={{json .Config.Env}} nets={{json .NetworkSettings.Networks}} mounts={{json .Mounts}} ports={{json .HostConfig.PortBindings}} restart={{.HostConfig.RestartPolicy.Name}} labels={{json .Config.Labels}}' | sed 's/HF_TOKEN=[^"]*/HF_TOKEN=***/'
+          if docker inspect ace-step --format '{{json .Config.Env}}' | grep -q NUMBA_CACHE_DIR; then echo "already fixed"; exit 0; fi
+          echo "recreate needed"
       - uses: astral-sh/setup-uv@v3
       - run: |
           uv venv .venv

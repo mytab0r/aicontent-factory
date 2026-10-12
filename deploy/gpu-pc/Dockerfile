@@ -9,7 +9,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     DEBIAN_FRONTEND=noninteractive \
     HF_HUB_ENABLE_HF_TRANSFER=1 \
-    ACE_OUTPUT_DIR=/app/outputs
+    ACE_OUTPUT_DIR=/app/outputs \
+    NUMBA_CACHE_DIR=/tmp/numba
+# NUMBA_CACHE_DIR: librosa (extend/repaint -> get_duration) падает под appuser
+# "cannot cache function ... no locator available" — site-packages read-only.
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       python3.10 libpython3.10 python3-pip python3-venv git curl ffmpeg \
