@@ -45,7 +45,7 @@ jobs:
           command -v ffmpeg || { sudo dpkg --configure -a || true; for i in 1 2 3; do sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg && break; sleep 20; done; }
           command -v ffmpeg
           uv venv .venv
-          uv pip install --python .venv/bin/python pillow gradio_client
+          uv pip install --python .venv/bin/python pillow gradio_client numpy
 
       - name: 01 idea
         working-directory: pipeline
@@ -58,6 +58,10 @@ jobs:
       - name: 03 music (ACE-Step)
         working-directory: pipeline
         run: ../.venv/bin/python 03_music.py
+
+      - name: audio gate (тональность/строй/тишина/true peak — красный = не публикуем)
+        working-directory: pipeline
+        run: ../.venv/bin/python audio_gate.py "$(ls -d ../runs/*/ | tail -1)track.mp3"
 
       - name: 04 assemble (ffmpeg)
         working-directory: pipeline
