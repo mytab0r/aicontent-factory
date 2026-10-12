@@ -7,6 +7,9 @@ name: oneoff-loop-final
 # final.report.json (C1-C4), run.json (входы/тайминги/вердикт D).
 on:
   workflow_dispatch:
+permissions:
+  actions: read
+  contents: read
 jobs:
   final:
     runs-on: [self-hosted, pc]
