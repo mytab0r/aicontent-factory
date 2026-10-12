@@ -7,6 +7,15 @@ import json
 from common import router_post, latest_run_dir
 
 MODEL = "cx/gpt-image-1.5"
+SIZE = "1536x1024"  # горизонталь под кадр 16:9 (квадрат давал чёрные поля)
+# единый узнаваемый стиль канала: меняется только сцена из idea.json
+STYLE = ("cozy anime lofi illustration, 90s anime cel shading, soft film grain, "
+         "warm muted pastel palette, gentle lamp light, wide 16:9 composition, "
+         "scene fills the whole frame, no text, no letters, no watermark")
+
+
+def styled(prompt: str) -> str:
+    return f"{prompt.rstrip(' ,.')}. Style: {STYLE}"
 
 
 def fallback_cover(prompt: str, out_path) -> None:
@@ -34,12 +43,12 @@ def main() -> None:
 
     out_path = run_dir / "cover.png"
     try:
-        resp = router_post("/images/generations", {
-            "model": MODEL,
-            "prompt": idea["cover_prompt"],
-            "size": "1024x1024",
-            "n": 1,
-        }, timeout=180)
+        body = {"model": MODEL, "prompt": styled(idea["cover_prompt"]), "size": SIZE, "n": 1}
+        try:
+            resp = router_post("/images/generations", body, timeout=180)
+        except RuntimeError as e:  # модель не умеет 1536x1024 -> квадрат, 04 обрежет до 16:9
+            print(f"size {SIZE} отклонён ({str(e)[:120]}); 1024x1024")
+            resp = router_post("/images/generations", {**body, "size": "1024x1024"}, timeout=180)
         out_path.write_bytes(base64.b64decode(resp["data"][0]["b64_json"]))
     except (RuntimeError, KeyError, IndexError, ValueError) as e:
         print(f"image API недоступен ({e}); фолбэк-обложка"[:300])

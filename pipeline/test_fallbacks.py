@@ -111,6 +111,27 @@ def test_ace_local_down_falls_back_to_space():
     assert calls == ["http://ace-step:7865/", music.SPACE], calls
 
 
+def test_frame_full_bleed_no_black_bars():
+    """Обложка любого формата заполняет кадр 1280x720 целиком (без чёрных полей)."""
+    from PIL import Image
+    asm = load("04_assemble.py")
+    with tempfile.TemporaryDirectory() as d:
+        src, out = Path(d) / "c.png", Path(d) / "f.png"
+        Image.new("RGB", (1024, 1024), (200, 120, 60)).save(src)
+        asm.burn_overlay(src, out)
+        im = Image.open(out).convert("RGB")
+        assert im.size == (1280, 720), im.size
+        for xy in [(0, 0), (1279, 0), (0, 360), (1279, 360), (640, 5)]:
+            assert im.getpixel(xy) != (0, 0, 0), (xy, im.getpixel(xy))
+
+
+def test_cover_prompt_has_channel_style():
+    """Единый стиль канала: к любому промпту добавляется фиксированный STYLE."""
+    cover = load("02_cover.py")
+    assert cover.STYLE in cover.styled("girl by window")
+    assert cover.SIZE == "1536x1024"
+
+
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"):
