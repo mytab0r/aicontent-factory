@@ -35,6 +35,12 @@ def videos_on(rss_xml: str, day: dt.date) -> list[dict]:
     return out
 
 
+def already_published(rss_xml: str, day: dt.date) -> bool:
+    """Есть ли за day (UTC) long-form (не #Shorts): GitHub schedule опаздывает до вечера,
+    без проверки поздний запуск даёт второй ролик за сутки (дубли 12.10)."""
+    return any("#shorts" not in v["title"].lower() for v in videos_on(rss_xml, day))
+
+
 def run_date(run: dict) -> dt.date:
     return dt.datetime.fromisoformat(run["created_at"].replace("Z", "+00:00")).date()
 
@@ -110,5 +116,19 @@ def report() -> None:
     tg_send(report_text(runs[-1], rss) if runs else "⚠️ daily-video прошёл, но runs/ пуст.")
 
 
+def guard() -> None:
+    """--guard: exit 0 + published=1 в GITHUB_OUTPUT, если long-form за сегодня уже есть."""
+    today = dt.datetime.now(dt.timezone.utc).date()
+    try:
+        done = already_published(fetch_rss(), today)
+    except Exception as e:  # RSS недоступен -> не блокируем выпуск
+        print(f"RSS skip: {type(e).__name__}")
+        done = False
+    print(f"long-form за {today}: {'уже есть, пропуск' if done else 'нет, выпускаем'}")
+    if os.environ.get("GITHUB_OUTPUT"):
+        with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+            f.write(f"published={int(done)}\n")
+
+
 if __name__ == "__main__":
-    report() if "--report" in sys.argv else watch()
+    report() if "--report" in sys.argv else guard() if "--guard" in sys.argv else watch()
