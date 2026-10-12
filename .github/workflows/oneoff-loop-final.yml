@@ -22,34 +22,58 @@ jobs:
         run: |
           set -e
           mkdir -p runs/loopgen
-          # artifact API: последняя версия loopgen того прогона (artifacts v4)
-          ID=$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/runs/38151431259/artifacts" \
-            | python3 -c "import json,sys;print([a['id'] for a in json.load(sys.stdin)['artifacts'] if a['name']=='loopgen'][0])")
-          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -o /tmp/loopgen.zip \
-            "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/$ID/zip"
-          python3 -c "import zipfile;zipfile.ZipFile('/tmp/loopgen.zip').extractall('runs/loopgen')"
+          python3 - <<'PY'
+          import json, os, subprocess, zipfile
+          tok = os.environ["GH_TOKEN"]
+          def art_id(run, name):
+              out = subprocess.run(
+                  ["curl","-fsS","-H",f"Authorization: Bearer {tok}",
+                   f"https://api.github.com/repos/${{ github.repository }}/actions/runs/{run}/artifacts"],
+                  capture_output=True, text=True, check=True).stdout
+              return [a["id"] for a in json.loads(out)["artifacts"] if a["name"] == name][0]
+          def grab(aid, dest):
+              subprocess.run(["curl","-fsSL","-H",f"Authorization: Bearer {tok}",
+                              "-o",dest,
+                              f"https://api.github.com/repos/${{ github.repository }}/actions/artifacts/{aid}/zip"],
+                             check=True)
+              zipfile.ZipFile(dest).extractall(".")
+          print("loopgen artifact:", art_id("38151431259", "loopgen"))
+          grab(art_id("38151431259", "loopgen"), "/tmp/loopgen.zip")
+          PY
           ls -la runs/loopgen/loop.mp4
       - name: track 1h из реального mp3 daily-выпуска
         run: |
           set -e
           mkdir -p runs/loopgen
-          ID=$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/runs/38167160546/artifacts" \
-            | python3 -c "import json,sys;print([a['id'] for a in json.load(sys.stdin)['artifacts'] if a['name'].startswith('video-')][0])")
-          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -o /tmp/daily.zip \
-            "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/$ID/zip"
-          python3 -c "import zipfile;zipfile.ZipFile('/tmp/daily.zip').extractall('/tmp/daily')"
-          MP4=$(find /tmp/daily -name 'video.mp4' | head -1)
-          echo "daily video: $MP4"
-          ffmpeg -y -v error -i "$MP4" -vn -c:a libmp3lame -b:a 192k runs/loopgen/daily.mp3
-          # склейка до >=3600с
           python3 - <<'PY'
-          import math, subprocess
-          d = float(subprocess.run(["ffprobe","-v","error","-show_entries","format=duration","-of","csv=p=0","runs/loopgen/daily.mp3"],capture_output=True,text=True).stdout)
-          n = math.ceil(3600/d)
-          open("runs/loopgen/track_list.txt","w").write("".join("file 'daily.mp3'\n" for _ in range(n)))
-          print(f"daily track {d:.1f}s x{n}")
+          import json, math, os, subprocess, zipfile
+          tok = os.environ["GH_TOKEN"]
+          hdr = ["-H", f"Authorization: Bearer {tok}"]
+          api = "https://api.github.com/repos/${{ github.repository }}"
+          def art_id(run, prefix):
+              out = subprocess.run(
+                  ["curl","-fsS",*hdr,f"{api}/actions/runs/{run}/artifacts"],
+                  capture_output=True, text=True, check=True).stdout
+              return [a["id"] for a in json.loads(out)["artifacts"]
+                      if a["name"] == prefix or a["name"].startswith(prefix)][0]
+          aid = art_id("38167160546", "video-")
+          print("daily artifact:", aid)
+          subprocess.run(["curl","-fsSL",*hdr,"-o","/tmp/daily.zip",
+                          f"{api}/actions/artifacts/{aid}/zip"], check=True)
+          zipfile.ZipFile("/tmp/daily.zip").extractall("/tmp/daily")
+          mp4 = next(__import__("pathlib").Path("/tmp/daily").rglob("video.mp4"))
+          print("daily video:", mp4)
+          subprocess.run(["ffmpeg","-y","-v","error","-i",str(mp4),"-vn",
+                          "-c:a","libmp3lame","-b:a","192k","runs/loopgen/daily.mp3"],
+                         check=True)
+          dur = float(subprocess.run(
+              ["ffprobe","-v","error","-show_entries","format=duration",
+               "-of","csv=p=0","runs/loopgen/daily.mp3"],
+              capture_output=True, text=True, check=True).stdout)
+          n = math.ceil(3600 / dur)
+          open("runs/loopgen/track_list.txt","w").write(
+              "".join("file 'daily.mp3'\n" for _ in range(n)))
+          print(f"daily track {dur:.1f}s x{n}")
           PY
           ffmpeg -y -v error -f concat -safe 0 -i runs/loopgen/track_list.txt -c copy runs/loopgen/track.mp3
           ffprobe -v error -show_entries format=duration -of csv=p=0 runs/loopgen/track.mp3
