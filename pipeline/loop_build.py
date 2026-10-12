@@ -256,6 +256,10 @@ def main() -> None:
         rep = build_final(Path(args.loop), Path(args.track), Path(args.final),
                           fps=args.fps)
         print(json.dumps(rep, ensure_ascii=False, indent=2))
+        rep_path = Path(args.final).with_suffix(".report.json")
+        rep_path.write_text(json.dumps(rep, ensure_ascii=False, indent=2),
+                            encoding="utf-8")
+        print(f"report -> {rep_path}")
 
 
 if __name__ == "__main__":
