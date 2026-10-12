@@ -13,7 +13,7 @@
 """
 import subprocess
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageOps
 
 from common import latest_run_dir
 
@@ -21,10 +21,8 @@ TARGET_W, TARGET_H = 1280, 720
 
 
 def burn_overlay(cover_path, out_path) -> None:
-    img = Image.open(cover_path).convert("RGB")
-    img.thumbnail((TARGET_W, TARGET_H))
-    canvas = Image.new("RGB", (TARGET_W, TARGET_H), (0, 0, 0))
-    canvas.paste(img, ((TARGET_W - img.width) // 2, (TARGET_H - img.height) // 2))
+    # во весь кадр: масштаб + обрезка по центру (было thumbnail -> чёрные поля по бокам)
+    canvas = ImageOps.fit(Image.open(cover_path).convert("RGB"), (TARGET_W, TARGET_H), Image.LANCZOS)
 
     draw = ImageDraw.Draw(canvas, "RGBA")
     text = "AI-generated / synthetic content"
