@@ -1,23 +1,81 @@
 name: ace15-swap
-# Замена ACE-Step v1 -> 1.5 на ПК. Режим берётся из .github/ace15-mode (push в ветку = запуск).
+# Замена ACE-Step v1 -> 1.5 на ПК. Веса и результаты на C: (bind), D: не растёт.
+# Порядок: замер -> удалить v1 (контейнер, образ, веса) -> замер -> pull 1.5 -> старт -> семпл -> замер.
 on:
   push: {branches: ["exp/ace15-swap"]}
 jobs:
   run:
     runs-on: [self-hosted, pc]
-    timeout-minutes: 120
+    timeout-minutes: 150
+    env:
+      C: /run/desktop/mnt/host/c/dockerlocal/ace15
+      IMG: ghcr.io/ace-step/ace-step-1.5:latest
+      ACE: http://ace-step:8001
     steps:
       - uses: actions/checkout@v4
-      - name: probe
+      - name: measure before
+        run: docker run --rm -v /run/desktop/mnt/host:/h:ro alpine:3.20 df -h /h/c /h/d
+      - name: delete v1
         run: |
-          set +e
-          echo "mode=$(cat .github/ace15-mode)"
-          docker ps -a --format '{{.Names}}|{{.Image}}|{{.State}}|{{.Size}}'
-          echo "=== ace-step inspect"
-          docker inspect ace-step --format '{{.Config.Image}} {{json .Mounts}} {{json .HostConfig.PortBindings}} {{json .NetworkSettings.Networks}}' 2>&1 | head -c 3000; echo
-          echo "=== images"; docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}'
-          echo "=== volumes"; docker volume ls --format '{{.Name}}'
-          echo "=== df (docker vm)"; docker run --rm -v /:/h:ro alpine:3.20 df -h /h 2>&1 | tail -2
-          echo "=== host C: / D: via desktop mnt"
-          for p in /run/desktop/mnt/host/c /run/desktop/mnt/host/d /mnt/host/c; do docker run --rm -v $p:/x:ro alpine:3.20 sh -c "df -h /x | tail -1; ls /x | head -5" 2>&1 | sed "s|^|$p: |"; done
-          echo "=== checkpoint sizes"; docker run --rm -v ace-checkpoints:/c:ro alpine:3.20 du -sh /c /c/* 2>&1 | head; docker run --rm -v ace-outputs:/o:ro alpine:3.20 du -sh /o 2>&1
+          set -x
+          docker rm -f -v ace-step || true
+          docker rmi -f ghcr.io/mytab0r/ace-step-cu128:latest || true
+          docker volume rm ace-checkpoints ace-hf || true
+          docker volume ls -qf dangling=true | xargs -r docker volume rm || true
+          docker image prune -f
+          docker run --rm -v /run/desktop/mnt/host:/h:ro alpine:3.20 df -h /h/c /h/d
+      - name: pull 1.5 (retry, слои докачиваются)
+        run: |
+          for i in 1 2 3 4 5; do docker pull "$IMG" && break; echo "pull fail $i"; sleep 20; done
+          docker image inspect "$IMG" --format 'size={{.Size}}'
+      - name: start 1.5 (веса и вывод на C:)
+        run: |
+          docker run --rm -v /run/desktop/mnt/host/c:/c alpine:3.20 mkdir -p /c/dockerlocal/ace15/checkpoints /c/dockerlocal/ace15/output /c/dockerlocal/ace15/hf
+          docker run -d --name ace-step --restart unless-stopped --gpus all --shm-size 2g \
+            --network comfynet --network-alias ace-step -p 127.0.0.1:8001:8001 \
+            -e ACESTEP_MODE=api -e ACESTEP_LLM_BACKEND=pt \
+            -e ACESTEP_CONFIG_PATH=acestep-v15-turbo -e ACESTEP_LM_MODEL_PATH=acestep-5Hz-lm-1.7B \
+            -v "$C/checkpoints:/app/checkpoints" -v "$C/output:/app/output" -v "$C/hf:/root/.cache/huggingface" \
+            "$IMG"
+      - name: wait health (первый старт качает веса на C:)
+        run: |
+          for i in $(seq 1 240); do
+            if curl -fsS -m 5 "$ACE/health"; then echo; echo "UP after $((i*15))s"; exit 0; fi
+            [ "$(docker inspect -f '{{.State.Running}}' ace-step)" = true ] || { docker logs --tail 80 ace-step; exit 1; }
+            [ $((i % 8)) = 0 ] && docker logs --tail 3 ace-step 2>&1
+            sleep 15
+          done
+          docker logs --tail 80 ace-step; exit 1
+      - name: sample 120s
+        run: |
+          mkdir -p out
+          python3 - <<'PY'
+          import json, os, time, urllib.request
+          B = os.environ["ACE"]
+          def post(p, d):
+              r = urllib.request.Request(B + p, json.dumps(d).encode(), {"Content-Type": "application/json"})
+              return json.load(urllib.request.urlopen(r, timeout=60))
+          body = {"prompt": "anime lofi hip hop, mellow Rhodes piano lead melody, warm jazzy seventh chords, soft vinyl crackle, laid-back boom bap drums, deep round bass, nostalgic, calm",
+                  "lyrics": "[Instrumental]", "bpm": 80, "key_scale": "A minor", "time_signature": "4",
+                  "audio_duration": 120, "batch_size": 2, "thinking": True, "use_random_seed": False, "seed": 42, "audio_format": "mp3"}
+          t = time.time(); tid = post("/release_task", body)["data"]["task_id"]; print("task", tid)
+          while True:
+              time.sleep(5)
+              d = post("/query_result", {"task_id_list": [tid]})["data"][0]
+              if d["status"] != 0: break
+          print("status", d["status"], "sec", round(time.time() - t))
+          res = json.loads(d["result"])
+          for i, x in enumerate(res):
+              print(x.get("metas"), x.get("dit_model"), x.get("lm_model"))
+              urllib.request.urlretrieve(B + x["file"], f"out/v15_{i}.mp3")
+          PY
+          ls -la out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: ace15, path: out/}
+      - name: measure after
+        if: always()
+        run: |
+          docker run --rm -v /run/desktop/mnt/host:/h:ro alpine:3.20 df -h /h/c /h/d
+          docker run --rm -v /run/desktop/mnt/host/c/dockerlocal/ace15:/a:ro alpine:3.20 du -sh /a/checkpoints /a/hf /a/output
+          docker logs --tail 15 ace-step 2>&1 || true
