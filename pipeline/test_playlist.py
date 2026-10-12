@@ -44,4 +44,7 @@ pid = pub.add_to_genre_playlist(yt, "v2", "jazzhop")                       # new
 assert pub.add_to_genre_playlist(yt, "v3", "jazzhop") == pid
 assert yt.added == [("PLa", "v1"), (pid, "v2"), (pid, "v3")], yt.added
 assert len(yt.lists) == 2
+d = pub.full_description("Chill beats.")
+assert "#lofi #animelofi #studymusic" in d and "AI-generated" in d, d
+assert pub.full_description(d) == d  # идемпотентно
 print("OK test_playlist")

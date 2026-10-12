@@ -44,6 +44,16 @@ def add_to_genre_playlist(youtube, video_id: str, genre: str) -> str:
     return pid
 
 
+HASHTAGS = "#lofi #animelofi #studymusic"
+AI_NOTE = "AI-generated music and visuals (synthetic content)."
+
+
+def full_description(text: str) -> str:
+    """Аудит 4HB26c4yow0: хэштеги + AI-disclosure в описании (идемпотентно)."""
+    extra = [s for s in (AI_NOTE, HASHTAGS) if s not in text]
+    return "\n\n".join([text.rstrip(), *extra])
+
+
 def publish(run_dir: Path) -> str:
     from googleapiclient.http import MediaFileUpload
 
@@ -56,7 +66,9 @@ def publish(run_dir: Path) -> str:
     body = {
         "snippet": {
             "title": idea["title"][:100],
-            "description": idea["description"],
+            "description": full_description(idea["description"]),
+            "defaultLanguage": "en",
+            "defaultAudioLanguage": "en",
             "tags": idea.get("tags", []),
             "categoryId": "10",  # Music
         },
@@ -81,11 +93,19 @@ def publish(run_dir: Path) -> str:
             print(f"upload {int(status.progress() * 100)}%")
 
     video_id = response["id"]
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    # 07_shorts берёт отсюда ссылку на long-form
+    (run_dir / "published.json").write_text(json.dumps({"url": url, "id": video_id}), encoding="utf-8")
+    cover = run_dir / "cover.png"
+    if cover.exists():
+        try:  # кастомная обложка требует верифицированный канал — не валим выпуск
+            youtube.thumbnails().set(videoId=video_id, media_body=MediaFileUpload(str(cover), mimetype="image/png")).execute()
+        except Exception as e:
+            print(f"thumbnail skip: {type(e).__name__}: {e}")
     meta = run_dir / "music_meta.json"
     if meta.exists():
         genre = json.loads(meta.read_text(encoding="utf-8"))["genre"]
         print(f"playlist -> {add_to_genre_playlist(youtube, video_id, genre)} ({genre})")
-    url = f"https://www.youtube.com/watch?v={video_id}"
     print(f"OK: опубликовано {url}")
     return url
 
