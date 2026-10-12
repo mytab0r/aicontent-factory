@@ -46,7 +46,6 @@ def test_key_and_tuning_ok():
     assert r["key_share"] >= 0.85, r
     assert r["key"] == "C major", r
     assert r["tuning_spread"] <= 0.15, r
-    assert r["tuning_share"] >= 0.60, r
     assert r["silent_seconds"] == 0, r
 
 
@@ -59,8 +58,7 @@ def test_key_change_fails():
 def test_tuning_drift_fails():
     x = np.concatenate([progression(60, 45), progression(60, 45, cents=40)])
     r = g.analyze_pcm(x)
-    ok = r["tuning_spread"] > 0.15 or r["tuning_share"] < 0.60
-    assert ok, r
+    assert r["tuning_spread"] > 0.15, r
 
 
 def test_silence_detected_but_final_fade_ignored():

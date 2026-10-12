@@ -172,21 +172,22 @@ def generate_track(prompt: str, duration_sec: int, seed: int | None = None,
 # ---- связная генерация long-form (kanban t_44de72aa) ----
 # Было: N независимых кусков с разными seed -> 3 тональности на трек, дрейф
 # строя до 0.4 полутона, -56 dB дыры на стыках (аудит 4HB26c4yow0).
-# Стало: кусок 1 = text2music, дальше ACE-Step extend: в модель грузится
-# хвост CONTEXT_SEC уже собранного трека, она дорисовывает EXT_SEC продолжения
-# (repaint за правым краем — тот же материал, та же тональность/строй).
-# На каждый extend до CANDIDATES seed'ов; берётся первый, чья новая часть
-# совпала со звукорядом первого куска, строй в пределах TUNING_TOL и без
-# тишины. Стык — equal-power crossfade XFADE_SEC внутри хвоста (оба сигнала
-# там = один и тот же материал). Финал: loudnorm -14 LUFS / TP -1.5 (запас
-# под mp3), фейд-аут. Гейт audio_gate.py проверяет результат перед publish.
-FIRST_SEC = 120
-CONTEXT_SEC = 30
-EXT_SEC = 120  # CONTEXT_SEC + EXT_SEC <= 240: у ACE-Step extend баг на >240с окне
+# Пробовали ACE-Step extend-цепочку: тональность держит, но каждый extend
+# добавляет гребёнку 86.13 Гц (44100/512, +15-18 dB над фоном против 4-7 у
+# text2music) и уводит строй на 0.3 п/п — отклонено (A/B run 38195847121).
+# Стало (вариант 2 ТЗ): база = text2music CHUNK_SEC одним seed; остальные
+# куски = audio2audio от базы (ref_audio, свой seed) — вариации того же
+# материала: одна тональность, один строй, без гребёнки. На кусок до
+# CANDIDATES seed'ов, берётся первый совпавший с базой по звукоряду, строю
+# (TUNING_TOL) и без тишины. Стыки — equal-power crossfade XFADE_SEC.
+# Финал: двухпроходный loudnorm -14 LUFS / TP -2 (запас под mp3 overshoot).
+CHUNK_SEC = 240  # лимит ACE-Step на вызов
 XFADE_SEC = 4
 CANDIDATES = 3
+A2A_STRENGTH = 0.5
 TUNING_TOL = 0.075
 SR = 44100
+TARGET_LUFS, TARGET_TP = -14.0, -2.0
 
 
 def _read(path) -> "np.ndarray":
@@ -199,11 +200,6 @@ def _read(path) -> "np.ndarray":
     return np.frombuffer(raw, dtype="<f4").reshape(-1, 2).copy()
 
 
-def _write_wav(path, x) -> None:
-    import audio_gate
-    audio_gate.write_wav(path, x, SR)
-
-
 def _trim_tail_silence(x, db: float = -40.0):
     """Срезает тихий хвост (модель гасит звук к концу куска) — иначе дыра на стыке."""
     import numpy as np
@@ -213,65 +209,61 @@ def _trim_tail_silence(x, db: float = -40.0):
     return x[: (loud[-1] + 1) * SR] if loud.size else x
 
 
-def _tail(segs: list, n: int):
-    import numpy as np
-    out, have = [], 0
-    for seg in reversed(segs):
-        out.append(seg[-(n - have):])
-        have += len(out[-1])
-        if have >= n:
-            break
-    return np.concatenate(out[::-1])
-
-
 def _profile(x) -> dict:
     import audio_gate
     import numpy as np
     assert SR == 2 * audio_gate.SR
-    return audio_gate.analyze_pcm(np.ascontiguousarray(x.mean(1)[::2]))
+    y = np.ascontiguousarray(x.mean(1)[::2])
+    # RMS -> -14 dBFS ~ итоговая громкость, иначе тишина -45 dB меряется не там
+    return audio_gate.analyze_pcm(y * (10 ** (-14 / 20) / (np.sqrt(np.mean(y ** 2)) + 1e-9)))
 
 
 def _tdiff(a: float, b: float) -> float:
     return abs((a - b + 0.5) % 1 - 0.5)
 
 
-def _extend(client, prompt: str, src_path: str, ext_sec: float, seed: int) -> str:
+def _a2a(client, prompt: str, ref_path: str, sec: float, seed: int) -> str:
     from gradio_client import handle_file
     res = client.predict(
-        text2music_json_data=None,
-        extend_input_params_json=None,
-        extend_seeds=str(seed),
-        left_extend_length=0.0,
-        right_extend_length=float(ext_sec),
-        extend_source="upload",
-        extend_source_audio_upload=handle_file(src_path),
-        prompt=prompt,
-        lyrics="[instrumental]",
-        infer_step=INFER_STEPS,
-        guidance_scale=15.0,
-        scheduler_type="euler",
-        cfg_type="apg",
-        omega_scale=10.0,
-        manual_seeds=str(seed),
-        guidance_interval=0.5,
-        guidance_interval_decay=0.0,
-        min_guidance_scale=3.0,
-        use_erg_tag=True,
-        use_erg_lyric=False,
-        use_erg_diffusion=True,
-        oss_steps=None,
-        guidance_scale_text=0.0,
-        guidance_scale_lyric=0.0,
-        api_name="/extend_process_func",
+        audio_duration=float(sec), prompt=prompt, lyrics="[instrumental]",
+        infer_step=INFER_STEPS, guidance_scale=15.0, scheduler_type="euler",
+        cfg_type="apg", omega_scale=10.0, manual_seeds=str(seed),
+        guidance_interval=0.5, guidance_interval_decay=0.0, min_guidance_scale=3.0,
+        use_erg_tag=True, use_erg_lyric=False, use_erg_diffusion=True, oss_steps=None,
+        guidance_scale_text=0.0, guidance_scale_lyric=0.0,
+        audio2audio_enable=True, ref_audio_strength=A2A_STRENGTH,
+        ref_audio_input=handle_file(ref_path), lora_name_or_path="none",
+        api_name="/__call__",
     )
     return res[0]
 
 
+def loudnorm_mp3(src, dst, lufs: float = TARGET_LUFS, tp: float = TARGET_TP) -> None:
+    """Двухпроходный loudnorm (linear) -> mp3 320k. Однопроходный давал -12.6 LUFS / TP -0.9."""
+    import json
+    import subprocess
+    err = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-nostats", "-i", str(src),
+         "-af", f"loudnorm=I={lufs}:TP={tp}:LRA=11:print_format=json", "-f", "null", "-"],
+        check=True, capture_output=True, text=True,
+    ).stderr
+    m = json.loads(err[err.rindex("{"): err.rindex("}") + 1])
+    af = (f"loudnorm=I={lufs}:TP={tp}:LRA=11:linear=true:"
+          f"measured_I={m['input_i']}:measured_TP={m['input_tp']}:measured_LRA={m['input_lra']}:"
+          f"measured_thresh={m['input_thresh']}:offset={m['target_offset']},"
+          f"alimiter=limit={10 ** ((tp - 0.3) / 20):.4f}:level=disabled")
+    subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-i", str(src), "-af", af, "-ar", str(SR),
+         "-c:a", "libmp3lame", "-b:a", "320k", str(dst)],
+        check=True, capture_output=True,
+    )
+
+
 def generate_coherent(prompt: str, total_sec: int, seed: int, out_path,
                       client_cls=Client) -> dict:
-    """Связный long-form трек: text2music + цепочка extend + выбор кандидатов."""
-    import subprocess
+    """Связный long-form трек: база text2music + audio2audio-вариации базы."""
     import tempfile
+    import wave
     from pathlib import Path
 
     import numpy as np
@@ -279,71 +271,76 @@ def generate_coherent(prompt: str, total_sec: int, seed: int, out_path,
     work = Path(tempfile.mkdtemp(prefix="coherent_"))
     url, token = ace_endpoint()
     client = client_cls(url, token=token)
-    first = min(FIRST_SEC, total_sec)
-    # ponytail: сегменты списком float32 (15 мин stereo = 300 МБ) — склейка
-    # одним массивом не влезает в 1 ГБ контейнер; пишем wav потоково.
-    segs = [_trim_tail_silence(_read(generate_track(prompt, first, seed=seed, client_cls=client_cls)))]
-    ref = _profile(segs[0])
-    meta = {"seed": seed, "segments": 1, "rejected_candidates": 0,
-            "signature": ref["signature"], "key": ref["key"], "tuning": ref["tuning_median"]}
-    total = lambda: sum(len(x) for x in segs)  # noqa: E731
+    meta = {"seed": seed, "segments": 0, "rejected_candidates": 0}
     xf = XFADE_SEC * SR
-    next_seed = seed + 1
-    while total() < total_sec * SR:
-        ctx = _tail(segs, CONTEXT_SEC * SR)
-        src = work / f"ctx{meta['segments']}.wav"
-        _write_wav(src, ctx)
-        ext = max(15, min(EXT_SEC, total_sec - total() / SR + XFADE_SEC + 2))
+    next_seed = seed
+
+    def pick(gen, ref):
+        """Лучший из CANDIDATES: (без тишины, звукоряд базы, ближе по строю).
+        Тишина — жёсткий дисквалификатор (доминирует в лексикографическом
+        score): допущенный кусок с -48 dB провалом дал fail гейта."""
+        nonlocal next_seed
         best = None
         for _ in range(CANDIDATES):
             s, next_seed = next_seed, next_seed + 1
-            out = _read(_extend(client, prompt, str(src), ext, s))
-            new = _trim_tail_silence(out[len(ctx) - xf:])
-            del out
-            prof = _profile(new[xf:]) if len(new) > xf + 15 * SR else ref
-            score = (prof["signature"] == ref["signature"],
-                     prof["silent_seconds"] == 0,
-                     -_tdiff(prof["tuning_median"], ref["tuning_median"]))
+            x = _trim_tail_silence(_read(gen(s)))
+            p = _profile(x)
+            ref = ref or p
+            score = (-p["silent_seconds"], p["signature"] == ref["signature"],
+                     -_tdiff(p["tuning_median"], ref["tuning_median"]))
             if best is None or score > best[0]:
-                best = (score, new)
-            if score[0] and score[1] and -score[2] <= TUNING_TOL:
+                best = (score, x, p)
+            if not score[0] and score[1] and -score[2] <= TUNING_TOL:
                 break
             meta["rejected_candidates"] += 1
-        new = best[1]
-        # equal-power crossfade: хвост пред. сегмента и голова нового — один материал
-        last = segs[-1]
-        if len(last) < xf or len(new) < 2 * xf:
-            raise RuntimeError(f"extend вернул слишком короткий кусок ({len(new) / SR:.1f}с)")
-        t = np.linspace(0, np.pi / 2, xf, dtype=np.float32)[:, None]
-        last[-xf:] = last[-xf:] * np.cos(t) + new[:xf] * np.sin(t)
-        segs.append(new[xf:])
+        return best[1], best[2]
+
+    first = min(CHUNK_SEC, total_sec)
+    base, ref = pick(lambda s: generate_track(prompt, first, seed=s, client_cls=client_cls), None)
+    meta.update(signature=ref["signature"], key=ref["key"], tuning=ref["tuning_median"])
+    base_path = work / "base.wav"
+    import audio_gate
+    audio_gate.write_wav(base_path, base / (np.abs(base).max() + 1e-9) * 0.9, SR)
+    segs = [base]
+    meta["segments"] = 1
+    total = lambda: sum(len(x) for x in segs) - xf * (len(segs) - 1)  # noqa: E731
+    while total() < total_sec * SR:
+        need = total_sec - total() / SR + XFADE_SEC + 2
+        sec = max(30, min(CHUNK_SEC, need))
+        new, _ = pick(lambda s: _a2a(client, prompt, str(base_path), sec, s), ref)
+        if len(new) < 2 * xf:
+            raise RuntimeError(f"audio2audio вернул слишком короткий кусок ({len(new) / SR:.1f}с)")
+        segs.append(new)
         meta["segments"] += 1
 
+    # громкость кусков выравниваем по RMS базы, иначе скачки на стыках
+    rms = lambda x: float(np.sqrt(np.mean(x ** 2)) + 1e-9)  # noqa: E731
+    segs = [segs[0]] + [x * (rms(segs[0]) / rms(x)) for x in segs[1:]]
+    t = np.linspace(0, np.pi / 2, xf, dtype=np.float32)[:, None]
+    out = [segs[0]]
+    for x in segs[1:]:
+        prev = out[-1]
+        prev[-xf:] = prev[-xf:] * np.cos(t) + x[:xf] * np.sin(t)
+        out.append(x[xf:])
     # обрезка до total_sec + фейд-аут
-    over = total() - total_sec * SR
+    over = sum(len(x) for x in out) - total_sec * SR
     while over > 0:
-        cut = min(over, len(segs[-1]))
-        segs[-1] = segs[-1][: len(segs[-1]) - cut]
-        if not len(segs[-1]):
-            segs.pop()
+        cut = min(over, len(out[-1]))
+        out[-1] = out[-1][: len(out[-1]) - cut]
+        if not len(out[-1]):
+            out.pop()
         over -= cut
-    fade = min(len(segs[-1]), 3 * SR)
-    segs[-1][-fade:] *= np.linspace(1, 0, fade, dtype=np.float32)[:, None]
-    peak = max(float(np.abs(x).max()) for x in segs)
+    fade = min(len(out[-1]), 3 * SR)
+    out[-1][-fade:] *= np.linspace(1, 0, fade, dtype=np.float32)[:, None]
+    peak = max(float(np.abs(x).max()) for x in out)
     raw = work / "raw.wav"
-    import wave
     with wave.open(str(raw), "wb") as w:
         w.setnchannels(2)
         w.setsampwidth(2)
         w.setframerate(SR)
-        for x in segs:
+        for x in out:
             w.writeframes((np.clip(x / max(peak, 1e-9) * 0.5, -1, 1) * 32767).astype("<i2").tobytes())
-    subprocess.run(
-        ["ffmpeg", "-y", "-v", "error", "-i", str(raw),
-         "-af", "loudnorm=I=-14:TP=-1.5:LRA=11", "-ar", str(SR),
-         "-c:a", "libmp3lame", "-b:a", "320k", str(out_path)],
-        check=True, capture_output=True,
-    )
+    loudnorm_mp3(raw, out_path)
     return meta
 
 
@@ -373,7 +370,7 @@ def main() -> None:
     # Длительность по умолчанию 60с (сигнатурный клип). Long-form
     # (sleep/meditation/ambient каналы по конкурентному анализу — часто
     # 1-3ч, см. DECISIONS.md п.5) запрашивается через TRACK_DURATION_SEC,
-    # собирается generate_coherent(): text2music + цепочка extend.
+    # собирается generate_coherent(): база text2music + audio2audio-вариации.
     duration = int(os.environ.get("TRACK_DURATION_SEC", "60"))
 
     seed = abs(hash(run_dir.name)) % (2**31)
