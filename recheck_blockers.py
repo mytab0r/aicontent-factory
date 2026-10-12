@@ -3,8 +3,10 @@
 
 Конвенция: в теле blocked-карточки есть строки вида `needs: <тип>:<значение>`.
 Типы: secret, file, service, url, pr, other. other — машинно непроверяемо.
-Все needs выполнены (и нет other/unknown) → карточка в ready (или done при
-`on_resolve: complete` в теле) + комментарий-доказательство. Иначе — не трогаем.
+Для secret запятая в значении = «любой из» (OR); в остальных типах каждая
+строка needs обязательна (AND). Все проверяемые needs выполнены и нет
+other/unknown → карточка в ready (или done при `on_resolve: complete` в теле)
++ комментарий-доказательство. Иначе — не трогаем.
 
 Только stdlib. Запуск:
   python3 recheck_blockers.py --dry-run            # отчёт без записи в БД
@@ -36,10 +38,12 @@ GH_TOKEN_FILE = "/opt/data/secrets/github_token"
 
 
 def ck_secret(value):
-    missing = [n.strip() for n in value.split(",") if n.strip() and n.strip() not in os.environ]
-    if missing:
-        return "fail", "нет в окружении: " + ", ".join(missing)  # значения не логируем никогда
-    return "ok", "имя(имена) присутствуют в окружении"
+    # запятая = OR: достаточно любого одного; логируем только имена, не значения
+    names = [n.strip() for n in value.split(",") if n.strip()]
+    present = [n for n in names if n in os.environ]
+    if present:
+        return "ok", "присутствует(ют): " + ", ".join(present)
+    return "fail", "нет в окружении ни одного из: " + ", ".join(names)
 
 
 def ck_file(value):
@@ -47,9 +51,11 @@ def ck_file(value):
 
 
 def ck_service(value):
-    host, _, port = value.rpartition(":")
+    # форма [user@]host:port: проверить TCP host:port (порт; авторизация не проверяется)
+    _, _, hostport = value.rpartition("@")
+    host, _, port = hostport.rpartition(":")
     if not host or not port.isdigit():
-        return "unknown", "формат service: host:port"
+        return "unknown", "формат service: [user@]host:port"
     try:
         with socket.create_connection((host, int(port)), timeout=5):
             return "ok", f"TCP {host}:{port} принимается"
@@ -167,11 +173,18 @@ def run(db_path, dry_run, report_dir):
     c.close()
 
     rep = [f"# Отчёт перепроверки блокеров — {now_iso()}" + (" (dry-run)" if dry_run else ""), ""]
-    titles = {"resolve": "Снято", "blocked": "Всё ещё заблокировано (с причиной)",
-              "unverifiable": "Непроверяемо (other/unknown)", "no_needs": "Без needs-строк (конвенция не соблюдена)"}
-    for key in ("resolve", "blocked", "unverifiable", "no_needs"):
-        rep.append(f"## {titles[key]} ({len(sections[key])})")
-        for tid, title, lines in sections[key]:
+    titles = {"resolve": "Снято",
+              "blocked": "Всё ещё заблокировано (с причиной)",
+              "unverifiable": "Непроверяемо (other/unknown)",
+              "no_needs": "Непроверяемо: без needs-строк (конвенция не соблюдена)"}
+    # ponytail: no_needs склеена с unverifiable в третью секцию отчёта (спека: 3 секции);
+    # при надобности разделять — вернуть отдельную секцию.
+    merged = {"resolve": sections["resolve"],
+              "blocked": sections["blocked"],
+              "unverifiable": sections["unverifiable"] + sections["no_needs"]}
+    for key in ("resolve", "blocked", "unverifiable"):
+        rep.append(f"## {titles[key]} ({len(merged[key])})")
+        for tid, title, lines in merged[key]:
             rep.append(f"- {tid} «{title}»")
             rep.extend("  " + l for l in lines)
         rep.append("")
