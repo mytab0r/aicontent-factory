@@ -66,9 +66,11 @@ def ck_file(value):
 
 
 def ck_service(value):
-    host, _, port = value.rpartition(":")
+    # форма [user@]host:port: проверяем TCP host:port (порт; авторизация не проверяется)
+    _, _, hostport = value.rpartition("@")
+    host, _, port = hostport.rpartition(":")
     if not host or not port.isdigit():
-        return "unknown", "формат service: host:port"
+        return "unknown", "формат service: [user@]host:port"
     try:
         with socket.create_connection((host, int(port)), timeout=5):
             return "ok", f"TCP {host}:{port} принимается"
