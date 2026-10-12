@@ -2,6 +2,8 @@ name: oneoff-sound-ab
 # A/B звука: прод vs чистые/яркие промпты + больше шагов. Без публикации.
 on:
   workflow_dispatch: {}
+  push:
+    branches: [exp/sound-ab]
 jobs:
   ab:
     runs-on: [self-hosted, pc]
