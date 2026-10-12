@@ -1,0 +1,49 @@
+name: oneoff-extend-diag
+# Диагностика extend на локальном ACE-Step (t_44de72aa): минимальный вызов + логи контейнера.
+on:
+  workflow_dispatch: {}
+  push:
+    branches: ["aicontent-factory/t_44de72aa-*"]
+    paths: [".github/workflows/oneoff-extend-diag.yml"]
+jobs:
+  diag:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 20
+    env:
+      ACE_ENDPOINT: http://ace-step:7865/
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: |
+          uv venv .venv
+          uv pip install --python .venv/bin/python gradio_client numpy
+      - name: extend probe
+        continue-on-error: true
+        working-directory: pipeline
+        run: |
+          ../.venv/bin/python - <<'PY'
+          import importlib.util, shutil, traceback
+          spec = importlib.util.spec_from_file_location("m", "03_music.py"); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+          from gradio_client import Client, handle_file
+          c = Client("http://ace-step:7865/")
+          import json
+          info = c.view_api(return_format="dict", print_info=False)["named_endpoints"]
+          print("ENDPOINTS", list(info))
+          print("EXT PARAMS", [(p["parameter_name"], p.get("parameter_default")) for p in info["/extend_process_func"]["parameters"]][:8])
+          src = m.generate_track("lofi piano, A minor, 80 BPM, instrumental", 30, seed=1)
+          shutil.copy(src, "/tmp/src.wav"); print("src", src)
+          for label, kw in [("seeds_str", dict(extend_seeds="5", manual_seeds="5")), ("seeds_none", dict(extend_seeds=None, manual_seeds=None)), ("seeds_empty", dict(extend_seeds="", manual_seeds=""))]:
+              try:
+                  r = c.predict(text2music_json_data=None, extend_input_params_json=None, left_extend_length=0.0, right_extend_length=15.0,
+                      extend_source="upload", extend_source_audio_upload=handle_file("/tmp/src.wav"), prompt="lofi piano", lyrics="[instrumental]",
+                      infer_step=27, guidance_scale=15.0, scheduler_type="euler", cfg_type="apg", omega_scale=10.0, guidance_interval=0.5,
+                      guidance_interval_decay=0.0, min_guidance_scale=3.0, use_erg_tag=True, use_erg_lyric=False, use_erg_diffusion=True,
+                      oss_steps=None, guidance_scale_text=0.0, guidance_scale_lyric=0.0, api_name="/extend_process_func", **kw)
+                  print("PROBE_OK", label, r[0]); break
+              except Exception as e:
+                  print("PROBE_FAIL", label, type(e).__name__, str(e)[:200])
+          PY
+      - name: ace-step logs
+        if: always()
+        run: |
+          docker logs --tail 80 ace-step 2>&1 | grep -v "^\s*$" | tail -60 || docker ps -a --format '{{.Names}} {{.Status}}'
