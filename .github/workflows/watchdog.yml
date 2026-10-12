@@ -1,0 +1,27 @@
+name: release watchdog
+
+# 10:00 UTC: нет ролика за сегодня на канале -> TG-алерт с причиной (по-русски).
+# Run daily-video ещё идёт/в очереди -> сообщаем; сегодня не запускался -> dispatch сами.
+on:
+  schedule:
+    - cron: "0 10 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  actions: write   # читать runs + workflow_dispatch daily-video
+  contents: read
+
+jobs:
+  watch:
+    runs-on: [self-hosted, pc]  # ubuntu-latest: billing блокирует hosted-раннеры
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: check today's release
+        working-directory: pipeline
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          TG_THREAD_ID: ${{ secrets.TG_THREAD_ID }}
+        run: python3 watchdog.py

@@ -1,0 +1,169 @@
+name: oneoff-loop-final
+# Финал 1ч loop-видео БЕЗ GPU (t_1daedc6b, ITERATE п.3): loop.mp4 берём из
+# артефакта прогона 38151431259 (cozy tavern, seed 1368521336) — не
+# генерируем заново. Трек — реальный mp3 последнего daily-выпуска
+# (video-38167160546), конкатенированный до >=3600с, не pink noise.
+# Артефакты: final.mp4 (1ч 1080p CFR 24), ffprobe.txt, decode.log,
+# final.report.json (C1-C4), run.json (входы/тайминги/вердикт D).
+on:
+  workflow_dispatch:
+jobs:
+  final:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: download loop.mp4 из артефакта прогона 38151431259
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          mkdir -p runs/loopgen
+          python3 - <<'PY'
+          import json, os, subprocess, zipfile
+          tok = os.environ["GH_TOKEN"]
+          def art_id(run, name):
+              out = subprocess.run(
+                  ["curl","-fsS","-H",f"Authorization: Bearer {tok}",
+                   f"https://api.github.com/repos/${{ github.repository }}/actions/runs/{run}/artifacts"],
+                  capture_output=True, text=True, check=True).stdout
+              return [a["id"] for a in json.loads(out)["artifacts"] if a["name"] == name][0]
+          def grab(aid, dest):
+              subprocess.run(["curl","-fsSL","-H",f"Authorization: Bearer {tok}",
+                              "-o",dest,
+                              f"https://api.github.com/repos/${{ github.repository }}/actions/artifacts/{aid}/zip"],
+                             check=True)
+              zipfile.ZipFile(dest).extractall(".")
+          print("loopgen artifact:", art_id("38151431259", "loopgen"))
+          grab(art_id("38151431259", "loopgen"), "/tmp/loopgen.zip")
+          PY
+          ls -la runs/loopgen/loop.mp4
+      - name: track 1h из реального mp3 daily-выпуска
+        run: |
+          set -e
+          mkdir -p runs/loopgen
+          python3 - <<'PY'
+          import json, math, os, subprocess, zipfile
+          tok = os.environ["GH_TOKEN"]
+          hdr = ["-H", f"Authorization: Bearer {tok}"]
+          api = "https://api.github.com/repos/${{ github.repository }}"
+          def art_id(run, prefix):
+              out = subprocess.run(
+                  ["curl","-fsS",*hdr,f"{api}/actions/runs/{run}/artifacts"],
+                  capture_output=True, text=True, check=True).stdout
+              return [a["id"] for a in json.loads(out)["artifacts"]
+                      if a["name"] == prefix or a["name"].startswith(prefix)][0]
+          aid = art_id("38167160546", "video-")
+          print("daily artifact:", aid)
+          subprocess.run(["curl","-fsSL",*hdr,"-o","/tmp/daily.zip",
+                          f"{api}/actions/artifacts/{aid}/zip"], check=True)
+          zipfile.ZipFile("/tmp/daily.zip").extractall("/tmp/daily")
+          mp4 = next(__import__("pathlib").Path("/tmp/daily").rglob("video.mp4"))
+          print("daily video:", mp4)
+          subprocess.run(["ffmpeg","-y","-v","error","-i",str(mp4),"-vn",
+                          "-c:a","libmp3lame","-b:a","192k","runs/loopgen/daily.mp3"],
+                         check=True)
+          dur = float(subprocess.run(
+              ["ffprobe","-v","error","-show_entries","format=duration",
+               "-of","csv=p=0","runs/loopgen/daily.mp3"],
+              capture_output=True, text=True, check=True).stdout)
+          n = math.ceil(3600 / dur)
+          open("runs/loopgen/track_list.txt","w").write(
+              "".join("file 'daily.mp3'\n" for _ in range(n)))
+          print(f"daily track {dur:.1f}s x{n}")
+          PY
+          ffmpeg -y -v error -f concat -safe 0 -i runs/loopgen/track_list.txt -c copy runs/loopgen/track.mp3
+          ffprobe -v error -show_entries format=duration -of csv=p=0 runs/loopgen/track.mp3
+      - name: final concat + C1-C4
+        run: |
+          set -e
+          echo "=== final: concat -c copy до длины трека + aac ===" | tee runs/loopgen/steps.log
+          T0=$(date +%s)
+          python3 pipeline/loop_build.py final runs/loopgen/loop.mp4 runs/loopgen/track.mp3 runs/loopgen/final.mp4 --fps 24 \
+            2>&1 | tee runs/loopgen/final_report.log
+          echo "final_elapsed_s=$(( $(date +%s) - T0 ))" | tee -a runs/loopgen/steps.log
+      - name: ffprobe + полный decode-лог
+        run: |
+          set -e
+          ffprobe -v error -show_format -show_streams -of default=noprint_wrappers=1 \
+            runs/loopgen/final.mp4 | tee runs/loopgen/ffprobe.txt
+          # CFR 24/1 и 1920x1080 ассертами
+          python3 - <<'PY'
+          import subprocess, re
+          out = subprocess.run(["ffprobe","-v","error","-select_streams","v:0","-show_entries","stream=width,height,r_frame_rate,avg_frame_rate,duration","-of","csv=p=0","runs/loopgen/final.mp4"],capture_output=True,text=True).stdout.strip()
+          print("stream:", out)
+          w,h,r,avg,dur = out.split(",")
+          assert (int(w),int(h)) == (1920,1080), out
+          assert r=="24/1" and avg=="24/1", f"не CFR 24/1: {r} {avg}"
+          assert float(dur) >= 3600, dur
+          print("CFR/size/duration OK")
+          PY
+          # полный decode: 0 ошибок
+          ffmpeg -v error -i runs/loopgen/final.mp4 -f null - 2> runs/loopgen/decode.log
+          echo "decode errors: $(wc -l < runs/loopgen/decode.log)"
+          test ! -s runs/loopgen/decode.log || { echo "decode.log не пуст:"; cat runs/loopgen/decode.log; exit 1; }
+          # dts монотонны (выборочно: первые 200k пакетов)
+          python3 - <<'PY'
+          import subprocess
+          out = subprocess.run(["ffprobe","-v","error","-select_streams","v:0","-show_entries","packet=dts","-of","csv=p=0","runs/loopgen/final.mp4"],capture_output=True,text=True).stdout.split()
+          dts = [int(x) for x in out if x not in ("N/A,", "N/A")]
+          bad = sum(1 for i in range(len(dts)-1) if dts[i] >= dts[i+1])
+          print(f"packets={len(dts)} non_monotonic={bad}")
+          assert bad == 0
+          PY
+      - name: run.json (входы/тайминги/вердикт D из исходного прогона)
+        run: |
+          python3 - <<'PY'
+          import json, subprocess
+          from pathlib import Path
+          d = Path("runs/loopgen")
+          meta = json.loads((d / "raw" / "generate_meta.json").read_text())
+          seam = json.loads((d / "seam_report.json").read_text())
+          steps = {}
+          for ln in (d / "steps.log").read_text().splitlines():
+              import re
+              m = re.match(r"(\w+)_elapsed_s=(\d+)", ln)
+              if m: steps[m.group(1)] = int(m.group(2))
+          report = json.loads((d / "final.report.json").read_text())
+          run = {
+              "mode": "final-from-artifact",
+              "source_run": 38151431259,
+              "source_commit": "b8ff350",
+              "inputs": {
+                  "image": "config/assets/loop_cover_tavern_832x480.png (cozy tavern)",
+                  "prompt": meta.get("prompt"), "neg": meta.get("neg"),
+                  "width": meta.get("width"), "height": meta.get("height"),
+                  "length": meta.get("length"), "fps": 24,
+                  "track": "daily 38167160546 mp3, concat до >=3600s (не pink noise)",
+              },
+              "seed_accepted": meta.get("accepted_seed"),
+              "seeds_tried": meta.get("seeds"),
+              "closure": meta.get("closure"),
+              "peak_vram_note": "пик VRAM из исходного прогона 38151431259 (vram.log в его артефакте loopgen)",
+              "timings_s": steps,
+              "final_report": report,
+              "verdict_D": {"ok": seam.get("ok"),
+                            "evidence": "t_66eb4c1f/r2_last_first.png (глаз-проверка стыка)"},
+              "versions": {"ffmpeg": subprocess.run(["ffmpeg","-version"],capture_output=True,text=True).stdout.splitlines()[0],
+                           "runner": "self-hosted pc"},
+          }
+          (d / "run.json").write_text(json.dumps(run, ensure_ascii=False, indent=2))
+          print(json.dumps(run, ensure_ascii=False, indent=2))
+          PY
+      - name: upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: loop-final
+          path: |
+            runs/loopgen/run.json
+            runs/loopgen/ffprobe.txt
+            runs/loopgen/decode.log
+            runs/loopgen/final.report.json
+            runs/loopgen/final_report.log
+            runs/loopgen/steps.log
+            runs/loopgen/final.mp4
+          if-no-files-found: warn
