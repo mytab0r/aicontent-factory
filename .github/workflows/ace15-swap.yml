@@ -1,0 +1,23 @@
+name: ace15-swap
+# Замена ACE-Step v1 -> 1.5 на ПК. Режим берётся из .github/ace15-mode (push в ветку = запуск).
+on:
+  push: {branches: ["exp/ace15-swap"]}
+jobs:
+  run:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: probe
+        run: |
+          set +e
+          echo "mode=$(cat .github/ace15-mode)"
+          docker ps -a --format '{{.Names}}|{{.Image}}|{{.State}}|{{.Size}}'
+          echo "=== ace-step inspect"
+          docker inspect ace-step --format '{{.Config.Image}} {{json .Mounts}} {{json .HostConfig.PortBindings}} {{json .NetworkSettings.Networks}}' 2>&1 | head -c 3000; echo
+          echo "=== images"; docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}'
+          echo "=== volumes"; docker volume ls --format '{{.Name}}'
+          echo "=== df (docker vm)"; docker run --rm -v /:/h:ro alpine:3.20 df -h /h 2>&1 | tail -2
+          echo "=== host C: / D: via desktop mnt"
+          for p in /run/desktop/mnt/host/c /run/desktop/mnt/host/d /mnt/host/c; do docker run --rm -v $p:/x:ro alpine:3.20 sh -c "df -h /x | tail -1; ls /x | head -5" 2>&1 | sed "s|^|$p: |"; done
+          echo "=== checkpoint sizes"; docker run --rm -v ace-checkpoints:/c:ro alpine:3.20 du -sh /c /c/* 2>&1 | head; docker run --rm -v ace-outputs:/o:ro alpine:3.20 du -sh /o 2>&1
