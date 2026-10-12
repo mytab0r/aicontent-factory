@@ -1,0 +1,54 @@
+name: oneoff-sound-ab
+# A/B звука: прод vs чистые/яркие промпты + больше шагов. Без публикации.
+on:
+  workflow_dispatch: {}
+jobs:
+  ab:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 90
+    env:
+      ACE_ENDPOINT: http://ace-step:7865/
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - name: deps
+        run: |
+          uv venv .venv
+          uv pip install --python .venv/bin/python gradio_client
+      - name: generate
+        run: |
+          mkdir -p ab
+          .venv/bin/python - <<'PY'
+          import os, subprocess
+          from gradio_client import Client
+          try:
+              c = Client(os.environ["ACE_ENDPOINT"])
+          except Exception as e:
+              print("local ACE down, HF fallback", e); c = Client("ACE-Step/ACE-Step", token=os.environ.get("HF_TOKEN") or None)
+          S = {
+            "A_prod_now": (27, "anime lofi, soft rhodes piano melody, gentle boom bap drums with swing, warm bassline, vinyl noise, tape hiss, A minor, 82 BPM, instrumental, no vocals, cozy, nostalgic, study beats, Lofi Girl style"),
+            "B_prod_clean_60steps": (60, "anime lofi, soft rhodes piano melody, gentle boom bap drums with swing, warm bassline, clean polished mix, hi-fi, C major, 82 BPM, instrumental, no vocals, cozy, warm, harmonious"),
+            "C_bright_synthpop": (60, "dreamy synth pop instrumental, sparkling arpeggiated synths, lush shimmering pads, bell melody hook, warm bass, crisp clean drums, uplifting, F major, 100 BPM, polished studio mix, high fidelity, harmonious, no vocals"),
+            "D_chillwave_keys": (60, "chillwave instrumental, clean electric piano and glockenspiel melody, soft airy pads, gentle punchy drums, warm round bass, D major, 90 BPM, harmonious, bright, polished clean mix, hi-fi, no noise, no vocals"),
+          }
+          for name, (steps, prompt) in S.items():
+              for seed in (11, 22):
+                  try:
+                      r = c.predict(audio_duration=60.0, prompt=prompt, lyrics="[instrumental]", infer_step=steps,
+                          guidance_scale=15.0, scheduler_type="euler", cfg_type="apg", omega_scale=10.0,
+                          manual_seeds=str(seed), guidance_interval=0.5, guidance_interval_decay=0.0,
+                          min_guidance_scale=3.0, use_erg_tag=True, use_erg_lyric=False, use_erg_diffusion=True,
+                          oss_steps=None, guidance_scale_text=0.0, guidance_scale_lyric=0.0,
+                          audio2audio_enable=False, ref_audio_strength=0.5, ref_audio_input=None,
+                          lora_name_or_path="none", api_name="/__call__")
+                      out = f"ab/{name}_s{seed}.mp3"
+                      subprocess.run(["ffmpeg","-y","-loglevel","error","-i",r[0],"-af","loudnorm=I=-14:TP=-1","-c:a","libmp3lame","-b:a","192k",out], check=True)
+                      print("OK", out, flush=True)
+                  except Exception as e:
+                      print("FAIL", name, seed, str(e)[:200], flush=True)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sound-ab
+          path: ab/*.mp3
