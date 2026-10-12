@@ -39,7 +39,7 @@ jobs:
                               "-o",dest,
                               f"https://api.github.com/repos/${{ github.repository }}/actions/artifacts/{aid}/zip"],
                              check=True)
-              zipfile.ZipFile(dest).extractall(".")
+              zipfile.ZipFile(dest).extractall("runs/loopgen")
           print("loopgen artifact:", art_id("38151431259", "loopgen"))
           grab(art_id("38151431259", "loopgen"), "/tmp/loopgen.zip")
           PY
