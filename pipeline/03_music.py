@@ -132,7 +132,13 @@ def generate_track(prompt: str, duration_sec: int, seed: int | None = None,
                    client_cls=Client) -> str:
     """Вызывает ACE-Step, возвращает путь к сгенерированному mp3 (временный файл gradio)."""
     url, token = ace_endpoint()
-    client = client_cls(url, token=token)
+    try:
+        client = client_cls(url, token=token)
+    except Exception as e:  # ПК выключен/DNS/туннель — не валим выпуск
+        if url == SPACE:
+            raise
+        print(f"ACE {url} недоступен ({type(e).__name__}: {e}); HF Space фолбэк"[:300])
+        client = client_cls(SPACE, token=os.environ.get("HF_TOKEN") or None)
     result = client.predict(
         audio_duration=float(duration_sec),
         prompt=prompt,
