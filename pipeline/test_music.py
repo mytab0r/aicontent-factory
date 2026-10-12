@@ -10,7 +10,7 @@
   разнообразие ниш живёт в config/dd_scenes.yaml (DD-канал, test_dd_channel.py)
   и CANDIDATE_GENRE_PROMPTS (ждут A/B), не в проде.
 - genre_for_mood детерминирован.
-- chunk_plan корректен для long-form (1ч+).
+- long-form связность: test_music_coherent.py.
 """
 import importlib.util
 from pathlib import Path
@@ -35,14 +35,4 @@ name2, _ = music.genre_for_mood("rainy night study")
 assert name1 == name2, "выбор жанра должен быть воспроизводим по сиду"
 assert name1 in approved
 
-# ---- длинный формат: конкатенация кусков под sleep/focus (1ч+) ----
-assert hasattr(music, "chunk_plan"), "нужна функция, разбивающая long-form на куски API-вызовов"
-chunks = music.chunk_plan(total_sec=3600, max_chunk_sec=240)
-assert sum(chunks) == 3600
-assert all(c <= 240 for c in chunks)
-assert len(chunks) == 15  # 3600 / 240
-
-short_chunks = music.chunk_plan(total_sec=60, max_chunk_sec=240)
-assert short_chunks == [60], "короткий трек (сигнатурный ролик) не должен дробиться"
-
-print("OK: прод-ротация = одобренные жанры, chunk_plan() корректен для long-form")
+print("OK: прод-ротация = одобренные жанры (long-form: test_music_coherent.py)")

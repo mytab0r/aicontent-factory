@@ -1,0 +1,66 @@
+name: oneoff-coherent-ab
+# Разовый A/B для kanban t_44de72aa: старый способ (4 независимых куска,
+# 27 шагов, concat) vs новый generate_coherent (text2music + extend-цепочка,
+# 60 шагов, выбор кандидатов, crossfade, loudnorm). Оба трека -> audio_gate.
+# Артефакт: ab/{old,new}.mp3 + отчёты гейта. Владелец слушает A/B до прода.
+on:
+  workflow_dispatch: {}
+  push:
+    branches: ["aicontent-factory/t_44de72aa-*"]
+    paths: [".github/workflows/oneoff-coherent-ab.yml"]
+jobs:
+  ab:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 90
+    env:
+      ACE_ENDPOINT: http://ace-step:7865/
+      DUR: "900"
+      SEED: "424242"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - name: deps
+        run: |
+          command -v ffmpeg || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg)
+          uv venv .venv
+          uv pip install --python .venv/bin/python gradio_client numpy
+      - name: ace-step reachable
+        run: curl -fsS -m 20 -o /dev/null "$ACE_ENDPOINT" && echo ok
+      - name: generate new (coherent)
+        working-directory: pipeline
+        run: |
+          mkdir -p ../ab
+          ../.venv/bin/python - <<'PY'
+          import importlib.util, json, os, time
+          spec = importlib.util.spec_from_file_location("m", "03_music.py"); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+          t = time.time()
+          meta = m.generate_coherent(m.GENRE_PROMPTS["anime lofi"], int(os.environ["DUR"]), int(os.environ["SEED"]), "../ab/new.mp3")
+          meta["wall_sec"] = round(time.time() - t)
+          json.dump(meta, open("../ab/new_meta.json", "w"), indent=2); print(meta)
+          PY
+      - name: generate old (4 independent chunks, 27 steps)
+        working-directory: pipeline
+        run: |
+          ../.venv/bin/python - <<'PY'
+          import importlib.util, os, subprocess
+          spec = importlib.util.spec_from_file_location("m", "03_music.py"); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+          m.INFER_STEPS = 27
+          seed, dur = int(os.environ["SEED"]), int(os.environ["DUR"])
+          paths = [m.generate_track(m.GENRE_PROMPTS["anime lofi"], dur // 4, seed=seed + i) for i in range(4)]
+          open("/tmp/l.txt", "w").write("".join(f"file '{p}'\n" for p in paths))
+          subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", "/tmp/l.txt", "../ab/old.mp3"], check=True)
+          PY
+      - name: audio gate (both)
+        if: always()
+        working-directory: pipeline
+        run: |
+          for f in old new; do
+            [ -f ../ab/$f.mp3 ] || continue
+            ../.venv/bin/python audio_gate.py ../ab/$f.mp3 --json ../ab/gate_$f.json || true
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coherent-ab
+          path: ab/
+          retention-days: 14
