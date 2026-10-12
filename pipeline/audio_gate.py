@@ -31,6 +31,8 @@ SR = 22050
 WIN_SEC = 15
 KEY_SHARE_MIN = 0.85
 TUNING_SPREAD_MAX = 0.15
+TUNING_CORE_TOL = 0.03  # окна в ±3 центах от медианного строя = "ядро" трека
+TUNING_SHARE_MIN = 0.60
 SILENCE_DB = -45.0
 TRUE_PEAK_MAX = -1.0
 HEAD_SKIP, TAIL_SKIP = 1, 5
@@ -81,11 +83,16 @@ def _key_of(chroma: np.ndarray):
     return t, minor, (t + 3) % 12 if minor else t
 
 
-def _tuning(mag: np.ndarray, freqs: np.ndarray) -> float | None:
-    """Отклонение строя окна от A440 в полутонах (-0.5..0.5) по спектральным пикам."""
+def _tuning(block: np.ndarray, freqs: np.ndarray) -> tuple[float, float] | None:
+    """(строй окна в полутонах, доля пиков в консенсусе) или None.
+
+    Плотный микс = тысячи пиков на окно с собственным шумом ±0.87 п/п,
+    circular mean по всем показывает 0.3-0.4 (шум). Итог — консенсус:
+    стартуем с circular mean, итеративно оставляем пики в tolerance,
+    делаем ещё 2 круга (мода кругового распределения)."""
     band = (freqs > 150) & (freqs < 2500)
     devs, ws = [], []
-    for frame in mag:
+    for frame in block:
         lm = np.log(frame + 1e-9)
         thr = frame[band].max() * 0.1 if frame[band].size else 0
         k = np.where(band[1:-1] & (frame[1:-1] > thr) & (frame[1:-1] > frame[:-2]) & (frame[1:-1] >= frame[2:]))[0] + 1
@@ -96,11 +103,22 @@ def _tuning(mag: np.ndarray, freqs: np.ndarray) -> float | None:
             m = 12 * np.log2(f / 440.0)
             devs.append(m - np.round(m))
             ws.append(frame[i])
-    if not ws:
+    if len(ws) < 100:
         return None
-    ang = 2 * np.pi * np.array(devs)
-    z = np.sum(np.array(ws) * np.exp(1j * ang))
-    return float(np.angle(z) / (2 * np.pi))
+    d = np.array(devs)
+    w = np.array(ws)
+    for _ in range(2):
+        med = float(np.angle(np.sum(w * np.exp(2j * np.pi * d))) / (2 * np.pi))
+        rel = (d - med + 0.5) % 1 - 0.5
+        sel = np.abs(rel) < TUNING_CORE_TOL
+        if sel.sum() < max(50, len(d) // 100):
+            break
+        d, w = d[sel], w[sel]
+    share = len(d) / len(ws)
+    if len(d) < 50 or share < 0.05:  # консенсуса нет: шум/перкуссия, не строй
+        return None
+    med = float(np.angle(np.sum(w * np.exp(2j * np.pi * d))) / (2 * np.pi))
+    return med, share
 
 
 def analyze_pcm(x: np.ndarray) -> dict:
@@ -108,7 +126,7 @@ def analyze_pcm(x: np.ndarray) -> dict:
     pc = np.full(freqs.shape, -1)
     ok = (freqs > 55) & (freqs < 2000)
     pc[ok] = np.mod(np.round(12 * np.log2(freqs[ok] / 440.0)) + 9, 12).astype(int)
-    keys, tunings = [], []
+    keys, tunings, shares = [], [], []
     n = WIN_SEC * SR
     for s in range(0, len(x), n):  # по окну: вся матрица кадров 15-мин трека = ГБ RAM
         seg = x[s:s + n]
@@ -122,23 +140,24 @@ def analyze_pcm(x: np.ndarray) -> dict:
         keys.append(_key_of(chroma))
         t = _tuning(block, freqs)
         if t is not None:
-            tunings.append(t)
+            tunings.append(t[0])
+            shares.append(t[1])
 
     sigs = [k[2] for k in keys]
     if sigs:
         sig = max(set(sigs), key=sigs.count)
-        share = sigs.count(sig) / len(sigs)
+        key_share = sigs.count(sig) / len(sigs)
         labels = [f"{NAMES[t]} {'minor' if m else 'major'}" for t, m, s in keys if s == sig]
         key = max(set(labels), key=labels.count)
     else:
         share, key = 0.0, None
     if tunings:
         tn = np.array(tunings)
-        med = float(np.angle(np.mean(np.exp(2j * np.pi * tn))) / (2 * np.pi))
-        rel = (tn - med + 0.5) % 1 - 0.5
-        spread = float(np.percentile(rel, 95) - np.percentile(rel, 5))
-    else:
-        med, spread = 0.0, 0.0
+        med = float(np.median(tn))
+        core = tn[np.abs((tn - med + 0.5) % 1 - 0.5) < TUNING_CORE_TOL]
+        tshare = float(np.mean([sh for sh, t in zip(shares, tn)
+                                if abs((t - med + 0.5) % 1 - 0.5) < TUNING_CORE_TOL])) if core.size else 0.0
+        spread = float(core.max() - core.min()) if core.size else 1.0
 
     sec = len(x) // SR
     rms = np.sqrt(np.mean(x[: sec * SR].reshape(sec, SR) ** 2, axis=1) + 1e-20) if sec else np.zeros(0)
@@ -148,9 +167,10 @@ def analyze_pcm(x: np.ndarray) -> dict:
         "duration": round(len(x) / SR, 2),
         "windows": len(keys),
         "key": key,
-        "key_share": round(share, 3),
+        "key_share": round(key_share, 3) if sigs else 0.0,
         "signature": sig if sigs else None,
         "tuning_median": round(med, 3),
+        "tuning_share": round(tshare, 3),
         "tuning_spread": round(spread, 3),
         "silent_seconds": int((body < SILENCE_DB).sum()),
         "min_second_db": round(float(body.min()), 1) if body.size else None,
@@ -177,6 +197,8 @@ def check_file(path) -> dict:
         fails.append(f"key_share {r['key_share']} < {KEY_SHARE_MIN}")
     if r["tuning_spread"] > TUNING_SPREAD_MAX:
         fails.append(f"tuning_spread {r['tuning_spread']} > {TUNING_SPREAD_MAX}")
+    if r["tuning_share"] < TUNING_SHARE_MIN:
+        fails.append(f"tuning_share {r['tuning_share']} < {TUNING_SHARE_MIN}")
     if r["silent_seconds"]:
         fails.append(f"silent_seconds {r['silent_seconds']} (< {SILENCE_DB} dB)")
     if r["true_peak"] > TRUE_PEAK_MAX:
