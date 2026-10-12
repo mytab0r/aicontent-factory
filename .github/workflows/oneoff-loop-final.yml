@@ -13,7 +13,7 @@ permissions:
 jobs:
   final:
     runs-on: [self-hosted, pc]
-    timeout-minutes: 30
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -170,5 +170,4 @@ jobs:
             runs/loopgen/final.report.json
             runs/loopgen/final_report.log
             runs/loopgen/steps.log
-            runs/loopgen/final.mp4
           if-no-files-found: warn
