@@ -1,0 +1,32 @@
+name: oneoff-v15-sample
+# Разовый семпл ACE-Step 1.5 (MIT) через HF Space: одна цельная генерация, тональность/темп зафиксированы.
+on: workflow_dispatch
+jobs:
+  s:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 30
+    steps:
+      - uses: astral-sh/setup-uv@v3
+      - run: uv venv .v && uv pip install --python .v/bin/python gradio_client
+      - env: {HF_TOKEN: "${{ secrets.HF_TOKEN }}"}
+        run: |
+          mkdir -p out
+          .v/bin/python - <<'PY'
+          import os, shutil
+          from gradio_client import Client
+          c = Client("ACE-Step/Ace-Step-v1.5", token=os.environ["HF_TOKEN"])
+          r = c.predict(selected_model="acestep-v15-xl-turbo", generation_mode="custom", simple_query_input=None, simple_vocal_language="unknown",
+            param_4="anime lofi hip hop, mellow Rhodes piano melody, warm jazzy seventh chords, soft vinyl crackle, laid-back boom bap drums, deep round bass, nostalgic, calm, instrumental",
+            param_5="[Instrumental]", param_6=80, param_7="A minor", param_8="4", param_9="unknown", param_10=8, param_11=7.0,
+            param_12=False, param_13="42", param_14=None, param_15=180, param_16=2, param_17=None, param_18=None, param_47=None, param_48=[],
+            api_name="/generation_wrapper")
+          def walk(x):
+              if isinstance(x, str) and os.path.isfile(x): yield x
+              elif isinstance(x, dict): [ (yield y) for v in x.values() for y in walk(v) ]
+              elif isinstance(x, (list, tuple)): [ (yield y) for v in x for y in walk(v) ]
+          for i, f in enumerate(p for p in walk(r) if p.endswith((".mp3", ".wav", ".flac"))):
+              shutil.copy(f, f"out/v15_{i}{os.path.splitext(f)[1]}"); print(f)
+          PY
+          ls -la out
+      - uses: actions/upload-artifact@v4
+        with: {name: v15, path: out/}
