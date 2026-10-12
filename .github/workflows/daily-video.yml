@@ -5,9 +5,20 @@ on:
     - cron: "0 9 * * *"  # 09:00 UTC daily
   workflow_dispatch: {}
 
+# push ротации .state: default token = read -> было 403, ротация не сохранялась
+permissions:
+  contents: write
+
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # one video per genre per day, each into its own playlist (05_publish.py).
+    # Only owner-approved genres here (A/B rule); add after sample approval.
+    strategy:
+      max-parallel: 1  # single GPU
+      fail-fast: false
+      matrix:
+        genre: ["anime lofi"]
+    runs-on: [self-hosted, pc]
     timeout-minutes: 45
     env:
       ROUTER_BASE_URL: https://9router.pxbt.app/v1
@@ -19,15 +30,20 @@ jobs:
       # ушло в паблик 45-секундным. Фикс: 15 минут (900с), дробится
       # chunk_plan() в 03_music.py на куски <=240с под лимит ACE-Step.
       TRACK_DURATION_SEC: "900"
+      GENRE: ${{ matrix.genre }}
+      ACE_ENDPOINT: http://ace-step:7865/  # PC GPU via docker net gpu-net
     steps:
       - uses: actions/checkout@v4
+        with:
+          clean: true  # self-hosted: wipe previous runs/ so disk doesn't grow
 
       - uses: astral-sh/setup-uv@v3
 
       - name: install deps
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y ffmpeg
+          # apt на self-hosted раннере падал exit 100 (lock/битый dpkg) — ffmpeg уже стоит -> пропуск
+          command -v ffmpeg || { sudo dpkg --configure -a || true; for i in 1 2 3; do sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg && break; sleep 20; done; }
+          command -v ffmpeg
           uv venv .venv
           uv pip install --python .venv/bin/python pillow gradio_client
 
@@ -55,8 +71,8 @@ jobs:
           if [ -n "$YOUTUBE_TOKEN_JSON" ]; then
             mkdir -p ../.state
             printf '%s' "$YOUTUBE_TOKEN_JSON" > ../.state/youtube_token.json
-            pip install --quiet google-api-python-client google-auth-oauthlib
-            python3 05_publish.py
+            uv pip install --quiet --python ../.venv/bin/python google-api-python-client google-auth-oauthlib
+            ../.venv/bin/python 05_publish.py
           else
             echo "skip: секрет YOUTUBE_TOKEN_JSON не задан, публикация отложена"
           fi
@@ -67,11 +83,22 @@ jobs:
           git config user.email "actions@users.noreply.github.com"
           git add -f .state/mood_idx.txt 2>/dev/null || true
           git diff --cached --quiet || git commit -m "chore: advance mood rotation [skip ci]"
-          git push || true
+          git pull --rebase -q || true
+          git push
+
+      - name: TG alert on failure (без секретов TG_* — только лог)
+        if: failure()
+        working-directory: pipeline
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          TG_THREAD_ID: ${{ secrets.TG_THREAD_ID }}
+        run: |
+          python3 -c "from common import tg_send; tg_send('❌ daily-video (${{ matrix.genre }}) упал. Лог: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}. Если причина invalid_grant — перевыпусти токен: python3 pipeline/youtube_oauth.py --auth-url')"
 
       - name: upload run artifact
         uses: actions/upload-artifact@v4
         with:
-          name: video-${{ github.run_id }}
+          name: video-${{ github.run_id }}-${{ strategy.job-index }}
           path: runs/*/video.mp4
           retention-days: 14

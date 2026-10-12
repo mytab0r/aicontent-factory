@@ -12,7 +12,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     ACE_OUTPUT_DIR=/app/outputs
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      python3.10 python3-pip python3-venv git curl ffmpeg \
+      python3.10 libpython3.10 python3-pip python3-venv git curl ffmpeg \
     && ln -sf /usr/bin/python3 /usr/bin/python \
     && rm -rf /var/lib/apt/lists/*
 

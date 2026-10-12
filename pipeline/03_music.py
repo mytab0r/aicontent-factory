@@ -132,7 +132,13 @@ def generate_track(prompt: str, duration_sec: int, seed: int | None = None,
                    client_cls=Client) -> str:
     """Вызывает ACE-Step, возвращает путь к сгенерированному mp3 (временный файл gradio)."""
     url, token = ace_endpoint()
-    client = client_cls(url, token=token)
+    try:
+        client = client_cls(url, token=token)
+    except Exception as e:  # ПК выключен/DNS/туннель — не валим выпуск
+        if url == SPACE:
+            raise
+        print(f"ACE {url} недоступен ({type(e).__name__}: {e}); HF Space фолбэк"[:300])
+        client = client_cls(SPACE, token=os.environ.get("HF_TOKEN") or None)
     result = client.predict(
         audio_duration=float(duration_sec),
         prompt=prompt,
@@ -189,7 +195,7 @@ def concat_tracks(paths: list[str], out_path) -> None:
         list_path = f.name
     try:
         subprocess.run(
-            ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path, "-c", "copy", str(out_path)],
+            ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path, str(out_path)],  # куски ACE-Step не mp3: -c copy даёт exit 234,
             check=True, capture_output=True,
         )
     finally:
@@ -212,6 +218,10 @@ def main() -> None:
         if scene is None:
             raise SystemExit(f"dd scene not found: {scene_name!r}")
         genre_name, prompt = scene["name"], scene["music_prompt"]
+    elif os.environ.get("GENRE"):
+        # several videos/day, one per genre (workflow matrix sets GENRE)
+        genre_name = os.environ["GENRE"]
+        prompt = {**CANDIDATE_GENRE_PROMPTS, **GENRE_PROMPTS}[genre_name]
     else:
         genre_name, prompt = genre_for_mood(mood)
 

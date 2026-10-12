@@ -2,7 +2,7 @@ name: ci
 on: [push, pull_request]
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, pc]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -12,7 +12,41 @@ jobs:
         with:
           node-version: "20"
       - name: install test deps
-        run: pip install pillow gradio_client
+        run: |
+          set -e
+          # self-hosted runner: чиним сломанное dpkg-состояние после прерванных прогонов.
+          # fontconfig postinst падает на regenerating fonts cache в контейнере без /proc
+          # монтирований для fontconfig — не критично для ffmpeg CLI, чиним форсом.
+          sudo dpkg --configure -a || true
+          # fontconfig postinst (fc-cache) падает в раннер-контейнере — чиним окружение и повторяем
+          sudo mkdir -p /var/cache/fontconfig /usr/share/fonts /var/lib/dpkg/updates
+          sudo fc-cache -f -v >/dev/null 2>&1 || true
+          sudo DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
+          sudo apt-get update -qq || true
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -f -qq ffmpeg || true
+          # прерванный apt оставил битые (нулевые) .so; apt-reinstall блокируется ошибкой
+          # postinst fontconfig. Ищем пакеты, у которых файлы в /lib и /usr нулевого размера
+          # (симптом прерванной распаковки), и ставим их .deb напрямую — dpkg распаковывает
+          # файлы ДО postinst, так что fontconfig-ошибка восстановлению не мешает.
+          broken=""
+          for f in $(sudo find /lib /usr/lib /usr/bin -xdev -type f -size 0 2>/dev/null); do
+            p=$(sudo dpkg -S "$f" 2>/dev/null | cut -d: -f1) || continue
+            broken="$broken $p"
+          done
+          broken=$(echo $broken | tr ' ' '\n' | sort -u | tr '\n' ' ')
+          echo "broken:$broken"
+          if [ -n "$broken" ]; then
+            cd /tmp
+            for p in $broken; do
+              apt-get download "$p" >/dev/null 2>&1 && sudo dpkg -i --force-overwrite ./*.deb >/dev/null 2>&1 || echo "skip $p"
+              sudo rm -f ./*.deb
+            done
+            cd "$GITHUB_WORKSPACE"
+          fi
+          sudo DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
+          command -v ffmpeg
+          ffmpeg -version | head -1
+          pip install pillow gradio_client numpy
       - name: run python tests
         run: |
           set -e
@@ -20,6 +54,8 @@ jobs:
             echo "=== $f ==="
             python "$f"
           done
+      - name: recheck_blockers selftest
+        run: python recheck_blockers.py --selftest
       - name: run pay.pxbt.app tests (wallet-verify + api + server)
         run: |
           set -e
@@ -29,26 +65,33 @@ jobs:
           done
 
   pay-image-smoke:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, pc]
     steps:
       - uses: actions/checkout@v4
       - name: build + run pay image (bind-mount ./data как в compose), healthz, /admin 403, запись счёта
         run: |
           set -e
+          # self-hosted DooD: контейнеры живут на хосте, а не в раннере. Уникальное имя + уборка + доступ по IP
+          TOK=smoke-$GITHUB_RUN_ID  # не литерал: редактор секретов агента заменял его на ***; в этом job, не в test
+          N=pay-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT; trap "docker rm -f $N >/dev/null 2>&1 || true" EXIT
           docker build -q -f deploy/pay-page/Dockerfile -t pay-smoke .
           # root-owned каталог: контейнер должен упасть сразу с понятной ошибкой, а не 500 позже
           sudo mkdir -p /tmp/pay-root && sudo chown root:root /tmp/pay-root
           if timeout 20 docker run --rm -v /tmp/pay-root:/data pay-smoke 2> err.txt; then echo 'должен был упасть'; exit 1; fi
           cat err.txt
           grep -q 'chown 1000:1000' err.txt
-          # путь из README: mkdir + chown 1000:1000
-          mkdir -p data && sudo chown 1000:1000 data
-          docker run -d --name pay -p 8080:8080 -v "$PWD/data:/data" -e PAY_API_TOKEN=smoketok pay-smoke
-          for i in $(seq 1 20); do curl -fs http://127.0.0.1:8080/healthz && break; sleep 1; done
-          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/healthz)" = 200
-          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/admin)" = 403
-          id=$(curl -fs -X POST http://127.0.0.1:8080/api/invoice -H 'authorization: Bearer smoketok' -d '{"amount":1}' | sed -n 's/.*"id":"\([a-z0-9]*\)".*/\1/p')
+          # путь из README: mkdir + chown 1000:1000. DooD: bind-путь резолвит демон хоста, не раннер —
+          # $PWD/data на хосте нет (демон создаёт root-owned), поэтому каталог готовим на хосте через контейнер
+          D=/tmp/$N; R="docker run --rm --user 0 --entrypoint sh -v /tmp:/h pay-smoke -c"
+          trap "docker rm -f $N >/dev/null 2>&1; $R 'rm -rf /h/$N' >/dev/null 2>&1 || true" EXIT
+          $R "mkdir -p /h/$N && chown 1000:1000 /h/$N"
+          docker run -d --name $N -v "$D:/data" -e PAY_API_TOKEN=$TOK pay-smoke
+          H=http://$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' $N):8080
+          for i in $(seq 1 20); do curl -fs $H/healthz && break; sleep 1; done
+          test "$(curl -s -o /dev/null -w '%{http_code}' $H/healthz)" = 200
+          test "$(curl -s -o /dev/null -w '%{http_code}' $H/admin)" = 403
+          id=$(curl -fs -X POST $H/api/invoice -H "authorization: Bearer $TOK" -d '{"amount":1}' | sed -n 's/.*"id":"\([a-z0-9]*\)".*/\1/p')
           test -n "$id"
-          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/i/$id)" = 200
-          sudo grep -q "invoice:$id" data/kv.json
-          docker logs pay
+          test "$(curl -s -o /dev/null -w '%{http_code}' $H/i/$id)" = 200
+          $R "grep -q 'invoice:$id' /h/$N/kv.json"
+          docker logs $N
