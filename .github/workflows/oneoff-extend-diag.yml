@@ -13,11 +13,28 @@ jobs:
       ACE_ENDPOINT: http://ace-step:7865/
     steps:
       - uses: actions/checkout@v4
-      - name: ace-step inspect + hotfix NUMBA_CACHE_DIR
+      - name: ace-step recreate (NUMBA_CACHE_DIR фикс, t_44de72aa)
         run: |
-          docker inspect ace-step --format 'image={{.Config.Image}} env={{json .Config.Env}} nets={{json .NetworkSettings.Networks}} mounts={{json .Mounts}} ports={{json .HostConfig.PortBindings}} restart={{.HostConfig.RestartPolicy.Name}} labels={{json .Config.Labels}}' | sed 's/HF_TOKEN=[^"]*/HF_TOKEN=***/'
-          if docker inspect ace-step --format '{{json .Config.Env}}' | grep -q NUMBA_CACHE_DIR; then echo "already fixed"; exit 0; fi
-          echo "recreate needed"
+          docker pull -q ghcr.io/mytab0r/ace-step-cu128:latest
+          docker rm -f ace-step >/dev/null 2>&1 || true
+          NET=$(docker network ls --format '{{.Name}}' | grep -v '^bridge$\|^host$\|^none$' | while read n; do docker network inspect "$n" --format '{{range .Containers}}{{printf "%s\n" .Name}}{{end}}' | grep -qx 'gh-runner-aicontent-factory' && echo "$n" && break; done)
+          echo "runner network: $NET"
+          docker run -d --name ace-step --gpus all \
+            --network "$NET" --network-alias ace-step \
+            -v ace-checkpoints:/home/appuser/.cache/ace-step \
+            -v ace-hf:/home/appuser/.cache/huggingface \
+            -v ace-outputs:/app/outputs \
+            -p 127.0.0.1:7865:7865 \
+            --restart unless-stopped \
+            ghcr.io/mytab0r/ace-step-cu128:latest
+          for i in $(seq 1 60); do
+            sleep 5
+            ST=$(docker inspect ace-step --format '{{.State.Status}} exit={{.State.ExitCode}}' 2>/dev/null || true)
+            case "$ST" in exited*|dead*) echo "ace-step died:"; docker logs --tail 40 ace-step 2>&1; exit 1;; esac
+            curl -fsS -m 5 http://ace-step:7865/ >/dev/null 2>&1 && { echo "ace-step UP after $((i*5))s"; break; }
+          done
+          curl -fsS -m 10 http://ace-step:7865/ >/dev/null && echo reachable
+          docker inspect ace-step --format '{{range .Config.Env}}{{println .}}{{end}}' | grep NUMBA || echo "NO NUMBA env"
       - uses: astral-sh/setup-uv@v3
       - run: |
           uv venv .venv
