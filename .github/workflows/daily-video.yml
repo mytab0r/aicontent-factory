@@ -77,6 +77,16 @@ jobs:
             echo "skip: секрет YOUTUBE_TOKEN_JSON не задан, публикация отложена"
           fi
 
+      - name: 07 shorts (2 x 9:16 из long-form, ссылка на него)
+        working-directory: pipeline
+        run: |
+          if [ -f ../.state/youtube_token.json ]; then
+            uv pip install --quiet --python ../.venv/bin/python librosa
+            ../.venv/bin/python 07_shorts.py
+          else
+            echo "skip: нет YouTube токена"
+          fi
+
       - name: commit mood rotation state
         run: |
           git config user.name "aicontent-factory-bot"
@@ -100,5 +110,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: video-${{ github.run_id }}-${{ strategy.job-index }}
-          path: runs/*/video.mp4
+          path: |
+            runs/*/video.mp4
+            runs/*/short_*.mp4
           retention-days: 14
