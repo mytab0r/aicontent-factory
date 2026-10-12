@@ -45,6 +45,8 @@ jobs:
           PY
           ls -la runs/loopgen/loop.mp4
       - name: track 1h из реального mp3 daily-выпуска
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -e
           mkdir -p runs/loopgen
