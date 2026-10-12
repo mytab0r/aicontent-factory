@@ -118,6 +118,19 @@ def encode_loop(frames_dir: Path, out_path: Path, fps: int,
     return kept
 
 
+def pts_uniform_ok(dpts: list[int], expected: int, k_seg: int) -> bool:
+    """C3: Δpts = 1/fps с допуском ±1 тик на стыках concat-сегментов.
+
+    concat demuxer округляет таймстампы сегментов: 999 vs 1000 при
+    timescale 24000 = 42 мкс, на воспроизведение не влияет (run 38151431259:
+    ровно 9 стыков из 1080 с Δpts 999, dts монотонны). Отклонений больше
+    min(числа стыков, 20) не допускаем, |Δ| >= 2 не допускаем нигде.
+    """
+    max_off = min(max(k_seg - 1, 1), 20)
+    return (all(d in (expected - 1, expected, expected + 1) for d in dpts)
+            and sum(1 for d in dpts if d != expected) <= max_off)
+
+
 def build_final(loop: Path, track: Path, final: Path, fps: int,
                 T: float | None = None,
                 expect_size: tuple[int, int] = (1920, 1080)) -> dict:
@@ -192,13 +205,8 @@ def build_final(loop: Path, track: Path, final: Path, fps: int,
         capture_output=True, text=True, check=True).stdout.strip().split("/")[1])
     dpts = [pts[i + 1] - pts[i] for i in range(len(pts) - 1)]
     expected = round(timescale / fps)
-    # concat demuxer округляет таймстампы сегментов (допуск 1 тик на стыках
-    # сегментов: 999 vs 1000 = 42 мкс, не влияет на воспроизведение; проверено
-    # локально на 1080 сегментах — ровно K-1 стыков с 999, все dts монотонны)
     k_seg = max(1, math.ceil(T / loop_dur))
-    max_off = min(k_seg, 20)  # допускаем ≤1 тик отклонения на каждом стыке
-    pts_uniform = (all(d in (expected, expected - 1, expected + 1) for d in dpts)
-                   and sum(1 for d in dpts if d != expected) <= max_off)
+    pts_uniform = pts_uniform_ok(dpts, expected, k_seg)
 
     report = {
         "k": k,
