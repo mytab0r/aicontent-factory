@@ -8,7 +8,9 @@
 Загрузка тем же OAuth; ссылка на long-form из runs/<run>/published.json (пишет 05_publish).
 """
 import json
+import re
 import subprocess
+import zlib
 import sys
 from pathlib import Path
 
@@ -20,6 +22,22 @@ WIN_SEC = 40.0  # цель 30-45с
 MIN_SEC = 15.0
 HASHTAGS = "#Shorts #lofi #animelofi #studymusic"
 AI_NOTE = "AI-generated music and visuals (synthetic content)."
+# RESEARCH 13.10: у лидеров Shorts = крючок/ситуация, не "<long title> pt.N"; наши pt.1/pt.2 = 8-55 просм.
+HOOKS = [
+    "POV: it's 2am and you still have to study",
+    "this is your sign to take a break",
+    "the song that plays when you finally relax",
+    "study with me for 40 seconds",
+    "close your eyes and breathe for a moment",
+    "the vibe you need right now",
+    "put this on and forget the world",
+    "when the room is quiet and the tea is warm",
+]
+
+
+def scene_of(title: str) -> str:
+    """Сцена из заголовка long-form: всё до первого эмодзи/'|'/' Lofi'."""
+    return re.split(r"[^\w\s',&.-]|\s+lofi\b|\s+lo-fi\b", title, maxsplit=1, flags=re.I)[0].strip()
 
 
 def pick_windows(rms, fps: float, onsets, dur: float) -> list[tuple[float, float]]:
@@ -75,7 +93,9 @@ def render(image: Path, track: Path, start: float, end: float, out: Path) -> Non
 
 
 def short_body(idea: dict, long_url: str, n: int) -> dict:
-    title = f"{idea['title'][:80]} pt.{n} #Shorts"
+    # ponytail: 8 фиксированных крючков, ротация по хэшу заголовка; LLM-крючки — если CTR Shorts не вырастет
+    hook = HOOKS[(zlib.crc32(idea["title"].encode()) + n - 1) % len(HOOKS)]
+    title = f"{hook} | {scene_of(idea['title'])[:45]} #Shorts"
     desc = f"Full mix: {long_url}\n\n{AI_NOTE}\n\n{HASHTAGS}"
     return {
         "snippet": {"title": title[:100], "description": desc, "tags": idea.get("tags", []),
@@ -116,7 +136,7 @@ def main() -> None:
                                  media_body=MediaFileUpload(str(out), mimetype="video/mp4", resumable=True))
         resp = None
         while resp is None:
-            _, resp = req.next_chunk()
+            _, resp = req.next_chunk(num_retries=5)
         ids.append(resp["id"])
         print(f"OK: short {i} https://youtube.com/shorts/{resp['id']}")
     (run_dir / "shorts.json").write_text(json.dumps({"ids": ids, "windows": wins}), encoding="utf-8")

@@ -88,7 +88,7 @@ def publish(run_dir: Path) -> str:
 
     response = None
     while response is None:
-        status, response = request.next_chunk()
+        status, response = request.next_chunk(num_retries=5)  # 13.10: TimeoutError на записи чанка валил выпуск
         if status:
             print(f"upload {int(status.progress() * 100)}%")
 

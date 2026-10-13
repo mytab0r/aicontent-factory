@@ -52,3 +52,20 @@ assert "AI-generated" in sn["description"] and "#lofi" in sn["description"]
 assert sn["defaultLanguage"] == sn["defaultAudioLanguage"] == "en"
 assert body["status"]["containsSyntheticMedia"] is True
 print("test_shorts OK")
+
+# Shorts-крючок: заголовок != заголовку long-form, без "pt.N", сцена в заголовке, 2 шорта разные
+idea = {"title": "Cozy Halloween Bedroom 🎃 Lofi Beats to Study and Relax to", "tags": []}
+t1 = sh.short_body(idea, "u", 1)["snippet"]["title"]
+t2 = sh.short_body(idea, "u", 2)["snippet"]["title"]
+assert "pt." not in t1 and "pt." not in t2, (t1, t2)
+assert t1 != t2 and "Cozy Halloween Bedroom" in t1 and "Cozy Halloween Bedroom" in t2, (t1, t2)
+assert not t1.startswith(idea["title"][:30]), t1
+assert t1.endswith("#Shorts") and len(t1) <= 100 and len(t2) <= 100
+assert sh.scene_of("Rainy Night in Tokyo 🌧️ Lofi Beats to Study") == "Rainy Night in Tokyo"
+assert sh.scene_of("Midnight Train") == "Midnight Train"
+print("test_shorts hooks OK")
+
+# сетевой TimeoutError на next_chunk валил выпуск 13.10 — загрузка обязана ретраить
+for f in ("05_publish.py", "07_shorts.py"):
+    assert "next_chunk(num_retries=" in (Path(__file__).parent / f).read_text(encoding="utf-8"), f
+print("test_shorts upload-retry OK")
