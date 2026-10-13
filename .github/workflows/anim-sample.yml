@@ -1,7 +1,7 @@
 name: anim-sample
 # Семпл анимации обложки: Wan2.2 first=last frame (бесшовная петля), ZeroGPU с HF_TOKEN. Без публикации.
 on:
-  push: {branches: ["exp/anim-sample"]}
+  workflow_dispatch: {}
 jobs:
   run:
     runs-on: [self-hosted, pc]
