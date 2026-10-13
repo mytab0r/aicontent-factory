@@ -17,17 +17,18 @@ jobs:
           /tmp/av/bin/python - <<'PY'
           import os, shutil
           from gradio_client import Client, handle_file
-          c = Client("multimodalart/wan-2-2-first-last-frame", token=os.environ["HF_TOKEN"], verbose=False)
+          c = Client("zerogpu-aoti/wan2-2-fp8da-aoti-faster", token=os.environ["HF_TOKEN"], verbose=False)
           img = handle_file("out/cover.jpg")
-          v, seed = c.predict(img, img,
+          v, seed = c.predict(img,
               "gentle rain falling outside the window, neon reflections shimmer, candle flames flicker softly, "
               "steam rises from the mug, the girl blinks slowly and her hair sways slightly, the cat breathes while sleeping, "
               "subtle cozy motion, static camera",
-              duration_seconds=5, steps=8, randomize_seed=False, seed=7, api_name="/generate_video")
+              steps=6, duration_seconds=3.5, randomize_seed=False, seed=7, api_name="/generate_video")
           p = v["video"] if isinstance(v, dict) else v
           shutil.copy(p, "out/loop.mp4"); print("OK", p, seed)
           PY
-          ffmpeg -y -stream_loop 5 -i out/loop.mp4 -c copy out/loop_x6.mp4 2>&1 | tail -2 || true
+          ffmpeg -y -i out/loop.mp4 -filter_complex '[0:v]reverse[r];[0:v][r]concat=n=2:v=1[v]' -map '[v]' -an out/pingpong.mp4 2>&1 | tail -1
+          ffmpeg -y -stream_loop 3 -i out/pingpong.mp4 -c copy out/pingpong_x4.mp4 2>&1 | tail -1
           ls -la out
       - uses: actions/upload-artifact@v4
         if: always()
