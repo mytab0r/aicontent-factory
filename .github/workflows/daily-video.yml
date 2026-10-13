@@ -19,7 +19,7 @@ jobs:
       matrix:
         genre: ["anime lofi"]
     runs-on: [self-hosted, pc]
-    timeout-minutes: 45
+    timeout-minutes: 75
     env:
       ROUTER_BASE_URL: https://9router.pxbt.app/v1
       ROUTER_API_KEY: ${{ secrets.ROUTER_API_KEY }}
@@ -29,7 +29,7 @@ jobs:
       # было записано, но не применено в workflow — баг, видео от 2 окт
       # ушло в паблик 45-секундным. Фикс: 15 минут (900с), дробится
       # chunk_plan() в 03_music.py на куски <=240с под лимит ACE-Step.
-      TRACK_DURATION_SEC: "600"  # ACE-Step 1.5: один цельный трек <=600с, без склеек
+      TRACK_DURATION_SEC: "3600"  # >600 -> час-микс из цельных треков 1.5 + треклист-главы (ресёрч 13.10: хиты ниши 1-4 ч)
       GENRE: ${{ matrix.genre }}
       ACE15_ENDPOINT: http://ace-step:8001  # ACE-Step 1.5 REST на ПК (comfynet)
       # Эталон стиля, одобрен владельцем 13.10 (сэмпл ref1): 90с K/DA Seraphine.
