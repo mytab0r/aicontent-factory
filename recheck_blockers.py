@@ -196,10 +196,11 @@ def _lift(c, tid, new_status, dry_run, lines, via):
         return proof
     ts = int(time.time())
     payload = json.dumps({"summary": "recheck_blockers: снято (" + via + ")", "by": "recheck_blockers"}, ensure_ascii=False)
+    # block_recurrences на живых досках NOT NULL DEFAULT 0 — пишем 0, а не null (t_1a1f78c0, live-прогон 2026-10-13)
     with c:
         if new_status == "done":
             c.execute(
-                "update tasks set status='done', block_kind=null, block_recurrences=null,"
+                "update tasks set status='done', block_kind=null, block_recurrences=0,"
                 " claim_lock=null, claim_expires=null, completed_at=? where id=?",
                 (ts, tid),
             )
@@ -207,7 +208,7 @@ def _lift(c, tid, new_status, dry_run, lines, via):
                       (tid, "completed", payload, ts))
         else:
             c.execute(
-                "update tasks set status='ready', block_kind=null, block_recurrences=null,"
+                "update tasks set status='ready', block_kind=null, block_recurrences=0,"
                 " claim_lock=null, claim_expires=null where id=?",
                 (tid,),
             )
@@ -266,7 +267,7 @@ def _selftest_db(tmp, ok_file):
     c = sqlite3.connect(db)
     c.executescript(
         "create table tasks (id text primary key, title text, body text, status text,"
-        " block_kind text, block_recurrences integer, claim_lock text, claim_expires integer,"
+        " block_kind text, block_recurrences integer NOT NULL DEFAULT 0, claim_lock text, claim_expires integer,"
         " completed_at integer);"
         "create table task_comments (id integer primary key autoincrement, task_id text,"
         " author text, body text, created_at integer);"
@@ -361,7 +362,7 @@ def selftest():
     assert ev["t_ok"] == "completed" and ev["t_cmt"] == "unblocked" and ev["t_cmt_done"] == "completed", ev
     assert "t_cmt_hold" not in ev and "t_cmt_fail" not in ev, ev
     assert bk["t_cmt"] is None and bk["t_ok"] is None, bk
-    assert all(v is None for v in br.values()), br
+    assert all(v == 0 for v in br.values()), br  # живая схема: NOT NULL DEFAULT 0
     print("SELFTEST OK (redirect=fail, одна проверка на need, needs→done+event, "
           "комментарий→ready/done+event, fail сильнее комментария, комментарий до blocked не считается)")
     return 0
