@@ -1,0 +1,34 @@
+name: anim-sample
+# Семпл анимации обложки: Wan2.2 first=last frame (бесшовная петля), ZeroGPU с HF_TOKEN. Без публикации.
+on:
+  push: {branches: ["exp/anim-sample"]}
+jobs:
+  run:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 40
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: loop
+        run: |
+          python3 -m venv /tmp/av && /tmp/av/bin/pip -q install gradio_client
+          mkdir -p out && curl -fsSL -o out/cover.jpg https://i.ytimg.com/vi/ILpMRRCgIeM/maxresdefault.jpg
+          /tmp/av/bin/python - <<'PY'
+          import os, shutil
+          from gradio_client import Client, handle_file
+          c = Client("multimodalart/wan-2-2-first-last-frame", token=os.environ["HF_TOKEN"], verbose=False)
+          img = handle_file("out/cover.jpg")
+          v, seed = c.predict(img, img,
+              "gentle rain falling outside the window, neon reflections shimmer, candle flames flicker softly, "
+              "steam rises from the mug, the girl blinks slowly and her hair sways slightly, the cat breathes while sleeping, "
+              "subtle cozy motion, static camera",
+              duration_seconds=5, steps=8, randomize_seed=False, seed=7, api_name="/generate_video")
+          p = v["video"] if isinstance(v, dict) else v
+          shutil.copy(p, "out/loop.mp4"); print("OK", p, seed)
+          PY
+          ffmpeg -y -stream_loop 5 -i out/loop.mp4 -c copy out/loop_x6.mp4 2>&1 | tail -2 || true
+          ls -la out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: anim, path: out/}
