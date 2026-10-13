@@ -23,7 +23,7 @@ jobs:
               "gentle rain falling outside the window, neon reflections shimmer, candle flames flicker softly, "
               "steam rises from the mug, the girl blinks slowly and her hair sways slightly, the cat breathes while sleeping, "
               "subtle cozy motion, static camera",
-              steps=6, duration_seconds=3.5, randomize_seed=False, seed=7, api_name="/generate_video")
+              steps=6, duration_seconds=3.0, randomize_seed=False, seed=7, api_name="/generate_video")
           p = v["video"] if isinstance(v, dict) else v
           shutil.copy(p, "out/loop.mp4"); print("OK", p, seed)
           PY
