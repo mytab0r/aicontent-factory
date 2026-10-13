@@ -46,3 +46,9 @@ short_chunks = music.chunk_plan(total_sec=60, max_chunk_sec=240)
 assert short_chunks == [60], "короткий трек (сигнатурный ролик) не должен дробиться"
 
 print("OK: прод-ротация = одобренные жанры, chunk_plan() корректен для long-form")
+
+# Владелец 12.10: "шипение и просто мрак". Шум в промпте запрещён, тональности 1.5 только мажор.
+NOISE = ("vinyl", "hiss", "crackle", "tape", "noise", "dusty")
+for name, p in music.GENRE_PROMPTS.items():
+    assert not any(w in p.lower() for w in NOISE), f"шум в прод-промпте {name}"
+assert all("major" in k for k in music.ACE15_KEYS), "минорные тональности в ACE15_KEYS"

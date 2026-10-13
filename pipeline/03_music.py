@@ -43,9 +43,10 @@ SPACE = "ACE-Step/ACE-Step"
 # жанр-промпт через тот же generate_track() — пайплайн не меняется.
 GENRE_PROMPTS = {
     "anime lofi": (
-        "anime lofi, soft rhodes piano melody, gentle boom bap drums with "
-        "swing, warm bassline, vinyl noise, tape hiss, A minor, 82 BPM, "
-        "instrumental, no vocals, cozy, nostalgic, study beats, Lofi Girl style"
+        "anime lofi, bright dreamy rhodes piano lead melody, sparkling bells, "
+        "warm jazzy major seventh chords, gentle boom bap drums with swing, "
+        "deep round bass, clean polished studio mix, C major, 82 BPM, "
+        "instrumental, no vocals, cozy, uplifting, harmonious, study beats"
     ),
 }
 # ponytail: 8 жанров из конкурентного анализа (DECISIONS.md п.5) отключены
@@ -171,7 +172,7 @@ def generate_track(prompt: str, duration_sec: int, seed: int | None = None,
 # ACE-Step 1.5 (MIT): REST API контейнера на ПК. Один вызов до 600с, LM
 # планирует структуру, тональность/темп фиксируются -> склеек нет.
 ACE15_MAX_SEC = 600
-ACE15_KEYS = ["A minor", "D minor", "E minor", "C major", "F major", "G major"]
+ACE15_KEYS = ["C major", "F major", "G major", "D major", "A major", "E major"]
 
 
 class _Http:
