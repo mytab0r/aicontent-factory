@@ -12,12 +12,11 @@ jobs:
       - uses: actions/checkout@v4
       - name: refs (90s of each owner reference)
         run: |
-          uv venv /tmp/ytv && uv pip install --python /tmp/ytv/bin/python -q yt-dlp
+          python3 -m venv /tmp/ytv && /tmp/ytv/bin/pip install -q -U yt-dlp
           mkdir -p refs
           i=0; for id in CYZeAfaj3pc N7ce_v08QlE S0qlFgDvGfw; do i=$((i+1))
             /tmp/ytv/bin/yt-dlp -q -f bestaudio -o "refs/raw$i.%(ext)s" "https://youtu.be/$id" || continue
             ffmpeg -loglevel error -y -ss 30 -t 90 -i refs/raw$i.* -ac 2 -ar 48000 refs/ref$i.wav
-            docker cp refs/ref$i.wav ace-step:/tmp/ref$i.wav
           done; ls -la refs
       - name: generate
         run: |
@@ -34,13 +33,22 @@ jobs:
           jobs=[]
           for i in (1,2,3):
               if not os.path.exists(f"refs/ref{i}.wav"): continue
-              jobs.append((f"ref{i}",dict(reference_audio_path=f"/tmp/ref{i}.wav")))
+              jobs.append((f"ref{i}",dict(reference_audio_path=f"refs/ref{i}.wav")))
           jobs.append(("noref_sft",dict()))
           for name,extra in jobs:
               body=dict(prompt=P,lyrics="[Instrumental]",audio_duration=120,bpm=85,key_scale="C major",
                         time_signature="4",batch_size=1,thinking=True,use_random_seed=False,seed=7,
                         audio_format="mp3",**extra)
-              tid=post("/release_task",body)["data"]["task_id"]; t=time.time()
+              ref=body.pop("reference_audio_path",None)
+              if ref:
+                  args=[]
+                  for k,v in body.items(): args+=["-F",f"{k}={str(v).lower() if isinstance(v,bool) else v}"]
+                  import subprocess
+                  o=subprocess.run(["curl","-s","-X","POST",B+"/release_task","-F",f"reference_audio=@{ref}"]+args,capture_output=True,text=True).stdout
+                  print(o[:300]); tid=json.loads(o)["data"]["task_id"]
+              else:
+                  tid=post("/release_task",body)["data"]["task_id"]
+              t=time.time()
               while True:
                   time.sleep(8); d=post("/query_result",{"task_id_list":[tid]})["data"][0]
                   if d["status"]!=0 or time.time()-t>1500: break
