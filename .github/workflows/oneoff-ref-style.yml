@@ -1,0 +1,53 @@
+name: oneoff-ref-style
+on:
+  push:
+    branches: [exp/ref-style]
+jobs:
+  s:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 90
+    env:
+      ACE: http://ace-step:8001
+    steps:
+      - uses: actions/checkout@v4
+      - name: refs (90s of each owner reference)
+        run: |
+          uv venv /tmp/ytv && uv pip install --python /tmp/ytv/bin/python -q yt-dlp
+          mkdir -p refs
+          i=0; for id in CYZeAfaj3pc N7ce_v08QlE S0qlFgDvGfw; do i=$((i+1))
+            /tmp/ytv/bin/yt-dlp -q -f bestaudio -o "refs/raw$i.%(ext)s" "https://youtu.be/$id" || continue
+            ffmpeg -loglevel error -y -ss 30 -t 90 -i refs/raw$i.* -ac 2 -ar 48000 refs/ref$i.wav
+            docker cp refs/ref$i.wav ace-step:/tmp/ref$i.wav
+          done; ls -la refs
+      - name: generate
+        run: |
+          mkdir -p out
+          python3 - <<'PY'
+          import json, os, time, urllib.request
+          B=os.environ["ACE"]
+          def post(p,d):
+              r=urllib.request.Request(B+p,json.dumps(d).encode(),{"Content-Type":"application/json"})
+              return json.load(urllib.request.urlopen(r,timeout=300))
+          P=("dreamy lofi chillout instrumental, bright lush synth pads, sparkling bells and plucks, "
+             "soft piano lead melody, warm major seventh chords, gentle laid back beat, deep round bass, "
+             "clean polished studio mix, wide stereo, harmonious, uplifting, no vocals")
+          jobs=[]
+          for i in (1,2,3):
+              if not os.path.exists(f"refs/ref{i}.wav"): continue
+              jobs.append((f"ref{i}",dict(reference_audio_path=f"/tmp/ref{i}.wav")))
+          jobs.append(("noref_sft",dict()))
+          for name,extra in jobs:
+              body=dict(prompt=P,lyrics="[Instrumental]",audio_duration=120,bpm=85,key_scale="C major",
+                        time_signature="4",batch_size=1,thinking=True,use_random_seed=False,seed=7,
+                        audio_format="mp3",**extra)
+              tid=post("/release_task",body)["data"]["task_id"]; t=time.time()
+              while True:
+                  time.sleep(8); d=post("/query_result",{"task_id_list":[tid]})["data"][0]
+                  if d["status"]!=0 or time.time()-t>1500: break
+              print(name,"status",d["status"],round(time.time()-t),"s",flush=True)
+              if d["status"]==1:
+                  f=json.loads(d["result"])[0]["file"]; urllib.request.urlretrieve(B+f,f"out/{name}.mp3")
+              else: print(str(d.get("result"))[:300])
+          PY
+      - uses: actions/upload-artifact@v4
+        with: {name: ref-style, path: out/}
