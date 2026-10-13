@@ -1,0 +1,22 @@
+name: oneoff-prod-sample
+on:
+  push:
+    branches: [exp/prod-sample]
+jobs:
+  s:
+    runs-on: [self-hosted, aicontent-factory]
+    timeout-minutes: 60
+    env:
+      ACE15_ENDPOINT: http://ace-step:8001
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          mkdir -p /tmp/stub/gradio_client && echo 'class Client: pass' > /tmp/stub/gradio_client/__init__.py
+          cd pipeline && PYTHONPATH=/tmp/stub python3 -c "
+          import importlib.util as u
+          s=u.spec_from_file_location('m','03_music.py');m=u.module_from_spec(s);s.loader.exec_module(m)
+          p=m.GENRE_PROMPTS['anime lofi']
+          for seed in (3,8): m.generate_track_v15(p,120,seed,f'../prod_new_s{seed}.mp3')
+          "
+      - uses: actions/upload-artifact@v4
+        with: {name: prod-sample, path: 'prod_new_*.mp3'}
