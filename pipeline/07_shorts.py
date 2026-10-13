@@ -136,7 +136,7 @@ def main() -> None:
                                  media_body=MediaFileUpload(str(out), mimetype="video/mp4", resumable=True))
         resp = None
         while resp is None:
-            _, resp = req.next_chunk()
+            _, resp = req.next_chunk(num_retries=5)
         ids.append(resp["id"])
         print(f"OK: short {i} https://youtube.com/shorts/{resp['id']}")
     (run_dir / "shorts.json").write_text(json.dumps({"ids": ids, "windows": wins}), encoding="utf-8")

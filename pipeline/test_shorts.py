@@ -64,3 +64,8 @@ assert t1.endswith("#Shorts") and len(t1) <= 100 and len(t2) <= 100
 assert sh.scene_of("Rainy Night in Tokyo 🌧️ Lofi Beats to Study") == "Rainy Night in Tokyo"
 assert sh.scene_of("Midnight Train") == "Midnight Train"
 print("test_shorts hooks OK")
+
+# сетевой TimeoutError на next_chunk валил выпуск 13.10 — загрузка обязана ретраить
+for f in ("05_publish.py", "07_shorts.py"):
+    assert "next_chunk(num_retries=" in (Path(__file__).parent / f).read_text(encoding="utf-8"), f
+print("test_shorts upload-retry OK")
