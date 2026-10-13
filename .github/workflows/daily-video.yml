@@ -69,6 +69,13 @@ jobs:
         working-directory: pipeline
         run: ../.venv/bin/python 02_cover.py
 
+      - name: 03b animate cover (Wan2.2 ZeroGPU, сбой -> статика)
+        if: steps.guard.outputs.published != '1'
+        continue-on-error: true
+        timeout-minutes: 15
+        working-directory: pipeline
+        run: ../.venv/bin/python 03b_animate.py
+
       - name: reference audio (cache)
         if: steps.guard.outputs.published != '1'
         continue-on-error: true
