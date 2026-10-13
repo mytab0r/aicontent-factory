@@ -6,7 +6,7 @@ on:
 jobs:
   run:
     runs-on: [self-hosted, pc]
-    timeout-minutes: 150
+    timeout-minutes: 240
     env:
       C: /run/desktop/mnt/host/c/dockerlocal/ace15
       IMG: ghcr.io/ace-step/ace-step-1.5:latest
@@ -54,13 +54,17 @@ jobs:
           B = os.environ["ACE"]
           def post(p, d):
               r = urllib.request.Request(B + p, json.dumps(d).encode(), {"Content-Type": "application/json"})
-              return json.load(urllib.request.urlopen(r, timeout=60))
-          body = {"prompt": "anime lofi hip hop, mellow Rhodes piano lead melody, warm jazzy seventh chords, soft vinyl crackle, laid-back boom bap drums, deep round bass, nostalgic, calm",
+              for k in range(60):  # первый запрос ждёт докачку весов на C: — сервер может молчать минутами
+                  try: return json.load(urllib.request.urlopen(r, timeout=300))
+                  except Exception as e: print("retry", p, k, repr(e)[:120], flush=True); time.sleep(30)
+              raise SystemExit("ACE не ответил за ~5 ч")
+          body = {"prompt": "anime lofi hip hop, mellow Rhodes piano lead melody, warm jazzy seventh chords, laid-back boom bap drums, deep round bass, nostalgic, calm",
                   "lyrics": "[Instrumental]", "bpm": 80, "key_scale": "A minor", "time_signature": "4",
                   "audio_duration": 120, "batch_size": 2, "thinking": True, "use_random_seed": False, "seed": 42, "audio_format": "mp3"}
           t = time.time(); tid = post("/release_task", body)["data"]["task_id"]; print("task", tid)
           while True:
-              time.sleep(5)
+              time.sleep(10)
+              if time.time() - t > 100*60: raise SystemExit("генерация >100 мин")
               d = post("/query_result", {"task_id_list": [tid]})["data"][0]
               if d["status"] != 0: break
           print("status", d["status"], "sec", round(time.time() - t))
@@ -69,7 +73,8 @@ jobs:
               print(x.get("metas"), x.get("dit_model"), x.get("lm_model"))
               urllib.request.urlretrieve(B + x["file"], f"out/v15_{i}.mp3")
           PY
-          ls -la out
+          ls -la out || true
+          docker logs --tail 40 ace-step 2>&1 | tr '\r' '\n' | tail -40
       - uses: actions/upload-artifact@v4
         if: always()
         with: {name: ace15, path: out/}
