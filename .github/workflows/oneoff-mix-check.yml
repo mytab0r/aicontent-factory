@@ -86,7 +86,10 @@ jobs:
       - name: 03 music (ACE-Step)
         if: steps.guard.outputs.published != '1'
         working-directory: pipeline
-        run: ../.venv/bin/python 03_music.py
+        run: |
+          set -o pipefail
+          curl -s -m 10 "$ACE15_ENDPOINT/health" | head -c 300; echo
+          ../.venv/bin/python 03_music.py 2>&1 | tee /tmp/music.log || { echo "::error::$(tail -c 900 /tmp/music.log | tr '\n' ' ')"; exit 1; }
 
       - name: 04 assemble (ffmpeg)
         if: steps.guard.outputs.published != '1'
