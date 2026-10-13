@@ -24,6 +24,7 @@ ponytail: HF Space — бесплатный общий ресурс без SLA (
 """
 import os
 import random
+from pathlib import Path
 
 from gradio_client import Client
 
@@ -42,9 +43,10 @@ SPACE = "ACE-Step/ACE-Step"
 # жанр-промпт через тот же generate_track() — пайплайн не меняется.
 GENRE_PROMPTS = {
     "anime lofi": (
-        "anime lofi, soft rhodes piano melody, gentle boom bap drums with "
-        "swing, warm bassline, vinyl noise, tape hiss, A minor, 82 BPM, "
-        "instrumental, no vocals, cozy, nostalgic, study beats, Lofi Girl style"
+        "anime lofi, bright dreamy rhodes piano lead melody, sparkling bells, "
+        "warm jazzy major seventh chords, gentle boom bap drums with swing, "
+        "deep round bass, clean polished studio mix, C major, 82 BPM, "
+        "instrumental, no vocals, cozy, uplifting, harmonious, study beats"
     ),
 }
 # ponytail: 8 жанров из конкурентного анализа (DECISIONS.md п.5) отключены
@@ -167,6 +169,52 @@ def generate_track(prompt: str, duration_sec: int, seed: int | None = None,
     return result[0]
 
 
+# ACE-Step 1.5 (MIT): REST API контейнера на ПК. Один вызов до 600с, LM
+# планирует структуру, тональность/темп фиксируются -> склеек нет.
+ACE15_MAX_SEC = 600
+ACE15_KEYS = ["C major", "F major", "G major", "D major", "A major", "E major"]
+
+
+class _Http:
+    def __init__(self, base):
+        self.base = base.rstrip("/")
+
+    def post(self, path, body):
+        import json
+        import urllib.request
+        r = urllib.request.Request(self.base + path, json.dumps(body).encode(),
+                                   {"Content-Type": "application/json"})
+        return json.load(urllib.request.urlopen(r, timeout=60))
+
+    def get(self, path):
+        import urllib.request
+        return urllib.request.urlopen(self.base + path, timeout=300).read()
+
+
+def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=None,
+                       poll_sec: float = 5, timeout_sec: int = 3600) -> None:
+    import json
+    import time
+    api = api or _Http(os.environ["ACE15_ENDPOINT"])
+    body = {"prompt": prompt, "lyrics": "[Instrumental]",
+            "audio_duration": min(int(duration_sec), ACE15_MAX_SEC),
+            "bpm": 70 + seed % 21, "key_scale": ACE15_KEYS[seed % len(ACE15_KEYS)],
+            "time_signature": "4", "batch_size": 1, "thinking": True,
+            "use_random_seed": False, "seed": seed, "audio_format": "mp3"}
+    tid = api.post("/release_task", body)["data"]["task_id"]
+    deadline = time.time() + timeout_sec
+    while True:
+        d = api.post("/query_result", {"task_id_list": [tid]})["data"][0]
+        if d["status"] != 0:
+            break
+        if time.time() > deadline:
+            raise RuntimeError(f"ACE-Step 1.5 task {tid} timeout")
+        time.sleep(poll_sec)
+    if d["status"] != 1:
+        raise RuntimeError(f"ACE-Step 1.5 task {tid} failed: {str(d.get('result'))[:300]}")
+    Path(out_path).write_bytes(api.get(json.loads(d["result"])[0]["file"]))
+
+
 def chunk_plan(total_sec: int, max_chunk_sec: int = 240) -> list[int]:
     """Разбивает long-form длительность на куски <= max_chunk_sec для ACE-Step
     (один вызов практично ограничен ~240с, см. DECISIONS.md п.5). Короткий
@@ -234,14 +282,17 @@ def main() -> None:
 
     seed = abs(hash(run_dir.name)) % (2**31)
 
-    chunks = chunk_plan(duration)
-    chunk_paths = [
-        generate_track(prompt, duration_sec=c, seed=seed + i)
-        for i, c in enumerate(chunks)
-    ]
-
     out_path = run_dir / "track.mp3"
-    concat_tracks(chunk_paths, out_path)
+    if os.environ.get("ACE15_ENDPOINT"):
+        duration = min(duration, ACE15_MAX_SEC)
+        generate_track_v15(prompt, duration, seed, out_path)
+    else:
+        chunks = chunk_plan(duration)
+        chunk_paths = [
+            generate_track(prompt, duration_sec=c, seed=seed + i)
+            for i, c in enumerate(chunks)
+        ]
+        concat_tracks(chunk_paths, out_path)
     (run_dir / "music_meta.json").write_text(
         json.dumps({"genre": genre_name, "prompt": prompt, "seed": seed, "duration": duration},
                    ensure_ascii=False, indent=2),
