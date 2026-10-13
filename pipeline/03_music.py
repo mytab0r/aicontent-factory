@@ -42,11 +42,11 @@ SPACE = "ACE-Step/ACE-Step"
 # чем классический lofi hip-hop. ACE-Step берёт любой текстовый
 # жанр-промпт через тот же generate_track() — пайплайн не меняется.
 GENRE_PROMPTS = {
+    # Одобрен владельцем 13.10 (сэмпл ref1): звучит в паре с ACE15_REF_AUDIO.
     "anime lofi": (
-        "anime lofi, bright dreamy rhodes piano lead melody, sparkling bells, "
-        "warm jazzy major seventh chords, gentle boom bap drums with swing, "
-        "deep round bass, clean polished studio mix, C major, 82 BPM, "
-        "instrumental, no vocals, cozy, uplifting, harmonious, study beats"
+        "dreamy lofi chillout instrumental, bright lush synth pads, sparkling bells and plucks, "
+        "soft piano lead melody, warm major seventh chords, gentle laid back beat, deep round bass, "
+        "clean polished studio mix, wide stereo, harmonious, uplifting, no vocals"
     ),
 }
 # ponytail: 8 жанров из конкурентного анализа (DECISIONS.md п.5) отключены
@@ -190,9 +190,20 @@ class _Http:
         import urllib.request
         return urllib.request.urlopen(self.base + path, timeout=300).read()
 
+    def post_file(self, path, body, field, file_path):
+        import json
+        import subprocess
+        args = []
+        for k, v in body.items():
+            args += ["-F", f"{k}={str(v).lower() if isinstance(v, bool) else v}"]
+        out = subprocess.run(["curl", "-sf", "-X", "POST", self.base + path,
+                              "-F", f"{field}=@{file_path}", *args],
+                             capture_output=True, text=True, timeout=120, check=True).stdout
+        return json.loads(out)
+
 
 def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=None,
-                       poll_sec: float = 5, timeout_sec: int = 3600) -> None:
+                       poll_sec: float = 5, timeout_sec: int = 3600, ref_audio=None) -> None:
     import json
     import time
     api = api or _Http(os.environ["ACE15_ENDPOINT"])
@@ -201,7 +212,11 @@ def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=
             "bpm": 70 + seed % 21, "key_scale": ACE15_KEYS[seed % len(ACE15_KEYS)],
             "time_signature": "4", "batch_size": 1, "thinking": True,
             "use_random_seed": False, "seed": seed, "audio_format": "mp3"}
-    tid = api.post("/release_task", body)["data"]["task_id"]
+    if ref_audio and Path(ref_audio).is_file():
+        # Стиль по эталону (reference_audio): так одобрен звук 13.10.
+        tid = api.post_file("/release_task", body, "reference_audio", ref_audio)["data"]["task_id"]
+    else:
+        tid = api.post("/release_task", body)["data"]["task_id"]
     deadline = time.time() + timeout_sec
     while True:
         d = api.post("/query_result", {"task_id_list": [tid]})["data"][0]
@@ -285,7 +300,8 @@ def main() -> None:
     out_path = run_dir / "track.mp3"
     if os.environ.get("ACE15_ENDPOINT"):
         duration = min(duration, ACE15_MAX_SEC)
-        generate_track_v15(prompt, duration, seed, out_path)
+        generate_track_v15(prompt, duration, seed, out_path,
+                           ref_audio=os.environ.get("ACE15_REF_AUDIO"))
     else:
         chunks = chunk_plan(duration)
         chunk_paths = [

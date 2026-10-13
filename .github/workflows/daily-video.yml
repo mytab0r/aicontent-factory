@@ -32,6 +32,9 @@ jobs:
       TRACK_DURATION_SEC: "600"  # ACE-Step 1.5: один цельный трек <=600с, без склеек
       GENRE: ${{ matrix.genre }}
       ACE15_ENDPOINT: http://ace-step:8001  # ACE-Step 1.5 REST на ПК (comfynet)
+      # Эталон стиля, одобрен владельцем 13.10 (сэмпл ref1): 90с K/DA Seraphine.
+      # Кэш на раннере; нет файла -> 03_music генерирует без эталона.
+      ACE15_REF_AUDIO: /tmp/acf-ref/ref1.wav
     steps:
       - uses: actions/checkout@v4
         with:
@@ -65,6 +68,15 @@ jobs:
         if: steps.guard.outputs.published != '1'
         working-directory: pipeline
         run: ../.venv/bin/python 02_cover.py
+
+      - name: reference audio (cache)
+        if: steps.guard.outputs.published != '1'
+        continue-on-error: true
+        run: |
+          [ -s "$ACE15_REF_AUDIO" ] && exit 0
+          mkdir -p /tmp/acf-ref && python3 -m venv /tmp/acf-ref/v && /tmp/acf-ref/v/bin/pip install -q -U yt-dlp
+          /tmp/acf-ref/v/bin/yt-dlp -q -f bestaudio -o '/tmp/acf-ref/raw1.%(ext)s' https://youtu.be/CYZeAfaj3pc
+          ffmpeg -loglevel error -y -ss 30 -t 90 -i /tmp/acf-ref/raw1.* -ac 2 -ar 48000 "$ACE15_REF_AUDIO"
 
       - name: 03 music (ACE-Step)
         if: steps.guard.outputs.published != '1'
