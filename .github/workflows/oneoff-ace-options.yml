@@ -1,7 +1,7 @@
-name: oneoff-ref-style6
+name: oneoff-ace-options
 on:
   push:
-    branches: [exp/ref-style6]
+    branches: [exp/ace-options]
 jobs:
   s:
     runs-on: [self-hosted, pc]
@@ -23,7 +23,7 @@ jobs:
           mkdir -p refs
           # ponytail: YouTube 403 is transient/client-specific; retry alt clients, cache wav on runner
           mkdir -p /tmp/refcache
-          for pair in sera:CYZeAfaj3pc panda:SvntC6SZrfA; do n=${pair%%:*}; id=${pair#*:}
+          for pair in sera:CYZeAfaj3pc; do n=${pair%%:*}; id=${pair#*:}
             if [ -s /tmp/refcache/$n.wav ]; then cp /tmp/refcache/$n.wav refs/; continue; fi
             for i in 1 2 3; do for c in default android tv web_safari mweb; do
               rm -f refs/raw_$n.*
@@ -43,23 +43,23 @@ jobs:
           def post(p,d):
               r=urllib.request.Request(B+p,json.dumps(d).encode(),{"Content-Type":"application/json"})
               return json.load(urllib.request.urlopen(r,timeout=300))
-          # Owner 14.10 approved mock-up: instrumental base, short vocal inserts only at transitions.
+          # Which ACE-Step options do we leave unused? Probe models, then A/B same seed/prompt.
+          M=json.load(urllib.request.urlopen(B+"/v1/models",timeout=60)); print("MODELS",json.dumps(M)[:1500],flush=True)
+          open("out/models.json","w").write(json.dumps(M))
+          names=json.dumps(M)
           P=("instrumental, no vocals, melodic chill bass, dreamy and tender, deep warm sub bass, groovy drums, "
              "rich sound design: plucked synth arps, sparkling bells, music box, soft piano, lush evolving pads, "
              "bright major chords, catchy melodic lead hook, clean polished modern mix, wide stereo")
-          PV=("melodic chill bass, dreamy and tender, deep warm sub bass, groovy drums, "
-              "airy female vocal chops and soft wordless vocals, sparkling bells, lush synth pads, "
-              "bright major chords, catchy melodic hook, clean polished modern mix, wide stereo")
-          VOX="[verse]\nooh ooh, aah\n\n[chorus]\nla la la, ooh"
-          I="[Instrumental]"
-          jobs=[]
-          for name,ref,prompt,lyr,dur,seed in [
-              ("i1","sera",P,I,220,11),("v1","sera",PV,VOX,40,12),
-              ("i2","panda",P,I,220,13),("v2","sera",PV,VOX,40,14),
-              ("i3","sera",P,I,220,15),("v3","panda",PV,VOX,40,16),
-              ("i4","panda",P,I,215,17)]:
-              if os.path.exists(f"refs/{ref}.wav"):
-                  jobs.append((name,dict(reference_audio_path=f"refs/{ref}.wav",prompt=prompt,lyrics=lyr,bpm=95,audio_duration=dur,seed=seed)))
+          base=dict(reference_audio_path="refs/sera.wav",prompt=P,lyrics="[Instrumental]",bpm=95,audio_duration=90,seed=21)
+          jobs=[("0_now_turbo8",dict(base)),
+                ("1_turbo_steps20_sde",dict(base,inference_steps=20,infer_method="sde")),
+                ("2_lm_lowtemp_cfg",dict(base,lm_temperature=0.6,lm_cfg_scale=3.5,lm_negative_prompt="vocals, noise, hiss, distorted, muddy, out of tune")),
+                ("3_use_format",dict(base,use_format=True))]
+          if "acestep-v15-base" in names:
+              jobs.append(("4_base_50steps_adg",dict(base,model="acestep-v15-base",inference_steps=50,guidance_scale=7.0,use_adg=True)))
+          if "acestep-v15-sft" in names:
+              jobs.append(("5_sft_50steps",dict(base,model="acestep-v15-sft",inference_steps=50)))
+          print("JOBS",[j[0] for j in jobs],flush=True)
           for name,extra in jobs:
               body=dict(prompt=P,lyrics="[Instrumental]",audio_duration=120,bpm=85,key_scale="C major",
                         time_signature="4",batch_size=1,thinking=True,use_random_seed=False,seed=7,
@@ -71,7 +71,9 @@ jobs:
                   for k,v in body.items(): args+=["-F",f"{k}={str(v).lower() if isinstance(v,bool) else v}"]
                   import subprocess
                   o=subprocess.run(["curl","-s","-m","600","-X","POST",B+"/release_task","-F",f"reference_audio=@{ref}"]+args,capture_output=True,text=True).stdout
-                  print(o[:300]); tid=json.loads(o)["data"]["task_id"]
+                  print(name,o[:300],flush=True)
+                  try: tid=json.loads(o)["data"]["task_id"]
+                  except Exception: continue
               else:
                   tid=post("/release_task",body)["data"]["task_id"]
               t=time.time()
@@ -83,32 +85,5 @@ jobs:
                   f=json.loads(d["result"])[0]["file"]; urllib.request.urlretrieve(B+f,f"out/{name}.mp3")
               else: print(str(d.get("result"))[:300])
           PY
-      - name: assemble 15 min
-        run: |
-          cd out && ls -la
-          # vocal inserts: keep the middle 24 s of each 40 s vocal clip
-          for v in v1 v2 v3; do ffmpeg -loglevel error -y -i $v.mp3 -af "atrim=8:32,asetpts=N/SR/TB" -ar 48000 -ac 2 $v.cut.wav; done
-          # trim leading/trailing silence of every segment: ACE tails left a 1.7 s gap at a crossfade
-          T="silenceremove=start_periods=1:start_threshold=-50dB,areverse,silenceremove=start_periods=1:start_threshold=-50dB,areverse"
-          for i in i1 i2 i3 i4; do ffmpeg -loglevel error -y -i $i.mp3 -af "$T" -ar 48000 -ac 2 $i.wav; done
-          X="acrossfade=d=6:c1=tri:c2=tri"
-          ffmpeg -loglevel error -y -i i1.wav -i v1.cut.wav -i i2.wav -i v2.cut.wav -i i3.wav -i v3.cut.wav -i i4.wav \
-            -filter_complex "[0][1]$X[a];[a][2]$X[b];[b][3]$X[c];[c][4]$X[d];[d][5]$X[e];[e][6]$X,loudnorm=I=-14:TP=-1.5" \
-            -ar 48000 -c:a pcm_s16le raw.wav
-          L=$(ffprobe -v error -show_entries format=duration -of csv=p=0 raw.wav); echo "len $L"
-          ffmpeg -loglevel error -y -i raw.wav -af "afade=t=out:st=$(python3 -c "print($L-8)"):d=8" -c:a libmp3lame -b:a 192k FULL_15min.mp3
-          # QC gate: length 840-930 s, no silence >=1 s before last 10 s, true peak < 0 dBFS
-          ffmpeg -hide_banner -nostats -i FULL_15min.mp3 -af ebur128=peak=true,silencedetect=n=-50dB:d=1 -f null - 2>qc.txt || true
-          python3 - "$L" <<'PY'
-          import re,sys
-          L=float(sys.argv[1]); t=open("qc.txt").read()
-          st=[float(x) for x in re.findall(r"silence_start: ([\d.]+)",t)]
-          pk=float(re.findall(r"Peak:\s+(-?[\d.]+) dBFS",t)[-1])
-          print("len",L,"silences",st,"peak",pk)
-          assert 840<=L<=930, "bad length"
-          assert not [x for x in st if x<L-10], "internal silence"
-          assert pk<0, "clipping"
-          PY
-          mkdir -p ../final && mv FULL_15min.mp3 ../final/
       - uses: actions/upload-artifact@v4
-        with: {name: ref-style6, path: final/}
+        with: {name: ace-options, path: out/}
