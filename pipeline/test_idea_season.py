@@ -21,6 +21,8 @@ spec.loader.exec_module(idea)
 def test_season_by_month():
     assert "halloween" in idea.season_hint(date(2026, 10, 13)).lower()
     assert "autumn" in idea.season_hint(date(2026, 11, 5)).lower()
+    # RESEARCH 14.10: рождественский lofi набирает 2-13k с начала октября -> с ноября сцены с рождеством
+    assert "christmas" in idea.season_hint(date(2026, 11, 5)).lower()
     assert "christmas" in idea.season_hint(date(2026, 12, 20)).lower()
     assert "spring" in idea.season_hint(date(2027, 4, 1)).lower()
     for m in range(1, 13):
