@@ -1,7 +1,7 @@
-name: oneoff-ref-style3
+name: oneoff-ref-style4
 on:
   push:
-    branches: [exp/ref-style3]
+    branches: [exp/ref-style4]
 jobs:
   s:
     runs-on: [self-hosted, pc]
@@ -23,7 +23,7 @@ jobs:
           mkdir -p refs
           # ponytail: YouTube 403 is transient/client-specific; retry alt clients, cache wav on runner
           mkdir -p /tmp/refcache
-          for pair in sera:CYZeAfaj3pc; do n=${pair%%:*}; id=${pair#*:}
+          for pair in sera:CYZeAfaj3pc v3:S0qlFgDvGfw panda:SvntC6SZrfA; do n=${pair%%:*}; id=${pair#*:}
             if [ -s /tmp/refcache/$n.wav ]; then cp /tmp/refcache/$n.wav refs/; continue; fi
             for i in 1 2 3; do for c in default android tv web_safari mweb; do
               rm -f refs/raw_$n.*
@@ -43,14 +43,13 @@ jobs:
           def post(p,d):
               r=urllib.request.Request(B+p,json.dumps(d).encode(),{"Content-Type":"application/json"})
               return json.load(urllib.request.urlopen(r,timeout=300))
-          # Owner 14.10 round-2 verdict: A (Seraphine ref) best, but too much voice; vary tempo; mix with transitions.
-          P=("melodic chill bass, dreamy and tender, deep warm sub bass, groovy drums, "
-             "mostly instrumental, rare subtle airy female vocal chops in background, sparkling bells, "
-             "lush synth pads, bright major chords, catchy melodic hook, clean polished modern mix, wide stereo")
-          SPARSE="[intro]\n\n[verse]\n\n[chorus]\nooh\n\n[verse]\n\n[outro]"
+          # Owner round-3 verdict: vocals ("ai" sounds) everywhere = annoying; instrumental 95 best. More sounds than voices.
+          P=("instrumental, no vocals, melodic chill bass, dreamy and tender, deep warm sub bass, groovy drums, "
+             "rich sound design: plucked synth arps, sparkling bells, music box, soft piano, lush evolving pads, "
+             "bright major chords, catchy melodic lead hook, clean polished modern mix, wide stereo")
           jobs=[]
-          for name,lyr,bpm in [("1_slow85_vox",SPARSE,85),("2_mid95_inst","[Instrumental]",95),("3_up105_vox",SPARSE,105)]:
-              jobs.append((name,dict(reference_audio_path="refs/sera.wav",lyrics=lyr,bpm=bpm,audio_duration=100)))
+          for name,ref in [("1_A_sera","sera"),("2_B_v3","v3"),("3_C_panda","panda")]:
+              if os.path.exists(f"refs/{ref}.wav"): jobs.append((name,dict(reference_audio_path=f"refs/{ref}.wav",lyrics="[Instrumental]",bpm=95,audio_duration=100)))
           for name,extra in jobs:
               body=dict(prompt=P,lyrics="[Instrumental]",audio_duration=120,bpm=85,key_scale="C major",
                         time_signature="4",batch_size=1,thinking=True,use_random_seed=False,seed=7,
@@ -77,8 +76,8 @@ jobs:
       - name: mix with crossfades
         run: |
           cd out && ls *.mp3
-          ffmpeg -loglevel error -y -i 1_slow85_vox.mp3 -i 2_mid95_inst.mp3 -i 3_up105_vox.mp3 \
+          ffmpeg -loglevel error -y -i 1_A_sera.mp3 -i 2_B_v3.mp3 -i 3_C_panda.mp3 \
             -filter_complex "[0][1]acrossfade=d=8:c1=tri:c2=tri[a];[a][2]acrossfade=d=8:c1=tri:c2=tri,loudnorm=I=-14:TP=-1.5" \
-            -c:a libmp3lame -b:a 192k MIX_85-95-105.mp3
+            -c:a libmp3lame -b:a 192k MIX_A-B-C.mp3
       - uses: actions/upload-artifact@v4
-        with: {name: ref-style3, path: out/}
+        with: {name: ref-style4, path: out/}
