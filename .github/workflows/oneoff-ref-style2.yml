@@ -1,0 +1,69 @@
+name: oneoff-ref-style2
+on:
+  push:
+    branches: [exp/ref-style2]
+jobs:
+  s:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 90
+    env:
+      ACE: http://ace-step:8001
+    steps:
+      - uses: actions/checkout@v4
+      - name: ace-step up
+        run: |
+          docker start ace-step >/dev/null 2>&1 || true
+          for i in $(seq 1 40); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step 2>/dev/null)" = healthy ] && exit 0
+            sleep 6
+          done; exit 1
+      - name: refs (90s of each owner reference)
+        run: |
+          python3 -m venv /tmp/ytv && /tmp/ytv/bin/pip install -q -U yt-dlp
+          mkdir -p refs
+          for pair in sera:CYZeAfaj3pc v3:S0qlFgDvGfw panda:SvntC6SZrfA gomd:gGOMuIffC2k; do n=${pair%%:*}; id=${pair#*:}
+            /tmp/ytv/bin/yt-dlp -q -f bestaudio -o "refs/raw_$n.%(ext)s" "https://youtu.be/$id" || continue
+            ffmpeg -loglevel error -y -ss 30 -t 90 -i refs/raw_$n.* -ac 2 -ar 48000 refs/$n.wav
+          done; ls -la refs
+      - name: generate
+        run: |
+          mkdir -p out
+          python3 - <<'PY'
+          import json, os, time, urllib.request
+          B=os.environ["ACE"]
+          def post(p,d):
+              r=urllib.request.Request(B+p,json.dumps(d).encode(),{"Content-Type":"application/json"})
+              return json.load(urllib.request.urlopen(r,timeout=300))
+          # Owner 14.10: likes bass, rhythm, tenderness, sounds AND voices (Seraphine, BassnPanda, G.O.M.D.).
+          P=("melodic chill bass, dreamy and tender, deep warm sub bass, punchy groovy drums with swing, "
+             "airy female vocal chops and soft wordless vocals, sparkling bells, lush synth pads, "
+             "bright major chords, catchy melodic hook, clean polished modern mix, wide stereo")
+          VOX="[intro]\n\n[verse]\nooh ooh, aah\nooh ooh, aah\n\n[chorus]\nla la la, ooh\nla la la, ooh\n\n[outro]\nooh"
+          jobs=[]
+          for name,ref,lyr,bpm in [("A_sera_vox","sera",VOX,95),("B_v3_vox","v3",VOX,95),("C_panda_vox","panda",VOX,100),("D_gomd_inst","gomd","[Instrumental]",100)]:
+              if os.path.exists(f"refs/{ref}.wav"): jobs.append((name,dict(reference_audio_path=f"refs/{ref}.wav",lyrics=lyr,bpm=bpm)))
+          for name,extra in jobs:
+              body=dict(prompt=P,lyrics="[Instrumental]",audio_duration=120,bpm=85,key_scale="C major",
+                        time_signature="4",batch_size=1,thinking=True,use_random_seed=False,seed=7,
+                        audio_format="mp3")
+              body.update(extra)
+              ref=body.pop("reference_audio_path",None)
+              if ref:
+                  args=[]
+                  for k,v in body.items(): args+=["-F",f"{k}={str(v).lower() if isinstance(v,bool) else v}"]
+                  import subprocess
+                  o=subprocess.run(["curl","-s","-m","600","-X","POST",B+"/release_task","-F",f"reference_audio=@{ref}"]+args,capture_output=True,text=True).stdout
+                  print(o[:300]); tid=json.loads(o)["data"]["task_id"]
+              else:
+                  tid=post("/release_task",body)["data"]["task_id"]
+              t=time.time()
+              while True:
+                  time.sleep(8); d=post("/query_result",{"task_id_list":[tid]})["data"][0]
+                  if d["status"]!=0 or time.time()-t>1500: break
+              print(name,"status",d["status"],round(time.time()-t),"s",flush=True)
+              if d["status"]==1:
+                  f=json.loads(d["result"])[0]["file"]; urllib.request.urlretrieve(B+f,f"out/{name}.mp3")
+              else: print(str(d.get("result"))[:300])
+          PY
+      - uses: actions/upload-artifact@v4
+        with: {name: ref-style2, path: out/}
