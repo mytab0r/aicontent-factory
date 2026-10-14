@@ -3,7 +3,14 @@ name: daily lo-fi video
 on:
   schedule:
     - cron: "0 9 * * *"  # 09:00 UTC daily
-  workflow_dispatch: {}
+  # GitHub schedule опаздывает на 6-9 ч (04-13.10: старт 14:39-18:41 вместо 09:00).
+  # Точное время даёт cron Hermes: dispatch с scheduled=true в 09:00 UTC (guard включён).
+  workflow_dispatch:
+    inputs:
+      scheduled:
+        description: "плановый запуск: guard (пропуск, если long-form за сегодня уже есть)"
+        type: boolean
+        default: false
 
 # push ротации .state: default token = read -> было 403, ротация не сохранялась
 permissions:
@@ -43,7 +50,7 @@ jobs:
       # schedule опаздывает до 18:41 UTC -> второй long-form за сутки (12.10). Ручной dispatch = намеренный.
       - name: guard (один long-form в сутки)
         id: guard
-        if: github.event_name == 'schedule'
+        if: github.event_name == 'schedule' || inputs.scheduled
         working-directory: pipeline
         run: python3 watchdog.py --guard
 

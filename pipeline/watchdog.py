@@ -87,7 +87,8 @@ def watch() -> None:
         print(f"OK: ролик за {today} есть")
         return
     if dispatch:
-        gh(f"actions/workflows/{WORKFLOW}/dispatches", {"ref": os.environ.get("GITHUB_REF_NAME", "master")})
+        gh(f"actions/workflows/{WORKFLOW}/dispatches", {"ref": os.environ.get("GITHUB_REF_NAME", "master"),
+                                                     "inputs": {"scheduled": "true"}})
     tg_send(alert)
 
 
