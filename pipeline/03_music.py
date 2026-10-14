@@ -204,13 +204,16 @@ class _Http:
 
 
 def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=None,
-                       poll_sec: float = 5, timeout_sec: int = 3600, ref_audio=None) -> None:
+                       poll_sec: float = 5, timeout_sec: int = 3600, ref_audio=None,
+                       key_seed: int | None = None) -> None:
+    """key_seed: тональность/темп от него, а не от seed (час-микс: все треки в одной тональности)."""
     import json
     import time
     api = api or _Http(os.environ["ACE15_ENDPOINT"])
+    ks = seed if key_seed is None else key_seed
     body = {"prompt": prompt, "lyrics": "[Instrumental]",
             "audio_duration": min(int(duration_sec), ACE15_MAX_SEC),
-            "bpm": 70 + seed % 21, "key_scale": ACE15_KEYS[seed % len(ACE15_KEYS)],
+            "bpm": 70 + ks % 21, "key_scale": ACE15_KEYS[ks % len(ACE15_KEYS)],
             "time_signature": "4", "batch_size": 1, "thinking": True,
             "use_random_seed": False, "seed": seed, "audio_format": "mp3"}
     if ref_audio and Path(ref_audio).is_file():
@@ -316,6 +319,44 @@ def concat_tracks(paths: list[str], out_path) -> None:
         os.unlink(list_path)
 
 
+XFADE_SEC = 4.0
+
+
+def stitch_cmd(paths, out_path, xf=XFADE_SEC) -> list[str]:
+    """Связный микс (аудит 4HB26c4yow0: дыры -56 dB и скачки +34 dB на стыках):
+    срез тишины в начале/конце каждого трека, acrossfade xf с, loudnorm -14 LUFS / TP -1.5
+    (запас 0.5 dB на перекодирование mp3/aac, гейт требует <= -1)."""
+    cut = "silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.1"
+    trim = f"{cut},areverse,{cut},areverse,aformat=sample_rates=48000:channel_layouts=stereo"
+    f = [f"[{i}:a]{trim}[t{i}]" for i in range(len(paths))]
+    prev = "t0"
+    for i in range(1, len(paths)):
+        f.append(f"[{prev}][t{i}]acrossfade=d={xf}:c1=tri:c2=tri[x{i}]")
+        prev = f"x{i}"
+    f.append(f"[{prev}]loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000[out]")
+    args = ["ffmpeg", "-y", "-loglevel", "error"]
+    for p in paths:
+        args += ["-i", str(p)]
+    return args + ["-filter_complex", ";".join(f), "-map", "[out]",
+                   "-codec:a", "libmp3lame", "-b:a", "192k", str(out_path)]
+
+
+def trimmed_sec(path) -> float:
+    """Длительность трека после среза тишины по краям (для глав)."""
+    import subprocess
+    cut = "silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.1"
+    err = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", str(path), "-af",
+                          f"{cut},areverse,{cut},areverse,ebur128", "-f", "null", "-"],
+                         capture_output=True, text=True).stderr
+    import re
+    return float(re.findall(r"t:\s*([\d.]+)", err)[-1])
+
+
+def mix_starts(durs, xf=XFADE_SEC) -> list[float]:
+    """Длительности треков с учётом перекрытия: главы = старт трека в сшитом миксе."""
+    return [d - (xf if i < len(durs) - 1 else 0) for i, d in enumerate(durs)]
+
+
 def main() -> None:
     import json
 
@@ -356,13 +397,16 @@ def main() -> None:
 
         def gen(i):
             p = run_dir / f"mix_{i:02d}.mp3"
-            generate_track_v15(prompt, ACE15_MAX_SEC, seed + i, p, ref_audio=ref)
+            # одна тональность/темп на весь микс (было seed+i -> 8 тональностей за час)
+            generate_track_v15(prompt, ACE15_MAX_SEC, seed + i, p, ref_audio=ref, key_seed=seed)
             return str(p)
 
-        paths, durs = plan_mix(duration, gen, _probe_sec)
-        concat_tracks(paths, out_path)
+        paths, _ = plan_mix(duration, gen, _probe_sec)
+        import subprocess
+        subprocess.run(stitch_cmd(paths, out_path), check=True)
+        durs = mix_starts([trimmed_sec(p) for p in paths])
         chaps = chapters(durs, track_names(len(paths), seed))
-        duration = int(sum(durs))
+        duration = int(_probe_sec(out_path))
     elif os.environ.get("ACE15_ENDPOINT"):
         duration = min(duration, ACE15_MAX_SEC)
         generate_track_v15(prompt, duration, seed, out_path,

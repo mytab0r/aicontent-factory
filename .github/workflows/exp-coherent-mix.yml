@@ -1,0 +1,113 @@
+name: exp coherent mix (no publish)
+
+on:
+  push:
+    branches: ["exp/coherent-mix"]
+  workflow_dispatch: {}
+
+# push ротации .state: default token = read -> было 403, ротация не сохранялась
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # one video per genre per day, each into its own playlist (05_publish.py).
+    # Only owner-approved genres here (A/B rule); add after sample approval.
+    strategy:
+      max-parallel: 1  # single GPU
+      fail-fast: false
+      matrix:
+        genre: ["anime lofi"]
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 75
+    env:
+      ROUTER_BASE_URL: https://9router.pxbt.app/v1
+      ROUTER_API_KEY: ${{ secrets.ROUTER_API_KEY }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      # DECISIONS.md п.5: конкурентный анализ показал — никто не публикует
+      # 45-секундные видео, формат 10-20 мин "сигнатурный" ролик. Решение
+      # было записано, но не применено в workflow — баг, видео от 2 окт
+      # ушло в паблик 45-секундным. Фикс: 15 минут (900с), дробится
+      # chunk_plan() в 03_music.py на куски <=240с под лимит ACE-Step.
+      TRACK_DURATION_SEC: "3600"  # >600 -> час-микс из цельных треков 1.5 + треклист-главы (ресёрч 13.10: хиты ниши 1-4 ч)
+      GENRE: ${{ matrix.genre }}
+      ACE15_ENDPOINT: http://ace-step:8001  # ACE-Step 1.5 REST на ПК (comfynet)
+      # Эталон стиля, одобрен владельцем 13.10 (сэмпл ref1): 90с K/DA Seraphine.
+      # Кэш на раннере; нет файла -> 03_music генерирует без эталона.
+      ACE15_REF_AUDIO: /tmp/acf-ref/ref1.wav
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: true  # self-hosted: wipe previous runs/ so disk doesn't grow
+
+      # schedule опаздывает до 18:41 UTC -> второй long-form за сутки (12.10). Ручной dispatch = намеренный.
+      - name: guard (один long-form в сутки)
+        id: guard
+        if: false
+        working-directory: pipeline
+        run: python3 watchdog.py --guard
+
+      - uses: astral-sh/setup-uv@v3
+        if: steps.guard.outputs.published != '1'
+
+      - name: install deps
+        if: steps.guard.outputs.published != '1'
+        run: |
+          # apt на self-hosted раннере падал exit 100 (lock/битый dpkg) — ffmpeg уже стоит -> пропуск
+          command -v ffmpeg || { sudo dpkg --configure -a || true; for i in 1 2 3; do sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg && break; sleep 20; done; }
+          command -v ffmpeg
+          uv venv .venv
+          uv pip install --python .venv/bin/python pillow gradio_client librosa
+
+      - name: 01 idea
+        if: steps.guard.outputs.published != '1'
+        working-directory: pipeline
+        run: ../.venv/bin/python 01_idea.py
+
+      # 13.10: ace-step остановлен (exit 137, stop вручную/чужим процессом) -> unless-stopped не поднимает; выпуск падал бы на 03 music
+      - name: ACE-Step up (start if stopped, wait health)
+        if: steps.guard.outputs.published != '1'
+        run: |
+          docker start ace-step >/dev/null 2>&1 || true
+          for i in $(seq 1 40); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step 2>/dev/null)" = healthy ] && { echo "ace-step healthy"; exit 0; }
+            sleep 6
+          done
+          echo "::error::ace-step не healthy за 4 мин"; exit 1
+
+      - name: reference audio (cache)
+        if: steps.guard.outputs.published != '1'
+        continue-on-error: true
+        run: |
+          [ -s "$ACE15_REF_AUDIO" ] && exit 0
+          mkdir -p /tmp/acf-ref && python3 -m venv /tmp/acf-ref/v && /tmp/acf-ref/v/bin/pip install -q -U yt-dlp
+          /tmp/acf-ref/v/bin/yt-dlp -q -f bestaudio -o '/tmp/acf-ref/raw1.%(ext)s' https://youtu.be/CYZeAfaj3pc
+          ffmpeg -loglevel error -y -ss 30 -t 90 -i /tmp/acf-ref/raw1.* -ac 2 -ar 48000 "$ACE15_REF_AUDIO"
+
+      - name: 03 music (ACE-Step)
+        if: steps.guard.outputs.published != '1'
+        working-directory: pipeline
+        run: ../.venv/bin/python 03_music.py
+
+      # t_44de72aa: одна тональность >=85% окон, строй <=0.15 пт, нет секунд < -45 dB, TP <= -1. Провал -> не публикуем.
+      - name: audio gate (качество трека)
+        if: steps.guard.outputs.published != '1'
+        working-directory: pipeline
+        continue-on-error: true
+        run: ../.venv/bin/python audio_gate.py "$(ls -d ../runs/*/ | tail -1)track.mp3" --json "$(ls -d ../runs/*/ | tail -1)gate.json"
+
+
+      - name: samples (стык треков 1/2, 60 с) + gate.json
+        if: always()
+        run: |
+          d=$(ls -d runs/*/ | tail -1); mkdir -p out
+          cp "$d"/music_meta.json "$d"/gate.json out/ 2>/dev/null || true
+          t=$(python3 -c "import json;print(json.load(open('$d/music_meta.json'))['chapters'][1].split()[0])")
+          s=$(python3 -c "m,s='$t'.split(':')[-2:];print(max(0,int(m)*60+int(s)-30))")
+          ffmpeg -loglevel error -y -ss "$s" -t 60 -i "$d/track.mp3" -codec:a libmp3lame -b:a 192k out/new_seam_60s.mp3
+          ffmpeg -hide_banner -nostats -i out/new_seam_60s.mp3 -af silencedetect=n=-45dB:d=0.5,ebur128=peak=true -f null - 2>&1 | grep -E 'silence_|I:|Peak:' | tail -5
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coherent-mix
+          path: out/

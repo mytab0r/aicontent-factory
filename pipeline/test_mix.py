@@ -74,6 +74,50 @@ def test_title_gets_real_length_label():
     assert len(pub.title_with_length(long, 3700)) <= 100
 
 
+def test_mix_one_key_for_all_tracks():
+    """Аудит 4HB26c4yow0: разные тональности треков = фальшь на стыках."""
+    class Api:
+        def __init__(self): self.bodies = []
+        def post(self, path, body):
+            if path == "/release_task":
+                self.bodies.append(body); return {"data": {"task_id": "t"}}
+            return {"data": [{"status": 1, "result": '[{"file": "/f"}]'}]}
+        def get(self, path): return b"x"
+    import tempfile
+    api = Api()
+    for i in range(3):
+        music.generate_track_v15("p", 600, 100 + i, tempfile.mktemp(), api=api, key_seed=100)
+    assert len({(b["key_scale"], b["bpm"]) for b in api.bodies}) == 1
+    assert len({b["seed"] for b in api.bodies}) == 3  # разные треки, одна тональность
+
+
+def test_stitch_cmd_trims_crossfades_normalizes():
+    cmd = " ".join(music.stitch_cmd(["a.mp3", "b.mp3", "c.mp3"], "out.mp3"))
+    assert cmd.count("acrossfade=d=4.0") == 2
+    assert cmd.count("areverse") == 6 and "-45dB" in cmd
+    assert "loudnorm=I=-14:TP=-1.5" in cmd and "concat" not in cmd
+
+
+def test_chapters_account_for_crossfade():
+    assert music.mix_starts([480.0, 470.0, 460.0]) == [476.0, 466.0, 460.0]
+
+
+def test_stitch_real_audio_no_gap():
+    """ffmpeg по-настоящему: дыра в 3 с тишины в конце трека не попадает в микс."""
+    import subprocess, tempfile
+    d = Path(tempfile.mkdtemp())
+    for n, extra in (("a", ",apad=pad_dur=3"), ("b", "")):
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
+                        f"sine=f=440:d=10{extra}", str(d / f"{n}.mp3")], check=True)
+    subprocess.run(music.stitch_cmd([d / "a.mp3", d / "b.mp3"], d / "o.mp3"), check=True)
+    total = music._probe_sec(d / "o.mp3")
+    assert 15 < total < 17.5, total  # 10+10-4, без 3 с тишины
+    err = subprocess.run(["ffmpeg", "-hide_banner", "-i", str(d / "o.mp3"), "-af",
+                          "silencedetect=n=-45dB:d=0.5", "-f", "null", "-"],
+                         capture_output=True, text=True).stderr
+    assert "silence_start" not in err.split("Output")[-1].replace("silence_start: 0\n", ""), err[-500:]
+
+
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"):

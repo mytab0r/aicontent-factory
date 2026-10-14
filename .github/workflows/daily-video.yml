@@ -64,7 +64,7 @@ jobs:
           command -v ffmpeg || { sudo dpkg --configure -a || true; for i in 1 2 3; do sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg && break; sleep 20; done; }
           command -v ffmpeg
           uv venv .venv
-          uv pip install --python .venv/bin/python pillow gradio_client
+          uv pip install --python .venv/bin/python pillow gradio_client librosa
 
       - name: 01 idea
         if: steps.guard.outputs.published != '1'
@@ -107,6 +107,12 @@ jobs:
         if: steps.guard.outputs.published != '1'
         working-directory: pipeline
         run: ../.venv/bin/python 03_music.py
+
+      # t_44de72aa: одна тональность >=85% окон, строй <=0.15 пт, нет секунд < -45 dB, TP <= -1. Провал -> не публикуем.
+      - name: audio gate (качество трека)
+        if: steps.guard.outputs.published != '1'
+        working-directory: pipeline
+        run: ../.venv/bin/python audio_gate.py "$(ls -d ../runs/*/ | tail -1)track.mp3" --json "$(ls -d ../runs/*/ | tail -1)gate.json"
 
       - name: 04 assemble (ffmpeg)
         if: steps.guard.outputs.published != '1'
