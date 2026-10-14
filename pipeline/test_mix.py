@@ -63,6 +63,17 @@ def test_description_gets_tracklist():
     assert "Tracklist" not in pub.full_description("x")  # без глав (1 трек) — как раньше
 
 
+def test_title_gets_real_length_label():
+    pub = _load("pub_len", "05_publish.py")
+    t = "Rainy Tokyo Pumpkin Caf\u00e9 \U0001f383 Cozy Lofi Beats to Study & Relax"
+    assert pub.title_with_length(t, 3856) == t + " | 1 Hour"
+    assert pub.title_with_length(t, 7300) == t + " | 2 Hours"
+    assert pub.title_with_length(t, 482) == t  # < ~55 мин: без метки (не врём о длине)
+    assert pub.title_with_length("Cafe 1 Hour Lofi", 3700) == "Cafe 1 Hour Lofi"  # уже есть
+    long = "x" * 99
+    assert len(pub.title_with_length(long, 3700)) <= 100
+
+
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"):
