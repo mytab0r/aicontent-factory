@@ -1,0 +1,75 @@
+name: oneoff-ref-style3
+on:
+  push:
+    branches: [exp/ref-style3]
+jobs:
+  s:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 90
+    env:
+      ACE: http://ace-step:8001
+    steps:
+      - uses: actions/checkout@v4
+      - name: ace-step up
+        run: |
+          docker start ace-step >/dev/null 2>&1 || true
+          for i in $(seq 1 40); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step 2>/dev/null)" = healthy ] && exit 0
+            sleep 6
+          done; exit 1
+      - name: refs (90s of each owner reference)
+        run: |
+          python3 -m venv /tmp/ytv && /tmp/ytv/bin/pip install -q -U yt-dlp
+          mkdir -p refs
+          for pair in sera:CYZeAfaj3pc; do n=${pair%%:*}; id=${pair#*:}
+            /tmp/ytv/bin/yt-dlp -q -f bestaudio -o "refs/raw_$n.%(ext)s" "https://youtu.be/$id" || continue
+            ffmpeg -loglevel error -y -ss 30 -t 90 -i refs/raw_$n.* -ac 2 -ar 48000 refs/$n.wav
+          done; ls -la refs
+      - name: generate
+        run: |
+          mkdir -p out
+          python3 - <<'PY'
+          import json, os, time, urllib.request
+          B=os.environ["ACE"]
+          def post(p,d):
+              r=urllib.request.Request(B+p,json.dumps(d).encode(),{"Content-Type":"application/json"})
+              return json.load(urllib.request.urlopen(r,timeout=300))
+          # Owner 14.10 round-2 verdict: A (Seraphine ref) best, but too much voice; vary tempo; mix with transitions.
+          P=("melodic chill bass, dreamy and tender, deep warm sub bass, groovy drums, "
+             "mostly instrumental, rare subtle airy female vocal chops in background, sparkling bells, "
+             "lush synth pads, bright major chords, catchy melodic hook, clean polished modern mix, wide stereo")
+          SPARSE="[intro]\n\n[verse]\n\n[chorus]\nooh\n\n[verse]\n\n[outro]"
+          jobs=[]
+          for name,lyr,bpm in [("1_slow85_vox",SPARSE,85),("2_mid95_inst","[Instrumental]",95),("3_up105_vox",SPARSE,105)]:
+              jobs.append((name,dict(reference_audio_path="refs/sera.wav",lyrics=lyr,bpm=bpm,audio_duration=100)))
+          for name,extra in jobs:
+              body=dict(prompt=P,lyrics="[Instrumental]",audio_duration=120,bpm=85,key_scale="C major",
+                        time_signature="4",batch_size=1,thinking=True,use_random_seed=False,seed=7,
+                        audio_format="mp3")
+              body.update(extra)
+              ref=body.pop("reference_audio_path",None)
+              if ref:
+                  args=[]
+                  for k,v in body.items(): args+=["-F",f"{k}={str(v).lower() if isinstance(v,bool) else v}"]
+                  import subprocess
+                  o=subprocess.run(["curl","-s","-m","600","-X","POST",B+"/release_task","-F",f"reference_audio=@{ref}"]+args,capture_output=True,text=True).stdout
+                  print(o[:300]); tid=json.loads(o)["data"]["task_id"]
+              else:
+                  tid=post("/release_task",body)["data"]["task_id"]
+              t=time.time()
+              while True:
+                  time.sleep(8); d=post("/query_result",{"task_id_list":[tid]})["data"][0]
+                  if d["status"]!=0 or time.time()-t>1500: break
+              print(name,"status",d["status"],round(time.time()-t),"s",flush=True)
+              if d["status"]==1:
+                  f=json.loads(d["result"])[0]["file"]; urllib.request.urlretrieve(B+f,f"out/{name}.mp3")
+              else: print(str(d.get("result"))[:300])
+          PY
+      - name: mix with crossfades
+        run: |
+          cd out && ls *.mp3
+          ffmpeg -loglevel error -y -i 1_slow85_vox.mp3 -i 2_mid95_inst.mp3 -i 3_up105_vox.mp3 \
+            -filter_complex "[0][1]acrossfade=d=8:c1=tri:c2=tri[a];[a][2]acrossfade=d=8:c1=tri:c2=tri,loudnorm=I=-14:TP=-1.5" \
+            -c:a libmp3lame -b:a 192k MIX_85-95-105.mp3
+      - uses: actions/upload-artifact@v4
+        with: {name: ref-style3, path: out/}
