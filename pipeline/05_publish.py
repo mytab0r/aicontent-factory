@@ -9,6 +9,7 @@
 AGENTS.md п.4. selfDeclaredMadeForKids=False (канал не детский).
 """
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -56,6 +57,16 @@ def full_description(text: str, chapters=None) -> str:
     return "\n\n".join([text.rstrip(), *extra])
 
 
+def title_with_length(title: str, duration_sec) -> str:
+    """Ресёрч 14.10: лидеры ниши пишут длину в заголовке (Lofi Girl 1:04 ч 811k, Chill Crossing «1 Hour» 150k).
+    Метка только по фактической длине (>=55 мин), без фейковых чисел; уже есть «Hour» — не трогаем."""
+    if not duration_sec or duration_sec < 3300 or re.search(r"\bhours?\b", title, re.I):
+        return title[:100]
+    h = max(1, int(duration_sec // 3600))
+    tag = f" | {h} Hour" + ("s" if h > 1 else "")
+    return title[:100 - len(tag)].rstrip() + tag
+
+
 def publish(run_dir: Path) -> str:
     from googleapiclient.http import MediaFileUpload
 
@@ -65,11 +76,12 @@ def publish(run_dir: Path) -> str:
         raise SystemExit(f"нет video.mp4 в {run_dir} — сначала 04_assemble.py")
 
     meta_path = run_dir / "music_meta.json"
-    chaps = json.loads(meta_path.read_text(encoding="utf-8")).get("chapters") if meta_path.exists() else None
+    meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
+    chaps = meta.get("chapters")
     youtube = _get_youtube_service()
     body = {
         "snippet": {
-            "title": idea["title"][:100],
+            "title": title_with_length(idea["title"], meta.get("duration")),
             "description": full_description(idea["description"], chaps),
             "defaultLanguage": "en",
             "defaultAudioLanguage": "en",
