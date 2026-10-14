@@ -21,12 +21,20 @@ def _get_youtube_service():
     from google.oauth2.credentials import Credentials
     from googleapiclient.discovery import build
 
-    import httplib2
     from google_auth_httplib2 import AuthorizedHttp
 
     creds = Credentials.from_authorized_user_file(str(TOKEN_PATH))
-    # 14.10: дефолт 60 с — чанк 4 МБ на медленном аплинке ПК ловил read timeout на 65%
-    return build("youtube", "v3", http=AuthorizedHttp(creds, http=httplib2.Http(timeout=300)))
+    return build("youtube", "v3", http=AuthorizedHttp(creds, http=upload_http()))
+
+
+def upload_http(timeout=300):
+    """build_http(), не голый httplib2.Http: он убирает 308 из redirect_codes — без этого
+    resumable upload падает RedirectMissingLocation (14.10). timeout 300 с вместо 60:
+    чанк 4 МБ на медленном аплинке ПК ловил read timeout на 65%."""
+    from googleapiclient.http import build_http
+    http = build_http()
+    http.timeout = timeout
+    return http
 
 
 def upload_resumable(request, max_errors=8, sleep=None):
