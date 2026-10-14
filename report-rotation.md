@@ -11,4 +11,4 @@ A/B 4 samples (refs): nier_weight_of_the_world, stardew_valley_overture, zelda_b
 
 Not done: real 90s ref files not collected (no unattended downloads; owner sample gate). Upload/Content ID polling + ab-sample generation wiring into daily-video not done: no GitHub access from this host (ssh host key fail, no gh).
 Cover mode: enable_cover_mode() raises CoverModeError.
-Tests: python3 pipeline/test_g1zm0_rotation.py -> OK
+Tests: python3 pipeline/test_g1zm0_rotation.py -> OKUpdate: Content ID helpers (yt_claim_status/upload_unlisted/wait_claim/publish_if_approved) tested on fakes; 05_publish unlisted when G1ZM0_GATE=1; 03_music takes day-rotated ref if refs/<name>.wav exists.

@@ -129,7 +129,7 @@ def ace_endpoint() -> tuple[str, str | None]:
 
 
 def generate_track(prompt: str, duration_sec: int, seed: int | None = None,
-                   client_cls=Client) -> str:
+                   client_cls=Client, ref_audio: str | None = None) -> str:
     """Вызывает ACE-Step, возвращает путь к сгенерированному mp3 (временный файл gradio)."""
     url, token = ace_endpoint()
     try:
@@ -158,9 +158,9 @@ def generate_track(prompt: str, duration_sec: int, seed: int | None = None,
         oss_steps=None,
         guidance_scale_text=0.0,
         guidance_scale_lyric=0.0,
-        audio2audio_enable=False,
+        audio2audio_enable=bool(ref_audio),
         ref_audio_strength=0.5,
-        ref_audio_input=None,
+        ref_audio_input=ref_audio,
         lora_name_or_path="none",
         api_name="/__call__",
     )
@@ -234,16 +234,22 @@ def main() -> None:
 
     seed = abs(hash(run_dir.name)) % (2**31)
 
+    # ротация эталона по дню (g1zm0_rotation); файла нет -> без эталона, выпуск не падает
+    import datetime as _dt
+    import g1zm0_rotation as rot
+    ref_name = rot.pick_ref(_dt.date.today())
+    ref_file = rot.REF_DIR / f"{ref_name}.wav"
+    ref_audio = str(ref_file) if ref_file.exists() else None
     chunks = chunk_plan(duration)
     chunk_paths = [
-        generate_track(prompt, duration_sec=c, seed=seed + i)
+        generate_track(prompt, duration_sec=c, seed=seed + i, ref_audio=ref_audio)
         for i, c in enumerate(chunks)
     ]
 
     out_path = run_dir / "track.mp3"
     concat_tracks(chunk_paths, out_path)
     (run_dir / "music_meta.json").write_text(
-        json.dumps({"genre": genre_name, "prompt": prompt, "seed": seed, "duration": duration},
+        json.dumps({"genre": genre_name, "prompt": prompt, "seed": seed, "duration": duration, "ref": ref_name if ref_audio else None},
                    ensure_ascii=False, indent=2),
         encoding="utf-8",
     )

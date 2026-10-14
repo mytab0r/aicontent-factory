@@ -78,6 +78,63 @@ def content_id_gate(day, track_id, generate, upload_private, claim_status,
     return {"state": "blocked_all_claimed"}
 
 
+def yt_claim_status(youtube, video_id: str) -> str:
+    """YouTube videos.list -> 'pending'|'claimed'|'clean'.
+    claim: contentDetails.licensedContent=True (Content ID match) или rejectionReason claim/copyright."""
+    items = youtube.videos().list(part="status,contentDetails,processingDetails", id=video_id).execute().get("items", [])
+    if not items:
+        return "pending"
+    it = items[0]
+    st = it.get("status", {})
+    if st.get("rejectionReason") in ("claim", "copyright") or it.get("contentDetails", {}).get("licensedContent"):
+        return "claimed"
+    if st.get("uploadStatus") != "processed" or it.get("processingDetails", {}).get("processingStatus") not in (None, "succeeded"):
+        return "pending"
+    return "clean"
+
+
+def upload_unlisted(youtube, path: str, title: str) -> str:
+    """Загрузка ТОЛЬКО unlisted (никогда public) для Content ID пре-чека."""
+    from googleapiclient.http import MediaFileUpload
+    body = {"snippet": {"title": title[:100], "categoryId": "10"},
+            "status": {"privacyStatus": "unlisted", "selfDeclaredMadeForKids": False,
+                       "containsSyntheticMedia": True}}
+    req = youtube.videos().insert(part="snippet,status", body=body,
+                                  media_body=MediaFileUpload(path, resumable=True, chunksize=4 << 20))
+    resp = None
+    while resp is None:
+        _, resp = req.next_chunk(num_retries=5)
+    return resp["id"]
+
+
+def wait_claim(youtube, video_id: str, tries: int = 24, delay: int = 300, sleep=None) -> str:
+    """Ждёт результат Content ID (до tries*delay с; clean считается стабильным после 2 подряд)."""
+    import time
+    sleep = sleep or time.sleep
+    clean = 0
+    for _ in range(tries):
+        st = yt_claim_status(youtube, video_id)
+        if st == "claimed":
+            return st
+        clean = clean + 1 if st == "clean" else 0
+        if clean >= 2:
+            return "clean"
+        sleep(delay)
+    return "pending"
+
+
+def publish_if_approved(youtube, video_id: str, track_id: str, marker_dir: Path) -> bool:
+    """unlisted -> public только при clean + approve(); иначе False, ничего не меняется."""
+    if not (Path(marker_dir) / f"{track_id}.approved").exists():
+        return False
+    if yt_claim_status(youtube, video_id) != "clean":
+        return False
+    youtube.videos().update(part="status", body={"id": video_id, "status": {
+        "privacyStatus": "public", "selfDeclaredMadeForKids": False,
+        "containsSyntheticMedia": True}}).execute()
+    return True
+
+
 if __name__ == "__main__":
     import tempfile
     # пул
@@ -113,4 +170,24 @@ if __name__ == "__main__":
         assert res["state"] == "publishable"
         assert content_id_gate(d0, "t2", gen, lambda p: p, lambda v: "pending", td)["state"] == "waiting"
         assert content_id_gate(d0, "t3", gen, lambda p: p, lambda v: "claimed", td)["state"] == "blocked_all_claimed"
+    # YouTube-обвязка на фейке
+    class Fake:
+        def __init__(s, items): s.items, s.updated = items, []
+        def videos(s): return s
+        def list(s, **k): s.k = k; return s
+        def update(s, **k): s.updated.append(k); return s
+        def execute(s): return {"items": s.items(), "x": 1} if callable(s.items) else {"items": s.items}
+    ok = {"status": {"uploadStatus": "processed"}, "contentDetails": {}}
+    assert yt_claim_status(Fake([ok]), "v") == "clean"
+    assert yt_claim_status(Fake([{**ok, "contentDetails": {"licensedContent": True}}]), "v") == "claimed"
+    assert yt_claim_status(Fake([{"status": {"uploadStatus": "uploaded"}}]), "v") == "pending"
+    assert wait_claim(Fake([ok]), "v", tries=3, delay=0, sleep=lambda d: None) == "clean"
+    assert wait_claim(Fake([{"status": {}}]), "v", tries=2, delay=0, sleep=lambda d: None) == "pending"
+    with tempfile.TemporaryDirectory() as td:
+        y = Fake([ok])
+        assert not publish_if_approved(y, "v", "t9", td) and not y.updated  # без одобрения
+        approve(td, "t9")
+        yc = Fake([{**ok, "contentDetails": {"licensedContent": True}}])
+        assert not publish_if_approved(yc, "v", "t9", td) and not yc.updated  # claim
+        assert publish_if_approved(y, "v", "t9", td) and y.updated[0]["body"]["status"]["privacyStatus"] == "public"
     print("OK")

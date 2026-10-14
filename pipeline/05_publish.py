@@ -9,6 +9,7 @@
 AGENTS.md п.4. selfDeclaredMadeForKids=False (канал не детский).
 """
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -73,7 +74,7 @@ def publish(run_dir: Path) -> str:
             "categoryId": "10",  # Music
         },
         "status": {
-            "privacyStatus": "public",
+            "privacyStatus": "unlisted" if os.environ.get("G1ZM0_GATE") == "1" else "public",  # gate: Content ID пре-чек, public только после approve
             "selfDeclaredMadeForKids": False,
         },
     }
