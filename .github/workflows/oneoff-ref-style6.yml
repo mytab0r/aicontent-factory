@@ -88,12 +88,27 @@ jobs:
           cd out && ls -la
           # vocal inserts: keep the middle 24 s of each 40 s vocal clip
           for v in v1 v2 v3; do ffmpeg -loglevel error -y -i $v.mp3 -af "atrim=8:32,asetpts=N/SR/TB" -ar 48000 -ac 2 $v.cut.wav; done
-          for i in i1 i2 i3 i4; do ffmpeg -loglevel error -y -i $i.mp3 -ar 48000 -ac 2 $i.wav; done
+          # trim leading/trailing silence of every segment: ACE tails left a 1.7 s gap at a crossfade
+          T="silenceremove=start_periods=1:start_threshold=-50dB,areverse,silenceremove=start_periods=1:start_threshold=-50dB,areverse"
+          for i in i1 i2 i3 i4; do ffmpeg -loglevel error -y -i $i.mp3 -af "$T" -ar 48000 -ac 2 $i.wav; done
           X="acrossfade=d=6:c1=tri:c2=tri"
           ffmpeg -loglevel error -y -i i1.wav -i v1.cut.wav -i i2.wav -i v2.cut.wav -i i3.wav -i v3.cut.wav -i i4.wav \
-            -filter_complex "[0][1]$X[a];[a][2]$X[b];[b][3]$X[c];[c][4]$X[d];[d][5]$X[e];[e][6]$X,afade=t=out:st=880:d=8,loudnorm=I=-14:TP=-1.5" \
-            -c:a libmp3lame -b:a 192k FULL_15min.mp3
-          ffprobe -v error -show_entries format=duration -of csv=p=0 FULL_15min.mp3
+            -filter_complex "[0][1]$X[a];[a][2]$X[b];[b][3]$X[c];[c][4]$X[d];[d][5]$X[e];[e][6]$X,loudnorm=I=-14:TP=-1.5" \
+            -ar 48000 -c:a pcm_s16le raw.wav
+          L=$(ffprobe -v error -show_entries format=duration -of csv=p=0 raw.wav); echo "len $L"
+          ffmpeg -loglevel error -y -i raw.wav -af "afade=t=out:st=$(python3 -c "print($L-8)"):d=8" -c:a libmp3lame -b:a 192k FULL_15min.mp3
+          # QC gate: length 840-930 s, no silence >=1 s before last 10 s, true peak < 0 dBFS
+          ffmpeg -hide_banner -nostats -i FULL_15min.mp3 -af ebur128=peak=true,silencedetect=n=-50dB:d=1 -f null - 2>qc.txt || true
+          python3 - "$L" <<'PY'
+          import re,sys
+          L=float(sys.argv[1]); t=open("qc.txt").read()
+          st=[float(x) for x in re.findall(r"silence_start: ([\d.]+)",t)]
+          pk=float(re.findall(r"Peak:\s+(-?[\d.]+) dBFS",t)[-1])
+          print("len",L,"silences",st,"peak",pk)
+          assert 840<=L<=930, "bad length"
+          assert not [x for x in st if x<L-10], "internal silence"
+          assert pk<0, "clipping"
+          PY
           mkdir -p ../final && mv FULL_15min.mp3 ../final/
       - uses: actions/upload-artifact@v4
         with: {name: ref-style6, path: final/}
