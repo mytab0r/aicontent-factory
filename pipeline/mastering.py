@@ -35,9 +35,19 @@ def master(src: str, dst: str) -> dict:
           "acompressor=threshold=-15dB:ratio=6:attack=5:release=100:makeup=2,"
           "alimiter=limit=0.79:level=disabled,"
           "loudnorm=I=-14:TP=-2:LRA=8")
-    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", src, "-af", af,
-                    "-c:a", "libmp3lame", "-b:a", "192k", dst], check=True)
+    def run(s: str, d: str) -> None:
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", s, "-af", af,
+                        "-c:a", "libmp3lame", "-b:a", "192k", d], check=True)
+
+    run(src, dst)
     m = measure(dst)
+    # ponytail: экстремальная динамика (длинные паузы) ломает LRA одним проходом —
+    # повторные полные проходы сходятся (LRA 15.6->6.5->2.5); 3 прохода, дальше гейт.
+    for _ in range(2):
+        if -15 <= m["i"] <= -13 and m["lra"] <= 8 and m["tp"] <= -1:
+            break
+        run(dst, dst)
+        m = measure(dst)
     assert -15 <= m["i"] <= -13, f"гейт I: {m}"
     assert m["lra"] <= 8, f"гейт LRA: {m}"
     assert m["tp"] <= -1, f"гейт TP: {m}"
