@@ -1,7 +1,7 @@
-name: oneoff-ref-style4
+name: oneoff-ref-style6
 on:
   push:
-    branches: [exp/ref-style4]
+    branches: [exp/ref-style6]
 jobs:
   s:
     runs-on: [self-hosted, pc]
@@ -23,7 +23,7 @@ jobs:
           mkdir -p refs
           # ponytail: YouTube 403 is transient/client-specific; retry alt clients, cache wav on runner
           mkdir -p /tmp/refcache
-          for pair in sera:CYZeAfaj3pc v3:S0qlFgDvGfw panda:SvntC6SZrfA; do n=${pair%%:*}; id=${pair#*:}
+          for pair in sera:CYZeAfaj3pc panda:SvntC6SZrfA; do n=${pair%%:*}; id=${pair#*:}
             if [ -s /tmp/refcache/$n.wav ]; then cp /tmp/refcache/$n.wav refs/; continue; fi
             for i in 1 2 3; do for c in default android tv web_safari mweb; do
               rm -f refs/raw_$n.*
@@ -43,13 +43,23 @@ jobs:
           def post(p,d):
               r=urllib.request.Request(B+p,json.dumps(d).encode(),{"Content-Type":"application/json"})
               return json.load(urllib.request.urlopen(r,timeout=300))
-          # Owner round-3 verdict: vocals ("ai" sounds) everywhere = annoying; instrumental 95 best. More sounds than voices.
+          # Owner 14.10 approved mock-up: instrumental base, short vocal inserts only at transitions.
           P=("instrumental, no vocals, melodic chill bass, dreamy and tender, deep warm sub bass, groovy drums, "
              "rich sound design: plucked synth arps, sparkling bells, music box, soft piano, lush evolving pads, "
              "bright major chords, catchy melodic lead hook, clean polished modern mix, wide stereo")
+          PV=("melodic chill bass, dreamy and tender, deep warm sub bass, groovy drums, "
+              "airy female vocal chops and soft wordless vocals, sparkling bells, lush synth pads, "
+              "bright major chords, catchy melodic hook, clean polished modern mix, wide stereo")
+          VOX="[verse]\nooh ooh, aah\n\n[chorus]\nla la la, ooh"
+          I="[Instrumental]"
           jobs=[]
-          for name,ref in [("1_A_sera","sera"),("2_B_v3","v3"),("3_C_panda","panda")]:
-              if os.path.exists(f"refs/{ref}.wav"): jobs.append((name,dict(reference_audio_path=f"refs/{ref}.wav",lyrics="[Instrumental]",bpm=95,audio_duration=100)))
+          for name,ref,prompt,lyr,dur,seed in [
+              ("i1","sera",P,I,210,11),("v1","sera",PV,VOX,40,12),
+              ("i2","panda",P,I,210,13),("v2","sera",PV,VOX,40,14),
+              ("i3","sera",P,I,210,15),("v3","panda",PV,VOX,40,16),
+              ("i4","panda",P,I,190,17)]:
+              if os.path.exists(f"refs/{ref}.wav"):
+                  jobs.append((name,dict(reference_audio_path=f"refs/{ref}.wav",prompt=prompt,lyrics=lyr,bpm=95,audio_duration=dur,seed=seed)))
           for name,extra in jobs:
               body=dict(prompt=P,lyrics="[Instrumental]",audio_duration=120,bpm=85,key_scale="C major",
                         time_signature="4",batch_size=1,thinking=True,use_random_seed=False,seed=7,
@@ -73,11 +83,17 @@ jobs:
                   f=json.loads(d["result"])[0]["file"]; urllib.request.urlretrieve(B+f,f"out/{name}.mp3")
               else: print(str(d.get("result"))[:300])
           PY
-      - name: mix with crossfades
+      - name: assemble 15 min
         run: |
-          cd out && ls *.mp3
-          ffmpeg -loglevel error -y -i 1_A_sera.mp3 -i 2_B_v3.mp3 -i 3_C_panda.mp3 \
-            -filter_complex "[0][1]acrossfade=d=8:c1=tri:c2=tri[a];[a][2]acrossfade=d=8:c1=tri:c2=tri,loudnorm=I=-14:TP=-1.5" \
-            -c:a libmp3lame -b:a 192k MIX_A-B-C.mp3
+          cd out && ls -la
+          # vocal inserts: keep the middle 24 s of each 40 s vocal clip
+          for v in v1 v2 v3; do ffmpeg -loglevel error -y -i $v.mp3 -af "atrim=8:32,asetpts=N/SR/TB" -ar 48000 -ac 2 $v.cut.wav; done
+          for i in i1 i2 i3 i4; do ffmpeg -loglevel error -y -i $i.mp3 -ar 48000 -ac 2 $i.wav; done
+          X="acrossfade=d=6:c1=tri:c2=tri"
+          ffmpeg -loglevel error -y -i i1.wav -i v1.cut.wav -i i2.wav -i v2.cut.wav -i i3.wav -i v3.cut.wav -i i4.wav \
+            -filter_complex "[0][1]$X[a];[a][2]$X[b];[b][3]$X[c];[c][4]$X[d];[d][5]$X[e];[e][6]$X,afade=t=out:st=880:d=8,loudnorm=I=-14:TP=-1.5" \
+            -c:a libmp3lame -b:a 192k FULL_15min.mp3
+          ffprobe -v error -show_entries format=duration -of csv=p=0 FULL_15min.mp3
+          mkdir -p ../final && mv FULL_15min.mp3 ../final/
       - uses: actions/upload-artifact@v4
-        with: {name: ref-style4, path: out/}
+        with: {name: ref-style6, path: final/}
