@@ -48,9 +48,11 @@ HASHTAGS = "#lofi #animelofi #studymusic"
 AI_NOTE = "AI-generated music and visuals (synthetic content)."
 
 
-def full_description(text: str) -> str:
-    """Аудит 4HB26c4yow0: хэштеги + AI-disclosure в описании (идемпотентно)."""
+def full_description(text: str, chapters=None) -> str:
+    """Аудит 4HB26c4yow0: хэштеги + AI-disclosure; треклист-главы (>=3, с 0:00) для часового микса."""
     extra = [s for s in (AI_NOTE, HASHTAGS) if s not in text]
+    if chapters and len(chapters) >= 3:
+        extra.insert(0, "Tracklist:\n" + "\n".join(chapters))
     return "\n\n".join([text.rstrip(), *extra])
 
 
@@ -62,11 +64,13 @@ def publish(run_dir: Path) -> str:
     if not video_path.exists():
         raise SystemExit(f"нет video.mp4 в {run_dir} — сначала 04_assemble.py")
 
+    meta_path = run_dir / "music_meta.json"
+    chaps = json.loads(meta_path.read_text(encoding="utf-8")).get("chapters") if meta_path.exists() else None
     youtube = _get_youtube_service()
     body = {
         "snippet": {
             "title": idea["title"][:100],
-            "description": full_description(idea["description"]),
+            "description": full_description(idea["description"], chaps),
             "defaultLanguage": "en",
             "defaultAudioLanguage": "en",
             "tags": idea.get("tags", []),

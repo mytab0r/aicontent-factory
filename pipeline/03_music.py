@@ -231,6 +231,56 @@ def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=
     Path(out_path).write_bytes(api.get(json.loads(d["result"])[0]["file"]))
 
 
+def plan_mix(target_sec, gen, dur, budget_sec=1800, max_tracks=12, now=None):
+    """Час-микс из цельных треков 1.5 (модель отдаёт ~482 с вместо 600 — считаем по факту).
+    Стоп: набрали target, max_tracks, или следующий трек не влезет в бюджет времени шага."""
+    import time
+    now = now or time.monotonic
+    start, paths, durs = now(), [], []
+    while sum(durs) < target_sec and len(paths) < max_tracks:
+        p = gen(len(paths))
+        paths.append(p)
+        durs.append(dur(p))
+        elapsed = now() - start
+        if elapsed + elapsed / len(paths) > budget_sec:
+            break
+    return paths, durs
+
+
+def _ts(sec: float) -> str:
+    s = int(sec)
+    h, m, s = s // 3600, s % 3600 // 60, s % 60
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+def chapters(durs, names) -> list[str]:
+    """Главы YouTube: первая 0:00, далее накопленное время начала каждого трека."""
+    out, t = [], 0.0
+    for d, n in zip(durs, names):
+        out.append(f"{_ts(t)} {n}")
+        t += d
+    return out
+
+
+_ADJ = ["Amber", "Velvet", "Paper", "Neon", "Quiet", "Golden", "Misty", "Starlit", "Sleepy", "Candle",
+        "Silver", "Rosy", "Hazy", "Pastel", "Lantern", "Moonlit"]
+_NOUN = ["Window", "Streetlight", "Rooftop", "Tea", "Rain", "Pages", "Train", "Clouds", "Café", "Notebook",
+         "Petals", "Harbor", "Skyline", "Blanket", "Postcard", "Daydream"]
+
+
+def track_names(n: int, seed: int) -> list[str]:
+    import random
+    pool = [f"{a} {b}" for a in _ADJ for b in _NOUN]
+    return random.Random(seed).sample(pool, n)
+
+
+def _probe_sec(path) -> float:
+    import subprocess
+    return float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                                 "-of", "csv=p=0", str(path)], capture_output=True, text=True,
+                                check=True).stdout)
+
+
 def chunk_plan(total_sec: int, max_chunk_sec: int = 240) -> list[int]:
     """Разбивает long-form длительность на куски <= max_chunk_sec для ACE-Step
     (один вызов практично ограничен ~240с, см. DECISIONS.md п.5). Короткий
@@ -299,7 +349,21 @@ def main() -> None:
     seed = abs(hash(run_dir.name)) % (2**31)
 
     out_path = run_dir / "track.mp3"
-    if os.environ.get("ACE15_ENDPOINT"):
+    chaps = []
+    if os.environ.get("ACE15_ENDPOINT") and duration > ACE15_MAX_SEC:
+        # ресёрч 13.10: хиты ниши 1-4 ч с треклистом; склеиваем ЦЕЛЬНЫЕ разные треки (не куски одного)
+        ref = os.environ.get("ACE15_REF_AUDIO")
+
+        def gen(i):
+            p = run_dir / f"mix_{i:02d}.mp3"
+            generate_track_v15(prompt, ACE15_MAX_SEC, seed + i, p, ref_audio=ref)
+            return str(p)
+
+        paths, durs = plan_mix(duration, gen, _probe_sec)
+        concat_tracks(paths, out_path)
+        chaps = chapters(durs, track_names(len(paths), seed))
+        duration = int(sum(durs))
+    elif os.environ.get("ACE15_ENDPOINT"):
         duration = min(duration, ACE15_MAX_SEC)
         generate_track_v15(prompt, duration, seed, out_path,
                            ref_audio=os.environ.get("ACE15_REF_AUDIO"))
@@ -311,7 +375,8 @@ def main() -> None:
         ]
         concat_tracks(chunk_paths, out_path)
     (run_dir / "music_meta.json").write_text(
-        json.dumps({"genre": genre_name, "prompt": prompt, "seed": seed, "duration": duration},
+        json.dumps({"genre": genre_name, "prompt": prompt, "seed": seed, "duration": duration,
+                    "chapters": chaps},
                    ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
