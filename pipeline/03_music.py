@@ -28,6 +28,8 @@ from pathlib import Path
 
 from gradio_client import Client
 
+import mastering
+
 from common import latest_run_dir
 
 SPACE = "ACE-Step/ACE-Step"
@@ -374,6 +376,7 @@ def main() -> None:
             for i, c in enumerate(chunks)
         ]
         concat_tracks(chunk_paths, out_path)
+    mastering.master(out_path, out_path)
     (run_dir / "music_meta.json").write_text(
         json.dumps({"genre": genre_name, "prompt": prompt, "seed": seed, "duration": duration,
                     "chapters": chaps},
