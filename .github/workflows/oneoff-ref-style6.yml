@@ -54,10 +54,10 @@ jobs:
           I="[Instrumental]"
           jobs=[]
           for name,ref,prompt,lyr,dur,seed in [
-              ("i1","sera",P,I,210,11),("v1","sera",PV,VOX,40,12),
-              ("i2","panda",P,I,210,13),("v2","sera",PV,VOX,40,14),
-              ("i3","sera",P,I,210,15),("v3","panda",PV,VOX,40,16),
-              ("i4","panda",P,I,190,17)]:
+              ("i1","sera",P,I,220,11),("v1","sera",PV,VOX,40,12),
+              ("i2","panda",P,I,220,13),("v2","sera",PV,VOX,40,14),
+              ("i3","sera",P,I,220,15),("v3","panda",PV,VOX,40,16),
+              ("i4","panda",P,I,215,17)]:
               if os.path.exists(f"refs/{ref}.wav"):
                   jobs.append((name,dict(reference_audio_path=f"refs/{ref}.wav",prompt=prompt,lyrics=lyr,bpm=95,audio_duration=dur,seed=seed)))
           for name,extra in jobs:
