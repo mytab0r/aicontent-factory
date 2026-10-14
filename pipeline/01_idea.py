@@ -36,7 +36,7 @@ SEASONS = {
     3: "early spring, first blossoms", 4: "spring, cherry blossom sakura", 5: "late spring, fresh green, gentle rain",
     6: "early summer, rainy season tsuyu", 7: "summer, fireworks festival, cicadas", 8: "summer night, festival lanterns",
     9: "early autumn, golden light", 10: "autumn + cozy halloween (pumpkins, candles, black cat, not scary)",
-    11: "late autumn, falling leaves, warm tea", 12: "winter, christmas lights, snow",
+    11: "late autumn + early christmas (first christmas lights, fireplace, warm tea, falling leaves)", 12: "winter, christmas lights, snow",
 }
 
 
