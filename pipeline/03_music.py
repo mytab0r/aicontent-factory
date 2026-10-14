@@ -86,6 +86,15 @@ CANDIDATE_GENRE_PROMPTS = {
         "75 BPM, instrumental, no vocals, introspective, cozy, late night"
     ),
     # Ниши из конкурентного анализа (DECISIONS.md п.5), не lofi-derived:
+    # "chill phonk" — промпт из генерации v1-v3 (gen2.py, одобрен владельцем
+    # 14.10 как направление; в GENRE_PROMPTS только после его выбора v1-v3).
+    "chill phonk": (
+        "chill phonk, wave phonk, late night drive, slow 808 sub bass glide, "
+        "heavy punchy kick, crisp trap hi-hats, memphis cowbell lead melody, "
+        "dreamy detuned synth pads, airy reverb, soft pitched vocal chops, "
+        "sidechain pumping, hypnotic groove, polished modern mix, wide stereo, "
+        "instrumental"
+    ),
     "nature ambient": (
         "nature ambient soundscape, soft sustained pads, distant birdsong, "
         "gentle flowing water texture, no drums, no percussion, minimal "
