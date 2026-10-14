@@ -119,6 +119,19 @@ def test_stitch_real_audio_no_gap():
     assert "silence_start" not in err.split("Output")[-1].replace("silence_start: 0\n", ""), err[-500:]
 
 
+def test_candidates_same_key_only():
+    keys = {"a": ("D", 0.95), "b": ("A", 0.97), "c": ("D", 0.6), "d": ("D", 0.9)}
+    st = {}
+    got = [music.pick_candidate(p, keys.get, st) for p in "abcd"]
+    assert got == ["a", None, None, "d"] and st["key"] == "D"
+    assert music.pick_candidate("x", lambda p: ("A", 0.5), {}) is None  # плавающий первый не задаёт ключ
+
+
+def test_mix_skips_rejected_candidates():
+    paths, durs = music.plan_mix(1000, lambda i: None if i % 2 else f"t{i}", lambda p: 400.0)
+    assert paths == ["t0", "t2", "t4"] and sum(durs) >= 1000
+
+
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"):

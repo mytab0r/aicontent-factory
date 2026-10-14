@@ -240,12 +240,15 @@ def plan_mix(target_sec, gen, dur, budget_sec=1800, max_tracks=12, now=None):
     import time
     now = now or time.monotonic
     start, paths, durs = now(), [], []
+    attempt = 0
     while sum(durs) < target_sec and len(paths) < max_tracks:
-        p = gen(len(paths))
-        paths.append(p)
-        durs.append(dur(p))
+        p = gen(attempt)
+        attempt += 1
+        if p is not None:  # None = кандидат отбракован (другая тональность), время учтено
+            paths.append(p)
+            durs.append(dur(p))
         elapsed = now() - start
-        if elapsed + elapsed / len(paths) > budget_sec:
+        if elapsed + elapsed / attempt > budget_sec:
             break
     return paths, durs
 
@@ -320,6 +323,17 @@ def concat_tracks(paths: list[str], out_path) -> None:
 
 
 XFADE_SEC = 4.0
+TRACK_KEY_SHARE = 0.85
+
+
+def pick_candidate(path, key_fn, state, min_share=TRACK_KEY_SHARE):
+    """Отбор кандидатов (прогон 38574091185: при одном key_scale модель чередует D/A по трекам,
+    гейт 52%). Первый годный трек задаёт звукоряд микса; трек другого звукоряда или плавающий
+    внутри (< min_share окон) отбраковывается -> None."""
+    key, share = key_fn(path)
+    ok = share >= min_share and state.setdefault("key", key) == key
+    print(f"candidate {Path(path).name}: {key} {share:.0%} -> {'ok' if ok else 'reject'}")
+    return str(path) if ok else None
 
 
 def stitch_cmd(paths, out_path, xf=XFADE_SEC) -> list[str]:
@@ -396,11 +410,14 @@ def main() -> None:
         # ресёрч 13.10: хиты ниши 1-4 ч с треклистом; склеиваем ЦЕЛЬНЫЕ разные треки (не куски одного)
         ref = os.environ.get("ACE15_REF_AUDIO")
 
+        import audio_gate
+        mix_key = {}
+
         def gen(i):
             p = run_dir / f"mix_{i:02d}.mp3"
             # одна тональность/темп на весь микс (было seed+i -> 8 тональностей за час)
             generate_track_v15(prompt, ACE15_MAX_SEC, seed + i, p, ref_audio=ref, key_seed=seed)
-            return str(p)
+            return pick_candidate(p, audio_gate.dominant_key, mix_key)
 
         paths, _ = plan_mix(duration, gen, _probe_sec)
         import subprocess

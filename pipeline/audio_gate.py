@@ -36,16 +36,32 @@ def true_peak(path) -> float:
     return float(re.findall(r"Peak:\s+(-?[\d.]+|-inf)", err)[-1].replace("-inf", "-200"))
 
 
-def measure(path, win=15, tune_win=60) -> dict:
-    import librosa
+def _load(path):
     # декод через ffmpeg: любой формат (mp3/m4a/mp4), не зависит от libsndfile
     raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-ac", "1", "-ar", str(SR),
                           "-f", "f32le", "-"], capture_output=True, check=True).stdout
-    y, sr = np.frombuffer(raw, dtype="<f4").copy(), SR
+    return np.frombuffer(raw, dtype="<f4").copy()
+
+
+def window_keys(y, sr=SR, win=15) -> list[str]:
+    import librosa
     hop = 2048
     chroma = librosa.feature.chroma_stft(y=y, sr=sr, hop_length=hop, tuning=0.0)
     fpw = int(win * sr / hop)
-    keys = [key_of(chroma[:, i:i + fpw].mean(1)) for i in range(0, chroma.shape[1] - fpw + 1, fpw)]
+    return [key_of(chroma[:, i:i + fpw].mean(1)) for i in range(0, chroma.shape[1] - fpw + 1, fpw)]
+
+
+def dominant_key(path) -> tuple[str, float]:
+    """(звукоряд, доля 15-с окон) для одного трека: отбор кандидатов в час-миксе."""
+    keys = window_keys(_load(path))
+    top, cnt = Counter(keys).most_common(1)[0]
+    return top, cnt / len(keys)
+
+
+def measure(path, win=15, tune_win=60) -> dict:
+    import librosa
+    y, sr = _load(path), SR
+    keys = window_keys(y, sr, win)
     top, cnt = Counter(keys).most_common(1)[0]
     n = len(y) // sr
     db = 20 * np.log10(np.sqrt((y[:n * sr].reshape(n, sr) ** 2).mean(1)) + 1e-9)
