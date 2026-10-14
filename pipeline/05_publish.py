@@ -21,8 +21,34 @@ def _get_youtube_service():
     from google.oauth2.credentials import Credentials
     from googleapiclient.discovery import build
 
+    import httplib2
+    from google_auth_httplib2 import AuthorizedHttp
+
     creds = Credentials.from_authorized_user_file(str(TOKEN_PATH))
-    return build("youtube", "v3", credentials=creds)
+    # 14.10: дефолт 60 с — чанк 4 МБ на медленном аплинке ПК ловил read timeout на 65%
+    return build("youtube", "v3", http=AuthorizedHttp(creds, http=httplib2.Http(timeout=300)))
+
+
+def upload_resumable(request, max_errors=8, sleep=None):
+    """Resumable upload, переживающий обрывы: после сетевой ошибки следующий next_chunk
+    шлёт status-запрос (Content-Range */size) и продолжает с принятого байта, а не с нуля."""
+    import time
+    sleep = sleep or time.sleep
+    response, errors = None, 0
+    while response is None:
+        try:
+            status, response = request.next_chunk(num_retries=5)
+        except (TimeoutError, ConnectionError, OSError) as e:
+            errors += 1
+            if errors > max_errors:
+                raise
+            print(f"upload: {type(e).__name__}, resume {errors}/{max_errors}")
+            request._in_error_state = True  # googleapiclient: следующий вызов = запрос статуса
+            sleep(min(60, 5 * errors))
+            continue
+        if status:
+            print(f"upload {int(status.progress() * 100)}%")
+    return response
 
 
 def playlist_title(genre: str) -> str:
@@ -102,11 +128,7 @@ def publish(run_dir: Path) -> str:
     media = MediaFileUpload(str(video_path), mimetype="video/mp4", resumable=True, chunksize=1024 * 1024 * 4)
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
 
-    response = None
-    while response is None:
-        status, response = request.next_chunk(num_retries=5)  # 13.10: TimeoutError на записи чанка валил выпуск
-        if status:
-            print(f"upload {int(status.progress() * 100)}%")
+    response = upload_resumable(request)
 
     video_id = response["id"]
     url = f"https://www.youtube.com/watch?v={video_id}"
