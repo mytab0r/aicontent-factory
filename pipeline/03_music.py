@@ -184,7 +184,8 @@ class _Http:
         import urllib.request
         r = urllib.request.Request(self.base + path, json.dumps(body).encode(),
                                    {"Content-Type": "application/json"})
-        return json.load(urllib.request.urlopen(r, timeout=60))
+        # 600: после рестарта ace-step первый запрос грузит модели >60 с (13.10 TimeoutError)
+        return json.load(urllib.request.urlopen(r, timeout=600))
 
     def get(self, path):
         import urllib.request
@@ -198,7 +199,7 @@ class _Http:
             args += ["-F", f"{k}={str(v).lower() if isinstance(v, bool) else v}"]
         out = subprocess.run(["curl", "-sf", "-X", "POST", self.base + path,
                               "-F", f"{field}=@{file_path}", *args],
-                             capture_output=True, text=True, timeout=120, check=True).stdout
+                             capture_output=True, text=True, timeout=600, check=True).stdout
         return json.loads(out)
 
 

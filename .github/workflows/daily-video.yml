@@ -76,6 +76,17 @@ jobs:
         working-directory: pipeline
         run: ../.venv/bin/python 03b_animate.py
 
+      # 13.10: ace-step остановлен (exit 137, stop вручную/чужим процессом) -> unless-stopped не поднимает; выпуск падал бы на 03 music
+      - name: ACE-Step up (start if stopped, wait health)
+        if: steps.guard.outputs.published != '1'
+        run: |
+          docker start ace-step >/dev/null 2>&1 || true
+          for i in $(seq 1 40); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step 2>/dev/null)" = healthy ] && { echo "ace-step healthy"; exit 0; }
+            sleep 6
+          done
+          echo "::error::ace-step не healthy за 4 мин"; exit 1
+
       - name: reference audio (cache)
         if: steps.guard.outputs.published != '1'
         continue-on-error: true
