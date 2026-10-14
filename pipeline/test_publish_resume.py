@@ -36,4 +36,12 @@ try:
 except TimeoutError:
     pass
 assert r.calls == 4
+try:
+    import googleapiclient  # noqa: F401  (есть в CI/на раннере)
+except ImportError:
+    print("skip upload_http: нет googleapiclient")
+else:
+    h = pub.upload_http()
+    assert 308 not in h.redirect_codes, "308 = resumable 'продолжай', не редирект"
+    assert h.timeout == 300
 print("test_publish_resume ok")

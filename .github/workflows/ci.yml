@@ -46,7 +46,7 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
           command -v ffmpeg
           ffmpeg -version | head -1
-          pip install pillow gradio_client numpy
+          pip install pillow gradio_client numpy google-api-python-client google-auth-httplib2
       - name: run python tests
         run: |
           set -e
