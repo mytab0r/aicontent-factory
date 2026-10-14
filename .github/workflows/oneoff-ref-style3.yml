@@ -21,10 +21,19 @@ jobs:
         run: |
           python3 -m venv /tmp/ytv && /tmp/ytv/bin/pip install -q -U yt-dlp
           mkdir -p refs
+          # ponytail: YouTube 403 is transient/client-specific; retry alt clients, cache wav on runner
+          mkdir -p /tmp/refcache
           for pair in sera:CYZeAfaj3pc; do n=${pair%%:*}; id=${pair#*:}
-            /tmp/ytv/bin/yt-dlp -q -f bestaudio -o "refs/raw_$n.%(ext)s" "https://youtu.be/$id" || continue
+            if [ -s /tmp/refcache/$n.wav ]; then cp /tmp/refcache/$n.wav refs/; continue; fi
+            for i in 1 2 3; do for c in default android tv web_safari mweb; do
+              rm -f refs/raw_$n.*
+              /tmp/ytv/bin/yt-dlp -q -f bestaudio --extractor-args "youtube:player_client=$c" -o "refs/raw_$n.%(ext)s" "https://youtu.be/$id" && break 2
+              sleep 5
+            done; sleep 20; done
+            ls refs/raw_$n.* >/dev/null 2>&1 || { echo "ref $n download failed"; exit 1; }
             ffmpeg -loglevel error -y -ss 30 -t 90 -i refs/raw_$n.* -ac 2 -ar 48000 refs/$n.wav
-          done; ls -la refs
+            cp refs/$n.wav /tmp/refcache/
+          done; ls -la refs; test -s refs/sera.wav
       - name: generate
         run: |
           mkdir -p out
