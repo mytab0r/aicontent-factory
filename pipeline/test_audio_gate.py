@@ -51,3 +51,11 @@ assert m_gap["silent_sec"] >= 3 and any("тише" in f for f in g.check(m_gap))
 
 assert any("peak" in f for f in g.check({**m_ok, "true_peak": -0.2}))
 print("OK audio_gate")
+
+# внутренняя тишина ловится, края (их режет сшивка) нет
+tone = 0.3 * np.sin(2 * np.pi * 440 * np.arange(60 * g.SR) / g.SR).astype("float32")
+e = tone.copy(); e[:5 * g.SR] = 0; e[-5 * g.SR:] = 0
+assert g.inner_silent_sec(e) == 0
+m = tone.copy(); m[30 * g.SR:34 * g.SR] = 0
+assert g.inner_silent_sec(m) == 4, g.inner_silent_sec(m)
+print("OK inner_silence")

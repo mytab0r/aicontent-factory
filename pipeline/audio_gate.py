@@ -53,9 +53,20 @@ def window_keys(y, sr=SR, win=15) -> list[str]:
 
 def dominant_key(path) -> tuple[str, float]:
     """(звукоряд, доля 15-с окон) для одного трека: отбор кандидатов в час-миксе."""
-    keys = window_keys(_load(path))
+    y = _load(path)
+    keys = window_keys(y)
     top, cnt = Counter(keys).most_common(1)[0]
+    if inner_silent_sec(y):  # провал внутри трека (прогон 38578330862: 4 с на 1987 с) -> брак
+        return top, 0.0
     return top, cnt / len(keys)
+
+
+def inner_silent_sec(y, sr=SR, edge=15) -> int:
+    """Секунды тише -45 dB вне краёв (края режет сшивка)."""
+    n = len(y) // sr
+    sec = y[: n * sr].reshape(n, sr)[edge: max(edge, n - edge)]
+    db = 20 * np.log10(np.sqrt((sec ** 2).mean(1)) + 1e-9)
+    return int((db < -45).sum())
 
 
 def measure(path, win=15, tune_win=60) -> dict:
