@@ -38,7 +38,10 @@ def true_peak(path) -> float:
 
 def measure(path, win=15, tune_win=60) -> dict:
     import librosa
-    y, sr = librosa.load(str(path), sr=SR, mono=True)
+    # декод через ffmpeg: любой формат (mp3/m4a/mp4), не зависит от libsndfile
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-ac", "1", "-ar", str(SR),
+                          "-f", "f32le", "-"], capture_output=True, check=True).stdout
+    y, sr = np.frombuffer(raw, dtype="<f4").copy(), SR
     hop = 2048
     chroma = librosa.feature.chroma_stft(y=y, sr=sr, hop_length=hop, tuning=0.0)
     fpw = int(win * sr / hop)
@@ -49,6 +52,7 @@ def measure(path, win=15, tune_win=60) -> dict:
     tun = [float(librosa.estimate_tuning(y=y[s:s + tune_win * sr], sr=sr))
            for s in range(0, max(1, len(y) - tune_win * sr // 2), tune_win * sr)]
     return {"key": top, "key_share": round(cnt / len(keys), 3), "keys": dict(Counter(keys)),
+            "key_seq": " ".join(keys),
             "tuning": [round(t, 2) for t in tun], "tuning_spread": round(max(tun) - min(tun), 3),
             "silent_sec": int((db < -45).sum()), "true_peak": true_peak(path), "duration": n}
 

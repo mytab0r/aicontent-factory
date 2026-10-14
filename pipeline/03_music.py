@@ -333,7 +333,8 @@ def stitch_cmd(paths, out_path, xf=XFADE_SEC) -> list[str]:
     for i in range(1, len(paths)):
         f.append(f"[{prev}][t{i}]acrossfade=d={xf}:c1=tri:c2=tri[x{i}]")
         prev = f"x{i}"
-    f.append(f"[{prev}]loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000[out]")
+    # однопроходный loudnorm TP не держит (прогон 38567887195: -0.3 dBTP) -> лимитер -2.5 dBFS после него
+    f.append(f"[{prev}]loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000,alimiter=limit=0.75:level=disabled[out]")
     args = ["ffmpeg", "-y", "-loglevel", "error"]
     for p in paths:
         args += ["-i", str(p)]

@@ -101,7 +101,7 @@ jobs:
         if: always()
         run: |
           d=$(ls -d runs/*/ | tail -1); mkdir -p out
-          cp "$d"/music_meta.json "$d"/gate.json out/ 2>/dev/null || true
+          cp "$d"/music_meta.json "$d"/gate.json "$d"/track.mp3 out/ 2>/dev/null || true
           t=$(python3 -c "import json;print(json.load(open('$d/music_meta.json'))['chapters'][1].split()[0])")
           s=$(python3 -c "m,s='$t'.split(':')[-2:];print(max(0,int(m)*60+int(s)-30))")
           ffmpeg -loglevel error -y -ss "$s" -t 60 -i "$d/track.mp3" -codec:a libmp3lame -b:a 192k out/new_seam_60s.mp3

@@ -96,6 +96,7 @@ def test_stitch_cmd_trims_crossfades_normalizes():
     assert cmd.count("acrossfade=d=4.0") == 2
     assert cmd.count("areverse") == 6 and "-45dB" in cmd
     assert "loudnorm=I=-14:TP=-1.5" in cmd and "concat" not in cmd
+    assert "alimiter=limit=0.75" in cmd  # loudnorm один проход TP не держит
 
 
 def test_chapters_account_for_crossfade():
