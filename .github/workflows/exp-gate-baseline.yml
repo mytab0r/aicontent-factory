@@ -1,5 +1,7 @@
 name: exp gate baseline (старый прод-трек)
 on:
+  push:
+    branches: ["exp/gate-baseline"]
   workflow_dispatch:
     inputs:
       run_id:
@@ -17,7 +19,7 @@ jobs:
       - name: gate на опубликованном треке
         env:
           GH_TOKEN: ${{ github.token }}
-          RID: ${{ inputs.run_id }}
+          RID: ${{ inputs.run_id || '38559709263' }}
         run: |
           uv venv .venv && uv pip install --python .venv/bin/python librosa numpy
           aid=$(curl -sH "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$RID/artifacts" | python3 -c "import json,sys;print(json.load(sys.stdin)['artifacts'][0]['id'])")
