@@ -121,6 +121,9 @@ export function makeServer({ dataDir, ownerEmail, apiToken, accessTeam, accessAu
   const kv = new FileKV(path.join(dataDir, 'kv.json'));
   const secretsFile = path.join(dataDir, 'secrets.json');
   const providers = JSON.parse(fs.readFileSync(PROVIDERS_FILE, 'utf8'));
+  // секрет SSO-заголовка: env или файл $DATA_DIR/proxy_auth_secret (ставится без пересоздания контейнера)
+  const psFile = path.join(dataDir, 'proxy_auth_secret');
+  if (!proxySecret && fs.existsSync(psFile)) proxySecret = fs.readFileSync(psFile, 'utf8').trim();
   const readSecrets = () => (fs.existsSync(secretsFile) ? JSON.parse(fs.readFileSync(secretsFile, 'utf8')) : {});
   const env = { KV: kv };
   const auth = { team: accessTeam, aud: accessAud, owner: ownerEmail };
@@ -144,15 +147,17 @@ export function makeServer({ dataDir, ownerEmail, apiToken, accessTeam, accessAu
 
     // Zoraxy SSO (логин/пароль) перед админкой: Zoraxy добавляет секретный заголовок только после входа
     const viaSso = !!proxySecret && safeEq(request.headers.get('x-pay-proxy-auth') || '', proxySecret);
-    const isOwner = viaSso || !!(await accessEmail(request, auth));
+    const viaAccess = !!(await accessEmail(request, auth));
+    const isOwner = viaSso || viaAccess;
     const bearer = (request.headers.get('authorization') || '').replace(/^Bearer /, '');
     if (p === '/api/invoice' && m === 'POST') {
-      if (!isOwner && !(apiToken && safeEq(bearer, apiToken))) return json({ error: 'forbidden' }, 403);
+      // /api/invoice — публичное исключение SSO, Zoraxy шлёт заголовок и сюда: он здесь не доказательство входа
+      if (!viaAccess && !(apiToken && safeEq(bearer, apiToken))) return json({ error: 'forbidden' }, 403);
       return invoiceCreate.onRequestPost(ctx());
     }
 
     if (!(p === '/admin' || p.startsWith('/api/admin/') || p.startsWith('/api/claim/'))) return json({ error: 'not found' }, 404);
-    if (!isOwner) return json({ error: 'forbidden: Cloudflare Access (email владельца) обязателен' }, 403);
+    if (!isOwner) return json({ error: 'forbidden: нужен вход через sso.pxbt.app' }, 403);
 
     if (p === '/admin' && m === 'GET') return adminPage.onRequestGet({ env: { ...env, PROVIDERS: publicProviders(providers, readSecrets()) }, request });
     if (p === '/api/admin/config') {
