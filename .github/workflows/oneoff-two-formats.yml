@@ -5,18 +5,41 @@ on:
 jobs:
   s:
     runs-on: [self-hosted, pc]
-    timeout-minutes: 90
+    timeout-minutes: 180
     env:
       ACE: http://ace-step:8001
     steps:
       - uses: actions/checkout@v4
-      - name: ace-step up
+      - name: ace-step up (recreate if missing; base model weights -> C:, disk-gated)
+        env:
+          C: /run/desktop/mnt/host/c/dockerlocal/ace15
+          IMG: ghcr.io/ace-step/ace-step-1.5:latest
         run: |
+          sh deploy/gpu-pc/disk_gate.sh d 0 40
+          HAVE=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' ace-step 2>/dev/null | grep -c CONFIG_PATH2=acestep-v15-base || true)
+          if [ "$HAVE" != 1 ]; then
+            sh deploy/gpu-pc/disk_gate.sh c 7 30   # base DiT 4.8 GB + margin
+            docker image inspect "$IMG" >/dev/null   # image already on PC: no pull, D: does not grow
+            docker rm -f ace-step >/dev/null 2>&1 || true
+            docker network inspect comfynet >/dev/null 2>&1 || docker network create comfynet
+            docker network connect comfynet gh-runner-aicontent-factory 2>/dev/null || true
+            docker run -d --name ace-step --restart unless-stopped --gpus all --shm-size 2g \
+              --network comfynet --network-alias ace-step -p 127.0.0.1:8001:8001 \
+              -e ACESTEP_MODE=api -e ACESTEP_LLM_BACKEND=pt \
+              -e ACESTEP_CONFIG_PATH=acestep-v15-turbo -e ACESTEP_CONFIG_PATH2=acestep-v15-base \
+              -e ACESTEP_LM_MODEL_PATH=acestep-5Hz-lm-1.7B \
+              -v "$C/checkpoints:/app/checkpoints" -v "$C/output:/app/output" -v "$C/hf:/root/.cache/huggingface" \
+              "$IMG"
+          fi
           docker start ace-step >/dev/null 2>&1 || true
-          for i in $(seq 1 40); do
-            [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step 2>/dev/null)" = healthy ] && exit 0
-            sleep 6
-          done; exit 1
+          for i in $(seq 1 240); do
+            curl -fsS -m 5 "$ACE/health" >/dev/null 2>&1 && { echo "UP after $((i*15))s"; break; }
+            [ "$(docker inspect -f '{{.State.Running}}' ace-step)" = true ] || { docker logs --tail 80 ace-step; exit 1; }
+            [ $((i % 8)) = 0 ] && docker logs --tail 3 ace-step 2>&1 | tr '\r' '\n' | tail -3
+            sleep 15
+          done
+          curl -fsS -m 5 "$ACE/health"; curl -s "$ACE/v1/models" | head -c 600; echo
+          sh deploy/gpu-pc/disk_gate.sh c 0 30; sh deploy/gpu-pc/disk_gate.sh d 0 40
       - name: refs (90s of each owner reference)
         run: |
           python3 -m venv /tmp/ytv && /tmp/ytv/bin/pip install -q -U yt-dlp
@@ -57,7 +80,11 @@ jobs:
                 ("S3_slow70_strict",dict(base,prompt=SLOW,lyrics="[Instrumental]",bpm=70,seed=33,key_scale="G major",
                      lm_temperature=0.6,lm_cfg_scale=3.5,lm_negative_prompt="vocals, noise, hiss, distorted, harsh, out of tune, fast drums")),
                 ("U1_up108_vox",dict(base,prompt=UP,lyrics=VOX,bpm=108,seed=34,key_scale="A major")),
-                ("U2_up115_vox",dict(base,prompt=UP,lyrics=VOX,bpm=115,seed=35,key_scale="E major"))]
+                ("U2_up115_vox",dict(base,prompt=UP,lyrics=VOX,bpm=115,seed=35,key_scale="E major")),
+                ("S1b_slow72_piano_BASE",dict(base,prompt=SLOW,lyrics="[Instrumental]",bpm=72,seed=31,key_scale="F major",
+                     model="acestep-v15-base",inference_steps=50,guidance_scale=7.0,use_adg=True)),
+                ("U1b_up108_vox_BASE",dict(base,prompt=UP,lyrics=VOX,bpm=108,seed=34,key_scale="A major",
+                     model="acestep-v15-base",inference_steps=50,guidance_scale=7.0,use_adg=True))]
           for name,extra in jobs:
               body=dict(prompt=P,lyrics="[Instrumental]",audio_duration=120,bpm=85,key_scale="C major",
                         time_signature="4",batch_size=1,thinking=True,use_random_seed=False,seed=7,
