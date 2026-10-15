@@ -1,7 +1,7 @@
-name: oneoff-base-retest
+name: oneoff-vox-insert
 on:
   push:
-    branches: [exp/base-retest]
+    branches: [exp/vox-insert]
 permissions:
   contents: write
   actions: read
@@ -85,16 +85,13 @@ jobs:
           # Owner 15.10: base samples were broken (noise floor -17 dB, LRA 0.3) - prove whether model or our params.
           # Last time base got shift=1 (API default; docs recommend 3) + guidance 7 + ADG + reference audio.
           # Turbo also never got shift=3 (docs: "the only param you need to set for turbo"). Same seed/prompt everywhere.
-          BM=dict(model="acestep-v15-base")
-          V=[("T0_turbo_now",{}),("T1_turbo_shift3",dict(shift=3.0)),
-             ("B1_base64_s3_g7",dict(BM,inference_steps=64,shift=3.0,guidance_scale=7.0)),
-             ("B2_base64_s3_g8_adg",dict(BM,inference_steps=64,shift=3.0,guidance_scale=8.0,use_adg=True)),
-             ("B3_base32_s3_g5",dict(BM,inference_steps=32,shift=3.0,guidance_scale=5.0)),
-             ("B4_base64_s3_g7_noref",dict(BM,inference_steps=64,shift=3.0,guidance_scale=7.0,reference_audio_path=None))]
-          jobs=[]
-          for fam,extra0 in (("S",dict(base,prompt=SLOW,lyrics="[Instrumental]",bpm=72,seed=31,key_scale="F major")),
-                             ("U",dict(base,prompt=UP,lyrics=VOX,bpm=108,seed=34,key_scale="A major"))):
-              for v,ex in V: jobs.append((f"{fam}_{v}",dict(extra0,**ex)))
+          # Owner 15.10 on U_T0: "весь из микса голоса" - wants voice as an insert, not the whole track.
+          # Bed = same U_T0 params but instrumental; vocal hooks generated separately (same bpm/key), then spliced in.
+          UPI=UP.replace("airy female vocal chops in the chorus only, ","")+", instrumental, no vocals"
+          HOOK="[chorus]\nooh, la la, ooh\n\n[chorus]\nooh, la la, ooh"
+          jobs=[("S_T1_ctrl",dict(base,prompt=SLOW,lyrics="[Instrumental]",bpm=72,seed=31,key_scale="F major",shift=3.0))]
+          for sd in (34,35,36): jobs.append((f"BED_{sd}",dict(base,prompt=UPI,lyrics="[Instrumental]",bpm=108,seed=sd,key_scale="A major")))
+          for sd in (34,41): jobs.append((f"VOX_{sd}",dict(base,prompt=UP,lyrics=HOOK,bpm=108,seed=sd,key_scale="A major",audio_duration=30)))
           for name,extra in jobs:
               body=dict(prompt=SLOW,lyrics="[Instrumental]",audio_duration=120,bpm=85,key_scale="C major",
                         time_signature="4",batch_size=1,thinking=True,use_random_seed=False,seed=7,
@@ -120,10 +117,23 @@ jobs:
                   f=json.loads(d["result"])[0]["file"]; urllib.request.urlretrieve(B+f,f"out/{name}.mp3")
               else: print(str(d.get("result"))[:300])
           PY
+      - name: splice vocal hooks into instrumental beds
+        run: |
+          # ponytail: splice at fixed 30s/62s with 1.5s crossfades; upgrade = beat-aligned cut points (librosa beat_track)
+          set -e; cd out; ls
+          for v in VOX_*.mp3; do ffmpeg -loglevel error -y -ss 8 -t 10 -i $v -af "afade=t=in:d=0.3,afade=t=out:st=9.4:d=0.6" ${v%.mp3}_cut.wav; done
+          i=0; for bed in BED_*.mp3; do
+            for v in VOX_*_cut.wav; do i=$((i+1)); n=U_INS_$(basename $bed .mp3)_$(basename $v _cut.wav)
+              ffmpeg -loglevel error -y -i $bed -i $v -filter_complex \
+                "[0]atrim=0:30,asetpts=N/SR/TB[a];[0]atrim=40:62,asetpts=N/SR/TB[b];[0]atrim=72,asetpts=N/SR/TB[c];[1]asplit[v1][v2];\
+                 [a][v1]acrossfade=d=1.5[x];[x][b]acrossfade=d=1.5[y];[y][v2]acrossfade=d=1.5[z];[z][c]acrossfade=d=1.5,loudnorm=I=-14:TP=-1.5[o]" \
+                -map "[o]" -b:a 192k $n.mp3
+            done; done
+          rm -f *_cut.wav; ls -la
       - name: bench vs popular refs + hook score
         timeout-minutes: 30
         env:
-          BENCH_OURS: '{"slow": ["S_"], "up": ["U_"]}'
+          BENCH_OURS: '{"slow": ["S_"], "up": ["U_", "BED_"]}'
         run: |
           sh deploy/gpu-pc/disk_gate.sh c 4 30   # aesthetics venv + ~1 GB checkpoint on C:
           mkdir -p bench/ours && rm -f bench/ours/* && cp out/*.mp3 bench/ours/
@@ -138,11 +148,11 @@ jobs:
         id: up
         if: always()
         continue-on-error: true   # artifact storage quota can be full; fallback below
-        with: {name: base-retest, path: out/, retention-days: 3}
-      - name: fallback - samples to branch samples/base-retest (artifact quota hit)
+        with: {name: vox-insert, path: out/, retention-days: 3}
+      - name: fallback - samples to branch samples/vox-insert (artifact quota hit)
         if: always() && steps.up.outcome != 'success'
         run: |
           # ponytail: orphan branch as artifact store when Actions quota is full; delete branch after review
           git checkout -q --orphan smp && git rm -rqf --cached . && git add -f out
-          git -c user.name=hermes -c user.email=hermes@local commit -qm "base-retest samples run $GITHUB_RUN_ID"
-          git push -qf origin HEAD:refs/heads/samples/base-retest
+          git -c user.name=hermes -c user.email=hermes@local commit -qm "vox-insert samples run $GITHUB_RUN_ID"
+          git push -qf origin HEAD:refs/heads/samples/vox-insert
