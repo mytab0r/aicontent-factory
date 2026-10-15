@@ -1,8 +1,16 @@
 name: ci
-on: [push, pull_request]
+# один прогон на коммит: push только в master, ветки проверяет pull_request;
+# exp/* не гоняем (их проверяет свой oneoff-*). Устаревший коммит той же ветки отменяется новым.
+on:
+  push:
+    branches: [master]
+  pull_request:
+concurrency:
+  group: ci-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
 jobs:
   test:
-    runs-on: [self-hosted, pc]
+    runs-on: [self-hosted, release]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -65,7 +73,7 @@ jobs:
           done
 
   pay-image-smoke:
-    runs-on: [self-hosted, pc]
+    runs-on: [self-hosted, release]
     steps:
       - uses: actions/checkout@v4
       - name: build + run pay image (bind-mount ./data как в compose), healthz, /admin 403, запись счёта

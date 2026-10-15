@@ -10,7 +10,7 @@ on:
         description: "status | deploy-comfyui | download-models"
         default: "status"
         type: choice
-        options: [status, deploy-comfyui, download-models, comfy-object-list]
+        options: [status, deploy-comfyui, download-models, comfy-object-list, add-release-runner]
 
 jobs:
   ops:
@@ -18,6 +18,26 @@ jobs:
     timeout-minutes: 600
     steps:
       - uses: actions/checkout@v4
+
+      # второй раннер-полоса: выпуски/CI (label release) не ждут многочасовые oneoff-эксперименты.
+      # Образ уже на ПК (тот же, что у pc-acf) — диск не растёт; токен регистрации разовый (секрет).
+      - name: add-release-runner
+        if: ${{ inputs.action == 'add-release-runner' }}
+        env:
+          REG: ${{ secrets.RUNNER_REG_TOKEN }}
+        run: |
+          set -e
+          docker rm -f gh-runner-acf-release 2>/dev/null || true
+          docker run -d --name gh-runner-acf-release --restart unless-stopped --cpus 4 --memory 4g \
+            -e REPO_URL=https://github.com/mytab0r/aicontent-factory -e RUNNER_SCOPE=repo \
+            -e RUNNER_NAME=pc-acf-release -e LABELS=release -e RUNNER_TOKEN="$REG" \
+            -e RUNNER_WORKDIR=/tmp/runner/acf-release -e CONFIGURED_ACTIONS_RUNNER_FILES_DIR=/runner/data \
+            -e DISABLE_AUTOMATIC_DEREGISTRATION=true \
+            -v /var/run/docker.sock:/var/run/docker.sock -v gh-runner-acf-release-data:/runner/data \
+            -v gh-runner-aicontent-factory-tools:/opt/hostedtoolcache \
+            -v /tmp/runner/acf-release:/tmp/runner/acf-release myoung34/github-runner:ubuntu-noble
+          for n in comfynet gpu-net; do docker network connect $n gh-runner-acf-release || true; done
+          sleep 20; docker logs --tail 15 gh-runner-acf-release
 
       - name: pc-ops status
         if: ${{ inputs.action == 'status' }}

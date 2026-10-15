@@ -9,6 +9,10 @@ on:
       image_name:
         description: "run artifact name prefix"
         default: "loop"
+# новый пуш в ветку эксперимента заменяет старый прогон, а не встаёт в очередь
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   loop:
     runs-on: [self-hosted, pc]

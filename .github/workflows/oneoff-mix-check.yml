@@ -7,6 +7,10 @@ on:
 permissions:
   contents: read
 
+# новый пуш в ветку эксперимента заменяет старый прогон, а не встаёт в очередь
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   build:
     # one video per genre per day, each into its own playlist (05_publish.py).

@@ -7,6 +7,10 @@ on:
         description: "comma-separated video ids"
         required: true
 
+# новый пуш в ветку эксперимента заменяет старый прогон, а не встаёт в очередь
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   proof:
     runs-on: [self-hosted, pc]
