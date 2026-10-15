@@ -1,0 +1,131 @@
+name: oneoff-base-retest
+on:
+  push:
+    branches: [exp/base-retest]
+jobs:
+  s:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 240
+    env:
+      ACE: http://ace-step:8001
+    steps:
+      - uses: actions/checkout@v4
+      - name: ace-step up (recreate if missing; base model weights -> C:, disk-gated)
+        env:
+          C: /run/desktop/mnt/host/c/dockerlocal/ace15
+          IMG: ghcr.io/ace-step/ace-step-1.5:latest
+        run: |
+          # ponytail: D: already <40G before this job; job pulls nothing and writes outputs/weights to C:, so D: check is warn-only
+          sh deploy/gpu-pc/disk_gate.sh d 0 35   # weights/outputs go to C:, D: grows ~0; hard stop above docker-crash zone
+          HAVE=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' ace-step 2>/dev/null | grep -c CONFIG_PATH2=acestep-v15-base || true)
+          if [ "$HAVE" != 1 ]; then
+            sh deploy/gpu-pc/disk_gate.sh c 7 30   # base DiT 4.8 GB + margin
+            docker image inspect "$IMG" >/dev/null   # image already on PC: no pull, D: does not grow
+            docker rm -f ace-step >/dev/null 2>&1 || true
+            docker network inspect comfynet >/dev/null 2>&1 || docker network create comfynet
+            docker network connect comfynet gh-runner-aicontent-factory 2>/dev/null || true
+            docker run -d --name ace-step --restart unless-stopped --gpus all --shm-size 2g \
+              --network comfynet --network-alias ace-step -p 127.0.0.1:8001:8001 \
+              -e ACESTEP_MODE=api -e ACESTEP_LLM_BACKEND=pt \
+              -e ACESTEP_CONFIG_PATH=acestep-v15-turbo -e ACESTEP_CONFIG_PATH2=acestep-v15-base \
+              -e ACESTEP_LM_MODEL_PATH=acestep-5Hz-lm-1.7B \
+              -v "$C/checkpoints:/app/checkpoints" -v "$C/output:/app/output" -v "$C/hf:/root/.cache/huggingface" \
+              "$IMG"
+          fi
+          docker start ace-step >/dev/null 2>&1 || true
+          for i in $(seq 1 240); do
+            curl -fsS -m 5 "$ACE/health" >/dev/null 2>&1 && { echo "UP after $((i*15))s"; break; }
+            [ "$(docker inspect -f '{{.State.Running}}' ace-step)" = true ] || { docker logs --tail 80 ace-step; exit 1; }
+            [ $((i % 8)) = 0 ] && docker logs --tail 3 ace-step 2>&1 | tr '\r' '\n' | tail -3
+            sleep 15
+          done
+          curl -fsS -m 5 "$ACE/health"; curl -s "$ACE/v1/models" | head -c 600; echo
+          sh deploy/gpu-pc/disk_gate.sh c 0 30; sh deploy/gpu-pc/disk_gate.sh d 0 35
+      - name: refs (90s of each owner reference)
+        run: |
+          python3 -m venv /tmp/ytv && /tmp/ytv/bin/pip install -q -U yt-dlp
+          mkdir -p refs
+          # ponytail: YouTube 403 is transient/client-specific; retry alt clients, cache wav on runner
+          mkdir -p /tmp/refcache
+          for pair in sera:CYZeAfaj3pc; do n=${pair%%:*}; id=${pair#*:}
+            if [ -s /tmp/refcache/$n.wav ]; then cp /tmp/refcache/$n.wav refs/; continue; fi
+            for i in 1 2 3; do for c in default android tv web_safari mweb; do
+              rm -f refs/raw_$n.*
+              /tmp/ytv/bin/yt-dlp -q -f bestaudio --extractor-args "youtube:player_client=$c" -o "refs/raw_$n.%(ext)s" "https://youtu.be/$id" && break 2
+              sleep 5
+            done; sleep 20; done
+            ls refs/raw_$n.* >/dev/null 2>&1 || { echo "ref $n download failed"; exit 1; }
+            ffmpeg -loglevel error -y -ss 30 -t 90 -i refs/raw_$n.* -ac 2 -ar 48000 refs/$n.wav
+            cp refs/$n.wav /tmp/refcache/
+          done; ls -la refs; test -s refs/sera.wav
+      - name: generate
+        run: |
+          mkdir -p out
+          python3 - <<'PY'
+          import json, os, time, urllib.request
+          B=os.environ["ACE"]
+          def post(p,d):
+              r=urllib.request.Request(B+p,json.dumps(d).encode(),{"Content-Type":"application/json"})
+              for k in range(40):  # first call per model loads/downloads weights to C:; server may stay silent for minutes
+                  try: return json.load(urllib.request.urlopen(r,timeout=600))
+                  except Exception as e: print("retry",p,k,repr(e)[:120],flush=True); time.sleep(30)
+              raise SystemExit("ACE no answer")
+          # Owner 14.10: mid-tempo = "retro game menu", neither here nor there. Split into two formats.
+          SLOW=("slow tender ambient chill, soft and calm, warm gentle sub bass, very soft brushed drums or no drums, "
+                "felt piano, music box, soft bells, warm evolving pads, bright major chords, simple gentle melody, "
+                "background music for focus, relaxing, clean warm mix, no vocals")
+          UP=("upbeat melodic chill bass, energetic groovy drums, punchy warm sub bass, airy female vocal chops in the chorus only, "
+              "sparkling bells, plucked synth arps, lush pads, bright major chords, catchy uplifting melodic hook, "
+              "polished modern mix, wide stereo")
+          VOX="[intro]\n\n[verse]\n\n[chorus]\nooh, la la\n\n[verse]\n\n[chorus]\nooh, la la\n\n[outro]"
+          base=dict(reference_audio_path="refs/sera.wav",audio_duration=90)
+          # Owner 15.10: base samples were broken (noise floor -17 dB, LRA 0.3) - prove whether model or our params.
+          # Last time base got shift=1 (API default; docs recommend 3) + guidance 7 + ADG + reference audio.
+          # Turbo also never got shift=3 (docs: "the only param you need to set for turbo"). Same seed/prompt everywhere.
+          B=dict(model="acestep-v15-base")
+          V=[("T0_turbo_now",{}),("T1_turbo_shift3",dict(shift=3.0)),
+             ("B1_base64_s3_g7",dict(B,inference_steps=64,shift=3.0,guidance_scale=7.0)),
+             ("B2_base64_s3_g8_adg",dict(B,inference_steps=64,shift=3.0,guidance_scale=8.0,use_adg=True)),
+             ("B3_base32_s3_g5",dict(B,inference_steps=32,shift=3.0,guidance_scale=5.0)),
+             ("B4_base64_s3_g7_noref",dict(B,inference_steps=64,shift=3.0,guidance_scale=7.0,reference_audio_path=None))]
+          jobs=[]
+          for fam,extra0 in (("S",dict(base,prompt=SLOW,lyrics="[Instrumental]",bpm=72,seed=31,key_scale="F major")),
+                             ("U",dict(base,prompt=UP,lyrics=VOX,bpm=108,seed=34,key_scale="A major"))):
+              for v,ex in V: jobs.append((f"{fam}_{v}",dict(extra0,**ex)))
+          for name,extra in jobs:
+              body=dict(prompt=SLOW,lyrics="[Instrumental]",audio_duration=120,bpm=85,key_scale="C major",
+                        time_signature="4",batch_size=1,thinking=True,use_random_seed=False,seed=7,
+                        audio_format="mp3")
+              body.update(extra)
+              ref=body.pop("reference_audio_path",None)
+              if ref:
+                  args=[]
+                  for k,v in body.items(): args+=["-F",f"{k}={str(v).lower() if isinstance(v,bool) else v}"]
+                  import subprocess
+                  o=subprocess.run(["curl","-s","-m","600","-X","POST",B+"/release_task","-F",f"reference_audio=@{ref}"]+args,capture_output=True,text=True).stdout
+                  print(name,o[:300],flush=True)
+                  try: tid=json.loads(o)["data"]["task_id"]
+                  except Exception: continue
+              else:
+                  r0=post("/release_task",body); print(name,str(r0)[:200],flush=True); tid=r0["data"]["task_id"]
+              t=time.time()
+              while True:
+                  time.sleep(8); d=post("/query_result",{"task_id_list":[tid]})["data"][0]
+                  if d["status"]!=0 or time.time()-t>1500: break
+              print(name,"status",d["status"],round(time.time()-t),"s",flush=True)
+              if d["status"]==1:
+                  f=json.loads(d["result"])[0]["file"]; urllib.request.urlretrieve(B+f,f"out/{name}.mp3")
+              else: print(str(d.get("result"))[:300])
+          PY
+      - name: bench vs popular refs + hook score
+        env:
+          BENCH_OURS: '{"slow": ["S_"], "up": ["U_"]}'
+        run: |
+          sh deploy/gpu-pc/disk_gate.sh c 4 30   # aesthetics venv + ~1 GB checkpoint on C:
+          mkdir -p bench/ours && rm -f bench/ours/* && cp out/*.mp3 bench/ours/
+          python3 -m venv /tmp/bv && /tmp/bv/bin/pip install -q librosa==0.10.2.post1 numpy
+          /tmp/bv/bin/python bench/bench.py
+          sh bench/aes.sh
+          /tmp/bv/bin/python bench/merge.py
+      - uses: actions/upload-artifact@v4
+        with: {name: base-retest, path: out/}

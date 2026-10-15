@@ -9,7 +9,7 @@ FORMATS = {
  "up":   ["melodic bass mix female vocals", "melodic dubstep chill mix", "chill future bass mix",
           "seraphine k/da song", "uplifting melodic bass music"],
 }
-OURS = {"slow": ["S1", "S2", "S3", "S1b"], "up": ["U1", "U2", "U1b"]}
+OURS = json.loads(os.environ.get("BENCH_OURS", '{"slow": ["S1_", "S2_", "S3_", "S1b_"], "up": ["U1_", "U2_", "U1b_"]}'))
 TOP, MIN_VIEWS = 8, 1_000_000
 YT = "/tmp/ytv/bin/yt-dlp"
 
@@ -77,10 +77,9 @@ def main():
                     float(np.median([r[k] for r in rows]))) for k in keys}
         ours = []
         for tag in OURS[fmt]:
-            m = glob.glob(f"bench/ours/{tag}_*.mp3")
-            if not m: continue
-            x = feats(m[0]); inside = {k: band[k][0] <= x[k] <= band[k][1] for k in keys}
-            ours.append(dict(tag=tag, file=os.path.basename(m[0]), fit=round(sum(inside.values()) / len(keys), 2),
+          for m in sorted(glob.glob(f"bench/ours/{tag}*.mp3")):
+            x = feats(m); inside = {k: band[k][0] <= x[k] <= band[k][1] for k in keys}
+            ours.append(dict(tag=os.path.basename(m)[:-4], file=os.path.basename(m), fit=round(sum(inside.values()) / len(keys), 2),
                              off={k: [round(x[k], 3), [round(band[k][0], 3), round(band[k][1], 3)]] for k in keys if not inside[k]},
                              **{k: round(v, 3) for k, v in x.items()}))
         report[fmt] = dict(refs=rows, band={k: [round(v, 3) for v in b] for k, b in band.items()}, ours=ours)
