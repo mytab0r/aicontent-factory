@@ -141,16 +141,20 @@ jobs:
             done; done
           rm -f *_cut.wav; ls -la
       - name: bench vs popular refs + hook score
-        timeout-minutes: 30
+        timeout-minutes: 60
         env:
           BENCH_OURS: '{"slow": ["S_"], "up": ["U_", "BED_"]}'
         run: |
           sh deploy/gpu-pc/disk_gate.sh c 4 30   # aesthetics venv + ~1 GB checkpoint on C:
           mkdir -p bench/ours && rm -f bench/ours/* && cp out/*.mp3 bench/ours/
           python3 -m venv /tmp/bv && /tmp/bv/bin/pip install -q --retries 10 --timeout 60 librosa==0.10.2.post1 numpy
-          /tmp/bv/bin/python bench/bench.py
+          # yt-dlp now needs a JS runtime (EJS) for YouTube n-challenge; deno from PyPI, stays in venv
+          /tmp/ytv/bin/pip install -q --retries 10 --timeout 60 -U "yt-dlp[default]" deno || true
+          export PATH=/tmp/ytv/bin:$PATH
+          # ponytail: refs from YouTube are flaky; bench capped at 25 min and non-fatal so CE scoring of ours always runs
+          timeout 1500 /tmp/bv/bin/python bench/bench.py || echo "bench refs failed/partial"
           sh bench/aes.sh
-          /tmp/bv/bin/python bench/merge.py
+          [ -s out/bench.json ] && /tmp/bv/bin/python bench/merge.py || echo "no bench.json, CE only in out/aes.tsv"
       - name: keep samples even if scoring fails
         if: always()
         run: ls out/
@@ -166,4 +170,4 @@ jobs:
           git checkout -q --orphan smp && git rm -rqf --cached . && git add -f out
           git -c user.name=hermes -c user.email=hermes@local commit -qm "vox-insert samples run $GITHUB_RUN_ID"
           du -sh out
-          for i in 1 2 3 4 5; do git -c http.postBuffer=524288000 -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=120 push -qf origin HEAD:refs/heads/samples/vox-insert && break; [ $i = 5 ] && exit 1; sleep 30; done
+          for i in $(seq 1 15); do git -c http.postBuffer=524288000 -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=120 push -qf origin HEAD:refs/heads/samples/vox-insert && break; [ $i = 15 ] && exit 1; sleep 60; done

@@ -14,7 +14,8 @@ TOP, MIN_VIEWS = 8, 1_000_000
 YT = "/tmp/ytv/bin/yt-dlp"
 
 def search(q):
-    out = subprocess.run([YT, "--flat-playlist", "-J", f"ytsearch20:{q}"], capture_output=True, text=True).stdout
+    try: out = subprocess.run([YT, "--flat-playlist", "-J", f"ytsearch20:{q}"], capture_output=True, text=True, timeout=90).stdout
+    except subprocess.TimeoutExpired: return []
     return json.loads(out).get("entries", []) if out else []
 
 def pick(fmt):
@@ -27,17 +28,22 @@ def pick(fmt):
     return sorted(seen.values(), key=lambda x: -x["views"])[:TOP]
 
 def fetch(ref):
-    wav = f"refs/{ref['id']}.wav"
+    wav = f"refs/{ref['id']}.wav"; cache = f"/tmp/refcache/{ref['id']}.wav"
     if os.path.exists(wav): return wav
+    if os.path.exists(cache): subprocess.run(["cp", cache, wav]); return wav
     for c in ["default", "android", "tv", "web_safari", "mweb"]:
         subprocess.run(["sh", "-c", f"rm -f refs/raw_{ref['id']}.*"])
-        if subprocess.run([YT, "-q", "-f", "bestaudio", "--extractor-args", f"youtube:player_client={c}",
-                           "-o", f"refs/raw_{ref['id']}.%(ext)s", f"https://youtu.be/{ref['id']}"]).returncode == 0: break
+        try: ok = subprocess.run([YT, "-q", "-f", "bestaudio", "--extractor-args", f"youtube:player_client={c}",
+                           "-o", f"refs/raw_{ref['id']}.%(ext)s", f"https://youtu.be/{ref['id']}"], timeout=180).returncode == 0
+        except subprocess.TimeoutExpired: ok = False
+        if ok: break
     raw = glob.glob(f"refs/raw_{ref['id']}.*")
     if not raw: return None
     ss = max(0, int(ref["dur"]) // 2 - 45)  # 90 s from the middle: skip intros/outros
     subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-ss", str(ss), "-t", "90", "-i", raw[0], "-ac", "1", "-ar", "22050", wav])
-    os.remove(raw[0]); return wav if os.path.exists(wav) else None
+    os.remove(raw[0])
+    if not os.path.exists(wav): return None
+    os.makedirs("/tmp/refcache", exist_ok=True); subprocess.run(["cp", wav, cache]); return wav
 
 def lufs(path):
     o = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", path, "-af", "ebur128", "-f", "null", "-"],
@@ -72,6 +78,7 @@ def main():
         for ref in pick(fmt):
             w = fetch(ref)
             if w: rows.append(dict(ref, **feats(w))); print(fmt, ref["views"], ref["title"], flush=True)
+        if not rows: print(fmt, "no refs fetched", flush=True); continue
         keys = [k for k in rows[0] if k not in ("id", "title", "views", "dur", "q")]
         band = {k: (float(np.percentile([r[k] for r in rows], 10)), float(np.percentile([r[k] for r in rows], 90)),
                     float(np.median([r[k] for r in rows]))) for k in keys}
