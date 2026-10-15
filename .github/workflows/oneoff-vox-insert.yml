@@ -13,7 +13,7 @@ jobs:
       ACE: http://ace-step:8001
     steps:
       - uses: actions/checkout@v4
-      - name: reclaim D: (runner temp + pip/uv caches; regenerable only)
+      - name: 'reclaim disk D (runner temp + pip/uv caches, regenerable only)'
         run: |
           # ponytail: runner rw layer grew to 10.5 GB from one-off venvs/caches; regenerable stuff only, never volumes/hya-*
           df -BG /tmp | tail -1
