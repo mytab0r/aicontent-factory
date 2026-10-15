@@ -13,7 +13,7 @@ docker exec ace-step sh -c '
     else curl -sS https://bootstrap.pypa.io/get-pip.py -o gp.py && python3 gp.py -q --target pipboot && PYTHONPATH=pipboot python3 -m pip install -q --no-deps --target pkgs audiobox_aesthetics; fi
   fi
   # deps not in the ACE image, installed only if missing (torch/torchaudio come from the image)
-  for m in submitit:submitit; do python3 -c "import ${m%%:*}" 2>/dev/null || { python3 -m pip install -q --target pkgs ${m#*:} 2>/dev/null || uv pip install -q --target pkgs ${m#*:} 2>/dev/null || PYTHONPATH=pipboot python3 -m pip install -q --target pkgs ${m#*:}; }; done
+  for m in submitit:submitit tqdm:tqdm huggingface_hub:huggingface_hub requests:requests safetensors:safetensors rich:rich; do python3 -c "import ${m%%:*}" 2>/dev/null || { python3 -m pip install -q --target pkgs ${m#*:} 2>/dev/null || uv pip install -q --target pkgs ${m#*:} 2>/dev/null || PYTHONPATH=pipboot python3 -m pip install -q --target pkgs ${m#*:}; }; done
   python3 aes_score.py in > scored.tsv'
 docker cp ace-step:/app/output/aes/scored.tsv out/aes.tsv
 cat out/aes.tsv
