@@ -18,7 +18,7 @@ jobs:
           # ponytail: runner rw layer grew to 10.5 GB from one-off venvs/caches; regenerable stuff only, never volumes/hya-*
           df -BG /tmp | tail -1
           du -sh /tmp/* ~/.cache/* 2>/dev/null | sort -h | tail -8 || true
-          rm -rf /tmp/bv /tmp/ytv /tmp/vv* ~/.cache/pip ~/.cache/uv ~/.cache/huggingface 2>/dev/null || true
+          rm -rf /tmp/bv /tmp/ytv /tmp/vv* /tmp/gradio /tmp/tmp* ~/.cache/pip ~/.cache/uv ~/.cache/huggingface 2>/dev/null || true
           find /tmp/runner/work -maxdepth 1 -mindepth 1 -type d ! -name aicontent-factory ! -name _temp ! -name _actions ! -name _tool -exec rm -rf {} + 2>/dev/null || true
           docker exec ace-step sh -c 'rm -rf /root/.cache/pip /root/.cache/uv /tmp/*' 2>/dev/null || true
           df -BG /tmp | tail -1
@@ -28,7 +28,8 @@ jobs:
           IMG: ghcr.io/ace-step/ace-step-1.5:latest
         run: |
           # ponytail: D: already <40G before this job; job pulls nothing and writes outputs/weights to C:, so D: check is warn-only
-          sh deploy/gpu-pc/disk_gate.sh d 0 35   # weights/outputs go to C:, D: grows ~0; hard stop above docker-crash zone
+          sh deploy/gpu-pc/disk_gate.sh d 0 32   # ponytail: net-negative job (reclaim step frees ~5G inside docker vhdx before writing ~3G, so D: cannot shrink); floor back to 35 once vhdx compacted / hya-* gone.
+          # weights/outputs go to C:, D: grows ~0; hard stop above docker-crash zone
           HAVE=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' ace-step 2>/dev/null | grep -c CONFIG_PATH2=acestep-v15-base || true)
           if [ "$HAVE" != 1 ]; then
             sh deploy/gpu-pc/disk_gate.sh c 7 30   # base DiT 4.8 GB + margin
