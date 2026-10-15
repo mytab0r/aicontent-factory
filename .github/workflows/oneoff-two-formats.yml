@@ -16,7 +16,7 @@ jobs:
           IMG: ghcr.io/ace-step/ace-step-1.5:latest
         run: |
           # ponytail: D: already <40G before this job; job pulls nothing and writes outputs/weights to C:, so D: check is warn-only
-          sh deploy/gpu-pc/disk_gate.sh d 0 40 || echo 'WARN: D: below floor (pre-existing); nothing is written to D: by this job'
+          sh deploy/gpu-pc/disk_gate.sh d 0 35   # weights/outputs go to C:, D: grows ~0; hard stop above docker-crash zone
           HAVE=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' ace-step 2>/dev/null | grep -c CONFIG_PATH2=acestep-v15-base || true)
           if [ "$HAVE" != 1 ]; then
             sh deploy/gpu-pc/disk_gate.sh c 7 30   # base DiT 4.8 GB + margin
@@ -40,7 +40,7 @@ jobs:
             sleep 15
           done
           curl -fsS -m 5 "$ACE/health"; curl -s "$ACE/v1/models" | head -c 600; echo
-          sh deploy/gpu-pc/disk_gate.sh c 0 30; sh deploy/gpu-pc/disk_gate.sh d 0 40 || echo 'WARN: D: below floor (pre-existing)'
+          sh deploy/gpu-pc/disk_gate.sh c 0 30; sh deploy/gpu-pc/disk_gate.sh d 0 35
       - name: refs (90s of each owner reference)
         run: |
           python3 -m venv /tmp/ytv && /tmp/ytv/bin/pip install -q -U yt-dlp
@@ -66,7 +66,10 @@ jobs:
           B=os.environ["ACE"]
           def post(p,d):
               r=urllib.request.Request(B+p,json.dumps(d).encode(),{"Content-Type":"application/json"})
-              return json.load(urllib.request.urlopen(r,timeout=300))
+              for k in range(40):  # first call per model loads/downloads weights to C:; server may stay silent for minutes
+                  try: return json.load(urllib.request.urlopen(r,timeout=600))
+                  except Exception as e: print("retry",p,k,repr(e)[:120],flush=True); time.sleep(30)
+              raise SystemExit("ACE no answer")
           # Owner 14.10: mid-tempo = "retro game menu", neither here nor there. Split into two formats.
           SLOW=("slow tender ambient chill, soft and calm, warm gentle sub bass, very soft brushed drums or no drums, "
                 "felt piano, music box, soft bells, warm evolving pads, bright major chords, simple gentle melody, "
