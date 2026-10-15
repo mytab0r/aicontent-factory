@@ -118,6 +118,7 @@ jobs:
               else: print(str(d.get("result"))[:300])
           PY
       - name: bench vs popular refs + hook score
+        timeout-minutes: 30
         env:
           BENCH_OURS: '{"slow": ["S_"], "up": ["U_"]}'
         run: |
@@ -127,5 +128,8 @@ jobs:
           /tmp/bv/bin/python bench/bench.py
           sh bench/aes.sh
           /tmp/bv/bin/python bench/merge.py
+      - name: keep samples even if scoring fails
+        if: always()
+        run: ls out/
       - uses: actions/upload-artifact@v4
         with: {name: base-retest, path: out/}

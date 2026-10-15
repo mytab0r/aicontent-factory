@@ -1,23 +1,19 @@
 #!/bin/sh
-# "Will it hook" proxy: Meta audiobox-aesthetics (CE = content enjoyment, PQ = production quality), run inside the
-# ace-step container (torch+CUDA already there; venv/weights on C: bind /app/output, D: does not grow).
-# ponytail: CE is a learned listener-enjoyment predictor, not CTR; validated below by correlation with ref views.
+# "Will it hook" proxy: Meta audiobox-aesthetics CE/PQ, run inside ace-step (torch+CUDA there; pkgs on C: bind, D: ~0).
+# ponytail: CE is a learned enjoyment predictor, not CTR; merge.py checks it against ref views.
 set -e
 docker exec ace-step sh -c 'rm -rf /app/output/aes/in && mkdir -p /app/output/aes/in'
 for f in bench/ours/*.mp3 refs/*.wav; do [ -f "$f" ] && docker cp "$f" ace-step:/app/output/aes/in/; done
+docker cp bench/aes_score.py ace-step:/app/output/aes/aes_score.py
 docker exec ace-step sh -c '
-  set -e
-  cd /app/output/aes
-  # container has no python3-venv/ensurepip: venv without pip, reuse system pip (visible via system-site-packages)
-  if [ ! -x venv/bin/audio-aes ]; then
-    rm -rf venv && python3 -m venv --without-pip --system-site-packages venv
-    venv/bin/python -m pip --version || { curl -fsSL https://bootstrap.pypa.io/get-pip.py -o gp.py && venv/bin/python gp.py -q; }
-    venv/bin/python -m pip install -q audiobox_aesthetics
+  set -e; cd /app/output/aes; export HF_HOME=/root/.cache/huggingface PYTHONPATH=/app/output/aes/pkgs
+  if ! python3 -c "import audiobox_aesthetics" 2>/dev/null; then
+    if python3 -m pip --version >/dev/null 2>&1; then python3 -m pip install -q --no-deps --target pkgs audiobox_aesthetics
+    elif command -v uv >/dev/null; then uv pip install -q --no-deps --target pkgs audiobox_aesthetics
+    else curl -sS https://bootstrap.pypa.io/get-pip.py -o gp.py && python3 gp.py -q --target pipboot && PYTHONPATH=pipboot python3 -m pip install -q --no-deps --target pkgs audiobox_aesthetics; fi
   fi
-  export HF_HOME=/root/.cache/huggingface
-  ls in | sed "s|.*|{\"path\":\"/app/output/aes/in/&\"}|" > in.jsonl
-  venv/bin/audio-aes in.jsonl --batch-size 4 > out.jsonl
-  test -s out.jsonl
-  paste -d"\t" in.jsonl out.jsonl > scored.tsv'
+  # deps not in the ACE image, installed only if missing (torch/torchaudio come from the image)
+  for m in submitit:submitit; do python3 -c "import ${m%%:*}" 2>/dev/null || { python3 -m pip install -q --target pkgs ${m#*:} 2>/dev/null || uv pip install -q --target pkgs ${m#*:} 2>/dev/null || PYTHONPATH=pipboot python3 -m pip install -q --target pkgs ${m#*:}; }; done
+  python3 aes_score.py in > scored.tsv'
 docker cp ace-step:/app/output/aes/scored.tsv out/aes.tsv
 cat out/aes.tsv
