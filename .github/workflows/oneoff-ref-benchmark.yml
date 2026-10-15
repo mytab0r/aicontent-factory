@@ -1,0 +1,21 @@
+name: oneoff-ref-benchmark
+on:
+  push:
+    branches: [exp/ref-benchmark]
+jobs:
+  b:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: disk gate (refs are 90 s clips, < 1 GB total)
+        run: sh deploy/gpu-pc/disk_gate.sh d 1 35
+      - name: deps
+        run: |
+          python3 -m venv /tmp/ytv && /tmp/ytv/bin/pip install -q -U yt-dlp
+          python3 -m venv /tmp/bv && /tmp/bv/bin/pip install -q librosa==0.10.2.post1 numpy
+      - name: benchmark
+        run: /tmp/bv/bin/python bench/bench.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: ref-benchmark, path: out/}
