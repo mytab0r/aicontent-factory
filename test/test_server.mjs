@@ -95,6 +95,8 @@ try {
 
   // инвойс: создать можно владельцу или по bearer-токену бота, анониму нельзя
   assert.strictEqual((await req('/api/invoice', { method: 'POST', body: '{"amount":1}' })).status, 403);
+  // Zoraxy шлёт SSO-заголовок и на публичные исключения (/api/invoice): он не даёт права создавать счёт
+  assert.strictEqual((await req('/api/invoice', { method: 'POST', headers: { 'x-pay-proxy-auth': 'sso-secret-123' }, body: '{"amount":1}' })).status, 403, 'sso-заголовок на публичном пути');
   r = await req('/api/invoice', { method: 'POST', headers: { authorization: 'Bearer tok123' }, body: JSON.stringify({ amount: 1, memo: '<script>alert(1)</script>' }) });
   assert.strictEqual(r.status, 200);
   const { id, url } = await r.json();
