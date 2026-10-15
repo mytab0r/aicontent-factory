@@ -82,12 +82,12 @@ jobs:
           # Owner 15.10: base samples were broken (noise floor -17 dB, LRA 0.3) - prove whether model or our params.
           # Last time base got shift=1 (API default; docs recommend 3) + guidance 7 + ADG + reference audio.
           # Turbo also never got shift=3 (docs: "the only param you need to set for turbo"). Same seed/prompt everywhere.
-          B=dict(model="acestep-v15-base")
+          BM=dict(model="acestep-v15-base")
           V=[("T0_turbo_now",{}),("T1_turbo_shift3",dict(shift=3.0)),
-             ("B1_base64_s3_g7",dict(B,inference_steps=64,shift=3.0,guidance_scale=7.0)),
-             ("B2_base64_s3_g8_adg",dict(B,inference_steps=64,shift=3.0,guidance_scale=8.0,use_adg=True)),
-             ("B3_base32_s3_g5",dict(B,inference_steps=32,shift=3.0,guidance_scale=5.0)),
-             ("B4_base64_s3_g7_noref",dict(B,inference_steps=64,shift=3.0,guidance_scale=7.0,reference_audio_path=None))]
+             ("B1_base64_s3_g7",dict(BM,inference_steps=64,shift=3.0,guidance_scale=7.0)),
+             ("B2_base64_s3_g8_adg",dict(BM,inference_steps=64,shift=3.0,guidance_scale=8.0,use_adg=True)),
+             ("B3_base32_s3_g5",dict(BM,inference_steps=32,shift=3.0,guidance_scale=5.0)),
+             ("B4_base64_s3_g7_noref",dict(BM,inference_steps=64,shift=3.0,guidance_scale=7.0,reference_audio_path=None))]
           jobs=[]
           for fam,extra0 in (("S",dict(base,prompt=SLOW,lyrics="[Instrumental]",bpm=72,seed=31,key_scale="F major")),
                              ("U",dict(base,prompt=UP,lyrics=VOX,bpm=108,seed=34,key_scale="A major"))):
