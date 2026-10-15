@@ -116,6 +116,17 @@ try {
   assert.ok(!page.includes('<script>alert(1)'), 'memo экранирован');
   assert.strictEqual((await req('/i/nope')).status, 404);
   assert.strictEqual((await req('/healthz')).status, 200);
+  // секрет из файла DATA_DIR, если env не задан
+  {
+    const d2 = fs.mkdtempSync(path.join(os.tmpdir(), 'pay-ps-'));
+    fs.writeFileSync(path.join(d2, 'proxy_auth_secret'), 'file-secret-1\n');
+    const s2 = makeServer({ dataDir: d2, ownerEmail: OWNER, apiToken: 'tok123', accessTeam: TEAM, accessAud: AUD });
+    await new Promise((ok) => s2.listen(0, new URL(base).hostname, ok));
+    const b2 = base.replace(/:\d+$/, ':' + s2.address().port);
+    assert.strictEqual((await realFetch(b2 + '/admin', { headers: { 'x-pay-proxy-auth': 'file-secret-1' } })).status, 200, 'секрет из файла');
+    assert.strictEqual((await realFetch(b2 + '/admin', { headers: { 'x-pay-proxy-auth': 'wrong' } })).status, 403);
+    s2.close();
+  }
 } finally {
   srv.close();
   globalThis.fetch = realFetch;
