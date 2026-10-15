@@ -2,6 +2,9 @@ name: oneoff-base-retest
 on:
   push:
     branches: [exp/base-retest]
+permissions:
+  contents: write
+  actions: read
 jobs:
   s:
     runs-on: [self-hosted, pc]
@@ -132,5 +135,14 @@ jobs:
         if: always()
         run: ls out/
       - uses: actions/upload-artifact@v4
+        id: up
         if: always()
-        with: {name: base-retest, path: out/}
+        continue-on-error: true   # artifact storage quota can be full; fallback below
+        with: {name: base-retest, path: out/, retention-days: 3}
+      - name: fallback - samples to branch samples/base-retest (artifact quota hit)
+        if: always() && steps.up.outcome != 'success'
+        run: |
+          # ponytail: orphan branch as artifact store when Actions quota is full; delete branch after review
+          git checkout -q --orphan smp && git rm -rqf --cached . && git add -f out
+          git -c user.name=hermes -c user.email=hermes@local commit -qm "base-retest samples run $GITHUB_RUN_ID"
+          git push -qf origin HEAD:refs/heads/samples/base-retest
