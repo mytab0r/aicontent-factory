@@ -53,7 +53,7 @@ jobs:
             sleep 15
           done
           curl -fsS -m 5 "$ACE/health"; curl -s "$ACE/v1/models" | head -c 600; echo
-          sh deploy/gpu-pc/disk_gate.sh c 0 30; sh deploy/gpu-pc/disk_gate.sh d 0 35
+          sh deploy/gpu-pc/disk_gate.sh c 0 30; sh deploy/gpu-pc/disk_gate.sh d 0 32
       - name: refs (90s of each owner reference)
         run: |
           python3 -m venv /tmp/ytv && /tmp/ytv/bin/pip install -q -U yt-dlp
