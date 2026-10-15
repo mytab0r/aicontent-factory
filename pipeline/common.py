@@ -1,4 +1,5 @@
 """Общие утилиты пайплайна: вызов 9router, пути, работа с состоянием."""
+import http.client
 import json
 import os
 import subprocess
@@ -51,8 +52,8 @@ def router_post(path: str, payload: dict, timeout: int = 120, retries: int = 3) 
                 time.sleep(5 * (attempt + 1))
                 continue
             raise last_err from None
-        except (urllib.error.URLError, TimeoutError, OSError) as e:
-            # DNS/timeout/TLS — тоже RuntimeError, чтобы фолбэки шагов 01/02 срабатывали
+        except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException) as e:
+            # DNS/timeout/TLS/оборванный ответ (IncompleteRead) — тоже RuntimeError, чтобы фолбэки шагов 01/02 срабатывали
             last_err = RuntimeError(f"9router {path} network: {e}")
             if attempt < retries - 1:
                 time.sleep(5 * (attempt + 1))
