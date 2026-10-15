@@ -102,30 +102,40 @@ jobs:
           jobs=[("S_T1_ctrl",dict(base,prompt=SLOW,lyrics="[Instrumental]",bpm=72,seed=31,key_scale="F major",shift=3.0))]
           for sd in (34,35,36): jobs.append((f"BED_{sd}",dict(base,prompt=UPI,lyrics="[Instrumental]",bpm=108,seed=sd,key_scale="A major")))
           for sd in (34,41): jobs.append((f"VOX_{sd}",dict(base,prompt=UP,lyrics=HOOK,bpm=108,seed=sd,key_scale="A major",audio_duration=30)))
+          import subprocess
+          def ace_restart():  # ponytail: DiT hung 15.10 (status 0 forever after "precomputed LM hints"); restart container, retry once
+              subprocess.run(["docker","restart","-t","20","ace-step"])
+              for _ in range(60):
+                  time.sleep(10)
+                  try: urllib.request.urlopen(B+"/health",timeout=5); return
+                  except Exception: pass
           for name,extra in jobs:
-              body=dict(prompt=SLOW,lyrics="[Instrumental]",audio_duration=120,bpm=85,key_scale="C major",
-                        time_signature="4",batch_size=1,thinking=True,use_random_seed=False,seed=7,
-                        audio_format="mp3")
-              body.update(extra)
-              ref=body.pop("reference_audio_path",None)
-              if ref:
-                  args=[]
-                  for k,v in body.items(): args+=["-F",f"{k}={str(v).lower() if isinstance(v,bool) else v}"]
-                  import subprocess
-                  o=subprocess.run(["curl","-s","-m","600","-X","POST",B+"/release_task","-F",f"reference_audio=@{ref}"]+args,capture_output=True,text=True).stdout
-                  print(name,o[:300],flush=True)
-                  try: tid=json.loads(o)["data"]["task_id"]
-                  except Exception: continue
-              else:
-                  r0=post("/release_task",body); print(name,str(r0)[:200],flush=True); tid=r0["data"]["task_id"]
-              t=time.time()
-              while True:
-                  time.sleep(8); d=post("/query_result",{"task_id_list":[tid]})["data"][0]
-                  if d["status"]!=0 or time.time()-t>1500: break
-              print(name,"status",d["status"],round(time.time()-t),"s",flush=True)
-              if d["status"]==1:
-                  f=json.loads(d["result"])[0]["file"]; urllib.request.urlretrieve(B+f,f"out/{name}.mp3")
-              else: print(str(d.get("result"))[:300])
+           for attempt in (0,1):
+               body=dict(prompt=SLOW,lyrics="[Instrumental]",audio_duration=120,bpm=85,key_scale="C major",
+                         time_signature="4",batch_size=1,thinking=True,use_random_seed=False,seed=7,
+                         audio_format="mp3")
+               body.update(extra)
+               ref=body.pop("reference_audio_path",None)
+               if ref:
+                   args=[]
+                   for k,v in body.items(): args+=["-F",f"{k}={str(v).lower() if isinstance(v,bool) else v}"]
+                   import subprocess
+                   o=subprocess.run(["curl","-s","-m","600","-X","POST",B+"/release_task","-F",f"reference_audio=@{ref}"]+args,capture_output=True,text=True).stdout
+                   print(name,o[:300],flush=True)
+                   try: tid=json.loads(o)["data"]["task_id"]
+                   except Exception: continue
+               else:
+                   r0=post("/release_task",body); print(name,str(r0)[:200],flush=True); tid=r0["data"]["task_id"]
+               t=time.time()
+               while True:
+                   time.sleep(8); d=post("/query_result",{"task_id_list":[tid]})["data"][0]
+                   if d["status"]!=0 or time.time()-t>600: break
+               print(name,"status",d["status"],round(time.time()-t),"s",flush=True)
+               if d["status"]==1:
+                   f=json.loads(d["result"])[0]["file"]; urllib.request.urlretrieve(B+f,f"out/{name}.mp3")
+               else: print(str(d.get("result"))[:300])
+               if d["status"]==0 and attempt==0: print(name,"hung -> restart ace-step",flush=True); ace_restart(); continue
+               break
           PY
       - name: splice vocal hooks into instrumental beds
         run: |
