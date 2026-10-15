@@ -15,6 +15,7 @@ on:
 # push ротации .state: default token = read -> было 403, ротация не сохранялась
 permissions:
   contents: write
+  actions: read
 
 jobs:
   build:
@@ -165,8 +166,20 @@ jobs:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           TG_THREAD_ID: ${{ secrets.TG_THREAD_ID }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          python3 -c "from common import tg_send; tg_send('❌ daily-video (${{ matrix.genre }}) упал. Лог: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}. Если причина invalid_grant — перевыпусти токен: python3 pipeline/youtube_oauth.py --auth-url')"
+          # называем упавший шаг фактом из API, а не догадкой о причине
+          python3 - <<'PY'
+          import json, os, urllib.request
+          from common import tg_send
+          api = f"{os.environ['GITHUB_API_URL']}/repos/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}/jobs"
+          try:
+              jobs = json.load(urllib.request.urlopen(urllib.request.Request(api, headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"]}), timeout=30))["jobs"]
+              failed = ", ".join(s["name"] for j in jobs for s in j.get("steps", []) if s.get("conclusion") == "failure") or "не определён"
+          except Exception as e:
+              failed = f"не определён ({e.__class__.__name__})"
+          tg_send(f"❌ daily-video (${{ matrix.genre }}) упал на шаге: {failed}. Лог: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}")
+          PY
 
       - name: upload run artifact
         if: steps.guard.outputs.published != '1'

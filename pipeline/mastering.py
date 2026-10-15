@@ -8,6 +8,7 @@
 
 Запуск: python3 mastering.py <in.mp3> <out.mp3>
 """
+import os
 import re
 import subprocess
 import sys
@@ -36,8 +37,11 @@ def master(src: str, dst: str) -> dict:
           "alimiter=limit=0.79:level=disabled,"
           "loudnorm=I=-14:TP=-2:LRA=8")
     def run(s: str, d: str) -> None:
+        # пишем во временный файл: ffmpeg не может писать в свой же вход (src == dst)
+        tmp = d + ".tmp.mp3"
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", s, "-af", af,
-                        "-c:a", "libmp3lame", "-b:a", "192k", d], check=True)
+                        "-c:a", "libmp3lame", "-b:a", "192k", tmp], check=True)
+        os.replace(tmp, d)
 
     run(src, dst)
     m = measure(dst)

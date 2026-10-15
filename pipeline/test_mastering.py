@@ -72,4 +72,12 @@ with tempfile.TemporaryDirectory() as td:
     print(f"double: I={b['i']} LRA={b['lra']} TP={b['tp']}")
     assert -15 <= b["i"] <= -13 and b["lra"] <= 8 and b["tp"] <= -1, b
 
+    # 03_music зовёт master(out_path, out_path): ffmpeg не умеет писать в свой вход
+    import shutil
+    inplace = Path(td) / "inplace.mp3"
+    shutil.copy(out, inplace)
+    run_master(inplace, inplace)
+    c = measure(inplace)
+    assert -15 <= c["i"] <= -13 and c["lra"] <= 8 and c["tp"] <= -1, c
+
 print("test_mastering OK")
