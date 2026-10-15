@@ -13,6 +13,15 @@ jobs:
       ACE: http://ace-step:8001
     steps:
       - uses: actions/checkout@v4
+      - name: reclaim D: (runner temp + pip/uv caches; regenerable only)
+        run: |
+          # ponytail: runner rw layer grew to 10.5 GB from one-off venvs/caches; regenerable stuff only, never volumes/hya-*
+          df -BG /tmp | tail -1
+          du -sh /tmp/* ~/.cache/* 2>/dev/null | sort -h | tail -8 || true
+          rm -rf /tmp/bv /tmp/ytv /tmp/vv* ~/.cache/pip ~/.cache/uv ~/.cache/huggingface 2>/dev/null || true
+          find /tmp/runner/work -maxdepth 1 -mindepth 1 -type d ! -name aicontent-factory ! -name _temp ! -name _actions ! -name _tool -exec rm -rf {} + 2>/dev/null || true
+          docker exec ace-step sh -c 'rm -rf /root/.cache/pip /root/.cache/uv /tmp/*' 2>/dev/null || true
+          df -BG /tmp | tail -1
       - name: ace-step up (recreate if missing; base model weights -> C:, disk-gated)
         env:
           C: /run/desktop/mnt/host/c/dockerlocal/ace15
