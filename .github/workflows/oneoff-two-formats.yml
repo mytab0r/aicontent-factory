@@ -1,7 +1,7 @@
-name: oneoff-ace-options
+name: oneoff-two-formats
 on:
   push:
-    branches: [exp/ace-options]
+    branches: [exp/two-formats]
 jobs:
   s:
     runs-on: [self-hosted, pc]
@@ -43,23 +43,21 @@ jobs:
           def post(p,d):
               r=urllib.request.Request(B+p,json.dumps(d).encode(),{"Content-Type":"application/json"})
               return json.load(urllib.request.urlopen(r,timeout=300))
-          # Which ACE-Step options do we leave unused? Probe models, then A/B same seed/prompt.
-          M=json.load(urllib.request.urlopen(B+"/v1/models",timeout=60)); print("MODELS",json.dumps(M)[:1500],flush=True)
-          open("out/models.json","w").write(json.dumps(M))
-          names=json.dumps(M)
-          P=("instrumental, no vocals, melodic chill bass, dreamy and tender, deep warm sub bass, groovy drums, "
-             "rich sound design: plucked synth arps, sparkling bells, music box, soft piano, lush evolving pads, "
-             "bright major chords, catchy melodic lead hook, clean polished modern mix, wide stereo")
-          base=dict(reference_audio_path="refs/sera.wav",prompt=P,lyrics="[Instrumental]",bpm=95,audio_duration=90,seed=21)
-          jobs=[("0_now_turbo8",dict(base)),
-                ("1_turbo_steps20_sde",dict(base,inference_steps=20,infer_method="sde")),
-                ("2_lm_lowtemp_cfg",dict(base,lm_temperature=0.6,lm_cfg_scale=3.5,lm_negative_prompt="vocals, noise, hiss, distorted, muddy, out of tune")),
-                ("3_use_format",dict(base,use_format=True))]
-          if "acestep-v15-base" in names:
-              jobs.append(("4_base_50steps_adg",dict(base,model="acestep-v15-base",inference_steps=50,guidance_scale=7.0,use_adg=True)))
-          if "acestep-v15-sft" in names:
-              jobs.append(("5_sft_50steps",dict(base,model="acestep-v15-sft",inference_steps=50)))
-          print("JOBS",[j[0] for j in jobs],flush=True)
+          # Owner 14.10: mid-tempo = "retro game menu", neither here nor there. Split into two formats.
+          SLOW=("slow tender ambient chill, soft and calm, warm gentle sub bass, very soft brushed drums or no drums, "
+                "felt piano, music box, soft bells, warm evolving pads, bright major chords, simple gentle melody, "
+                "background music for focus, relaxing, clean warm mix, no vocals")
+          UP=("upbeat melodic chill bass, energetic groovy drums, punchy warm sub bass, airy female vocal chops in the chorus only, "
+              "sparkling bells, plucked synth arps, lush pads, bright major chords, catchy uplifting melodic hook, "
+              "polished modern mix, wide stereo")
+          VOX="[intro]\n\n[verse]\n\n[chorus]\nooh, la la\n\n[verse]\n\n[chorus]\nooh, la la\n\n[outro]"
+          base=dict(reference_audio_path="refs/sera.wav",audio_duration=90)
+          jobs=[("S1_slow72_piano",dict(base,prompt=SLOW,lyrics="[Instrumental]",bpm=72,seed=31,key_scale="F major")),
+                ("S2_slow76_musicbox",dict(base,prompt=SLOW,lyrics="[Instrumental]",bpm=76,seed=32,key_scale="D major")),
+                ("S3_slow70_strict",dict(base,prompt=SLOW,lyrics="[Instrumental]",bpm=70,seed=33,key_scale="G major",
+                     lm_temperature=0.6,lm_cfg_scale=3.5,lm_negative_prompt="vocals, noise, hiss, distorted, harsh, out of tune, fast drums")),
+                ("U1_up108_vox",dict(base,prompt=UP,lyrics=VOX,bpm=108,seed=34,key_scale="A major")),
+                ("U2_up115_vox",dict(base,prompt=UP,lyrics=VOX,bpm=115,seed=35,key_scale="E major"))]
           for name,extra in jobs:
               body=dict(prompt=P,lyrics="[Instrumental]",audio_duration=120,bpm=85,key_scale="C major",
                         time_signature="4",batch_size=1,thinking=True,use_random_seed=False,seed=7,
@@ -86,4 +84,4 @@ jobs:
               else: print(str(d.get("result"))[:300])
           PY
       - uses: actions/upload-artifact@v4
-        with: {name: ace-options, path: out/}
+        with: {name: two-formats, path: out/}
