@@ -1,0 +1,1210 @@
+{
+ "slow": {
+  "refs": [
+   {
+    "id": "Lp6XlsBm_Lw",
+    "title": "You & Me: Relaxing Piano Music & Soft Rain Sounds For Sleep & Relaxation by Peder B. Helland",
+    "views": 183055383,
+    "dur": 10906,
+    "q": "gentle piano music for sleep",
+    "tempo": 117.45383522727273,
+    "loudness_lufs": -23.5,
+    "dynamics_lra": 9.8,
+    "brightness_hz": 2228.138405825615,
+    "bass_share": 0.5284024477005005,
+    "air_share": 0.001030658488161862,
+    "onsets_per_s": 2.477777777777778,
+    "percussive_share": 0.014791898429393768,
+    "tonal_clarity": 0.10576565563678741,
+    "noisiness": 0.023385703563690186,
+    "CE": 7.071070194244385,
+    "CU": 7.460958003997803,
+    "PC": 5.030153274536133,
+    "PQ": 7.0630974769592285
+   },
+   {
+    "id": "lCOF9LN_Zxs",
+    "title": "Beautiful Piano Music, Vol. 1 | Relaxing Music for Focus, Sleep & Relaxation by Peder B. Helland",
+    "views": 139317416,
+    "dur": 3521,
+    "q": "calm piano background music",
+    "tempo": 135.99917763157896,
+    "loudness_lufs": -28.9,
+    "dynamics_lra": 8.3,
+    "brightness_hz": 545.6756809920112,
+    "bass_share": 0.15963459014892578,
+    "air_share": 8.244741422913648e-08,
+    "onsets_per_s": 1.2444444444444445,
+    "percussive_share": 0.023445909842848778,
+    "tonal_clarity": 0.04904258996248245,
+    "noisiness": 6.482554454123601e-06,
+    "CE": 7.271978378295898,
+    "CU": 7.776131629943848,
+    "PC": 4.025221347808838,
+    "PQ": 7.726515769958496
+   },
+   {
+    "id": "9Q634rbsypE",
+    "title": "Always: Soft, Beautiful & Relaxing Piano Music by Peder B. Helland with Nature Photos",
+    "views": 85874956,
+    "dur": 11170,
+    "q": "gentle piano music for sleep",
+    "tempo": 135.99917763157896,
+    "loudness_lufs": -27.9,
+    "dynamics_lra": 5.9,
+    "brightness_hz": 526.7916855932277,
+    "bass_share": 0.1027405709028244,
+    "air_share": 1.7377058725287498e-07,
+    "onsets_per_s": 1.4,
+    "percussive_share": 0.03077557124197483,
+    "tonal_clarity": 0.08669997751712799,
+    "noisiness": 2.880437477870146e-06,
+    "CE": 7.335245609283447,
+    "CU": 7.784035682678223,
+    "PC": 4.077974319458008,
+    "PQ": 7.584893226623535
+   },
+   {
+    "id": "-b4BjxrIp8o",
+    "title": "Beautiful Piano Music, Vol. 3 | Relaxing Music for Sleep & Relaxation by Peder B. Helland",
+    "views": 81236305,
+    "dur": 3235,
+    "q": "gentle piano music for sleep",
+    "tempo": 73.828125,
+    "loudness_lufs": -22.3,
+    "dynamics_lra": 7.7,
+    "brightness_hz": 362.67398784532367,
+    "bass_share": 0.38350266218185425,
+    "air_share": 1.1961715173924858e-08,
+    "onsets_per_s": 1.3666666666666667,
+    "percussive_share": 0.011389754712581635,
+    "tonal_clarity": 0.1256401240825653,
+    "noisiness": 5.651793344441103e-07,
+    "CE": 7.289628982543945,
+    "CU": 7.72361946105957,
+    "PC": 4.018484115600586,
+    "PQ": 7.410780906677246
+   },
+   {
+    "id": "MYPVQccHhAQ",
+    "title": "4K Cozy Coffee Shop with Smooth Piano Jazz Music for Relaxing, Studying and Working",
+    "views": 75637027,
+    "dur": 12923,
+    "q": "calm piano background music",
+    "tempo": 112.34714673913044,
+    "loudness_lufs": -19.0,
+    "dynamics_lra": 7.9,
+    "brightness_hz": 1044.355461443057,
+    "bass_share": 0.7048155665397644,
+    "air_share": 0.0004784926713909954,
+    "onsets_per_s": 2.466666666666667,
+    "percussive_share": 0.0596962496638298,
+    "tonal_clarity": 0.010508812963962555,
+    "noisiness": 0.002563084475696087,
+    "CE": 7.910746097564697,
+    "CU": 8.10467529296875,
+    "PC": 5.0951104164123535,
+    "PQ": 7.8451385498046875
+   },
+   {
+    "id": "OeHLHNKQCXA",
+    "title": "8 Hours of Beautiful Piano Music • Sleep Music, Fall Asleep, Relaxing Sleeping Music",
+    "views": 72358594,
+    "dur": 28952,
+    "q": "gentle piano music for sleep",
+    "tempo": 67.99958881578948,
+    "loudness_lufs": -26.7,
+    "dynamics_lra": 9.2,
+    "brightness_hz": 405.2362487140925,
+    "bass_share": 0.277865469455719,
+    "air_share": 4.9260922452276645e-08,
+    "onsets_per_s": 1.2444444444444445,
+    "percussive_share": 0.01975509338080883,
+    "tonal_clarity": 0.0756087377667427,
+    "noisiness": 2.8071899578208104e-06,
+    "CE": 7.27097749710083,
+    "CU": 7.74534273147583,
+    "PC": 3.902330160140991,
+    "PQ": 7.524213790893555
+   },
+   {
+    "id": "Ne5J4bxWypI",
+    "title": "6 Hour Relaxing Piano Music: Meditation Music, Relaxing Music, Soft Music, Relaxation Music, ☯2423",
+    "views": 50491229,
+    "dur": 21622,
+    "q": "gentle piano music for sleep",
+    "tempo": 215.33203125,
+    "loudness_lufs": -35.3,
+    "dynamics_lra": 13.6,
+    "brightness_hz": 605.1558491124556,
+    "bass_share": 0.1390615999698639,
+    "air_share": 4.081303757175192e-07,
+    "onsets_per_s": 1.8666666666666667,
+    "percussive_share": 0.02447848580777645,
+    "tonal_clarity": 0.1063629537820816,
+    "noisiness": 4.821935362997465e-05,
+    "CE": 7.558237552642822,
+    "CU": 7.930253982543945,
+    "PC": 4.132026195526123,
+    "PQ": 7.9107208251953125
+   }
+  ],
+  "band": {
+   "tempo": [
+    71.497,
+    167.732,
+    117.454
+   ],
+   "loudness_lufs": [
+    -31.46,
+    -20.98,
+    -26.7
+   ],
+   "dynamics_lra": [
+    6.98,
+    11.32,
+    8.3
+   ],
+   "brightness_hz": [
+    388.211,
+    1517.869,
+    545.676
+   ],
+   "bass_share": [
+    0.125,
+    0.599,
+    0.278
+   ],
+   "air_share": [
+    0.0,
+    0.001,
+    0.0
+   ],
+   "onsets_per_s": [
+    1.244,
+    2.471,
+    1.4
+   ],
+   "percussive_share": [
+    0.013,
+    0.042,
+    0.023
+   ],
+   "tonal_clarity": [
+    0.034,
+    0.114,
+    0.087
+   ],
+   "noisiness": [
+    0.0,
+    0.011,
+    0.0
+   ],
+   "CE": [
+    7.19,
+    7.7,
+    7.29
+   ],
+   "PQ": [
+    7.27,
+    7.87,
+    7.58
+   ],
+   "CU": [
+    7.62,
+    8.0,
+    7.78
+   ],
+   "PC": [
+    3.97,
+    5.06,
+    4.08
+   ]
+  },
+  "ours": [
+   {
+    "tag": "S_B1_base64_s3_g7",
+    "file": "S_B1_base64_s3_g7.mp3",
+    "fit": 0.4,
+    "off": {
+     "loudness_lufs": [
+      -14.1,
+      [
+       -31.46,
+       -20.98
+      ]
+     ],
+     "dynamics_lra": [
+      2.1,
+      [
+       6.98,
+       11.32
+      ]
+     ],
+     "bass_share": [
+      0.65,
+      [
+       0.125,
+       0.599
+      ]
+     ],
+     "onsets_per_s": [
+      5.189,
+      [
+       1.244,
+       2.471
+      ]
+     ],
+     "percussive_share": [
+      0.509,
+      [
+       0.013,
+       0.042
+      ]
+     ],
+     "tonal_clarity": [
+      0.009,
+      [
+       0.034,
+       0.114
+      ]
+     ]
+    },
+    "tempo": 123.047,
+    "loudness_lufs": -14.1,
+    "dynamics_lra": 2.1,
+    "brightness_hz": 874.437,
+    "bass_share": 0.65,
+    "air_share": 0.0,
+    "onsets_per_s": 5.189,
+    "percussive_share": 0.509,
+    "tonal_clarity": 0.009,
+    "noisiness": 0.001,
+    "CE": 2.8987855911254883,
+    "CU": 4.210475444793701,
+    "PC": 4.127357482910156,
+    "PQ": 4.892363548278809
+   },
+   {
+    "tag": "S_B2_base64_s3_g8_adg",
+    "file": "S_B2_base64_s3_g8_adg.mp3",
+    "fit": 0.3,
+    "off": {
+     "loudness_lufs": [
+      -12.2,
+      [
+       -31.46,
+       -20.98
+      ]
+     ],
+     "dynamics_lra": [
+      0.3,
+      [
+       6.98,
+       11.32
+      ]
+     ],
+     "bass_share": [
+      0.787,
+      [
+       0.125,
+       0.599
+      ]
+     ],
+     "air_share": [
+      0.001,
+      [
+       0.0,
+       0.001
+      ]
+     ],
+     "onsets_per_s": [
+      8.8,
+      [
+       1.244,
+       2.471
+      ]
+     ],
+     "percussive_share": [
+      0.16,
+      [
+       0.013,
+       0.042
+      ]
+     ],
+     "tonal_clarity": [
+      0.026,
+      [
+       0.034,
+       0.114
+      ]
+     ]
+    },
+    "tempo": 107.666,
+    "loudness_lufs": -12.2,
+    "dynamics_lra": 0.3,
+    "brightness_hz": 1065.202,
+    "bass_share": 0.787,
+    "air_share": 0.001,
+    "onsets_per_s": 8.8,
+    "percussive_share": 0.16,
+    "tonal_clarity": 0.026,
+    "noisiness": 0.001,
+    "CE": 2.4185397624969482,
+    "CU": 4.02781343460083,
+    "PC": 3.1757097244262695,
+    "PQ": 5.12803840637207
+   },
+   {
+    "tag": "S_B3_base32_s3_g5",
+    "file": "S_B3_base32_s3_g5.mp3",
+    "fit": 0.3,
+    "off": {
+     "loudness_lufs": [
+      -12.1,
+      [
+       -31.46,
+       -20.98
+      ]
+     ],
+     "dynamics_lra": [
+      1.6,
+      [
+       6.98,
+       11.32
+      ]
+     ],
+     "bass_share": [
+      0.708,
+      [
+       0.125,
+       0.599
+      ]
+     ],
+     "air_share": [
+      0.002,
+      [
+       0.0,
+       0.001
+      ]
+     ],
+     "onsets_per_s": [
+      5.844,
+      [
+       1.244,
+       2.471
+      ]
+     ],
+     "percussive_share": [
+      0.362,
+      [
+       0.013,
+       0.042
+      ]
+     ],
+     "tonal_clarity": [
+      0.017,
+      [
+       0.034,
+       0.114
+      ]
+     ]
+    },
+    "tempo": 107.666,
+    "loudness_lufs": -12.1,
+    "dynamics_lra": 1.6,
+    "brightness_hz": 1099.217,
+    "bass_share": 0.708,
+    "air_share": 0.002,
+    "onsets_per_s": 5.844,
+    "percussive_share": 0.362,
+    "tonal_clarity": 0.017,
+    "noisiness": 0.001,
+    "CE": 3.5867483615875244,
+    "CU": 4.786418437957764,
+    "PC": 5.993593215942383,
+    "PQ": 5.809560298919678
+   },
+   {
+    "tag": "S_B4_base64_s3_g7_noref",
+    "file": "S_B4_base64_s3_g7_noref.mp3",
+    "fit": 0.4,
+    "off": {
+     "loudness_lufs": [
+      -13.7,
+      [
+       -31.46,
+       -20.98
+      ]
+     ],
+     "dynamics_lra": [
+      3.2,
+      [
+       6.98,
+       11.32
+      ]
+     ],
+     "bass_share": [
+      0.641,
+      [
+       0.125,
+       0.599
+      ]
+     ],
+     "onsets_per_s": [
+      6.322,
+      [
+       1.244,
+       2.471
+      ]
+     ],
+     "percussive_share": [
+      0.502,
+      [
+       0.013,
+       0.042
+      ]
+     ],
+     "tonal_clarity": [
+      0.009,
+      [
+       0.034,
+       0.114
+      ]
+     ]
+    },
+    "tempo": 151.999,
+    "loudness_lufs": -13.7,
+    "dynamics_lra": 3.2,
+    "brightness_hz": 854.806,
+    "bass_share": 0.641,
+    "air_share": 0.0,
+    "onsets_per_s": 6.322,
+    "percussive_share": 0.502,
+    "tonal_clarity": 0.009,
+    "noisiness": 0.001,
+    "CE": 2.896947145462036,
+    "CU": 4.134420871734619,
+    "PC": 4.195197105407715,
+    "PQ": 4.870635032653809
+   },
+   {
+    "tag": "S_T0_turbo_now",
+    "file": "S_T0_turbo_now.mp3",
+    "fit": 0.6,
+    "off": {
+     "loudness_lufs": [
+      -15.5,
+      [
+       -31.46,
+       -20.98
+      ]
+     ],
+     "bass_share": [
+      0.796,
+      [
+       0.125,
+       0.599
+      ]
+     ],
+     "air_share": [
+      0.003,
+      [
+       0.0,
+       0.001
+      ]
+     ],
+     "percussive_share": [
+      0.302,
+      [
+       0.013,
+       0.042
+      ]
+     ]
+    },
+    "tempo": 71.777,
+    "loudness_lufs": -15.5,
+    "dynamics_lra": 10.4,
+    "brightness_hz": 1396.129,
+    "bass_share": 0.796,
+    "air_share": 0.003,
+    "onsets_per_s": 2.022,
+    "percussive_share": 0.302,
+    "tonal_clarity": 0.042,
+    "noisiness": 0.006,
+    "CE": 7.531965255737305,
+    "CU": 8.146451950073242,
+    "PC": 5.4261603355407715,
+    "PQ": 8.190643310546875
+   },
+   {
+    "tag": "S_T1_turbo_shift3",
+    "file": "S_T1_turbo_shift3.mp3",
+    "fit": 0.6,
+    "off": {
+     "loudness_lufs": [
+      -18.2,
+      [
+       -31.46,
+       -20.98
+      ]
+     ],
+     "bass_share": [
+      0.777,
+      [
+       0.125,
+       0.599
+      ]
+     ],
+     "air_share": [
+      0.002,
+      [
+       0.0,
+       0.001
+      ]
+     ],
+     "percussive_share": [
+      0.249,
+      [
+       0.013,
+       0.042
+      ]
+     ]
+    },
+    "tempo": 71.777,
+    "loudness_lufs": -18.2,
+    "dynamics_lra": 7.2,
+    "brightness_hz": 1164.58,
+    "bass_share": 0.777,
+    "air_share": 0.002,
+    "onsets_per_s": 2.078,
+    "percussive_share": 0.249,
+    "tonal_clarity": 0.068,
+    "noisiness": 0.003,
+    "CE": 7.665181636810303,
+    "CU": 8.1932373046875,
+    "PC": 5.108345031738281,
+    "PQ": 8.26797866821289
+   }
+  ],
+  "ce_vs_views_spearman": -0.5357142857142858
+ },
+ "up": {
+  "refs": [
+   {
+    "id": "UOxkGD8qRB4",
+    "title": "K/DA - POP/STARS (ft. Madison Beer, (G)I-DLE, Jaira Burns) | Music Video - League of Legends",
+    "views": 668326210,
+    "dur": 203,
+    "q": "seraphine k/da song",
+    "tempo": 172.265625,
+    "loudness_lufs": -11.6,
+    "dynamics_lra": 4.2,
+    "brightness_hz": 2690.704799855406,
+    "bass_share": 0.6798121333122253,
+    "air_share": 0.01210242509841919,
+    "onsets_per_s": 4.6,
+    "percussive_share": 0.19206412136554718,
+    "tonal_clarity": 0.04485253244638443,
+    "noisiness": 0.03455623611807823,
+    "CE": 7.19898796081543,
+    "CU": 7.681917190551758,
+    "PC": 7.127013206481934,
+    "PQ": 7.91398286819458
+   },
+   {
+    "id": "3VTkBuxU4yk",
+    "title": "K/DA - MORE ft. Madison Beer, (G)I-DLE, Lexie Liu, Jaira Burns, Seraphine (Official Music Video)",
+    "views": 247758296,
+    "dur": 231,
+    "q": "seraphine k/da song",
+    "tempo": 143.5546875,
+    "loudness_lufs": -17.3,
+    "dynamics_lra": 4.3,
+    "brightness_hz": 2578.767207054281,
+    "bass_share": 0.7102982997894287,
+    "air_share": 0.013527899980545044,
+    "onsets_per_s": 3.2888888888888888,
+    "percussive_share": 0.17058058083057404,
+    "tonal_clarity": 0.0659007877111435,
+    "noisiness": 0.028845669701695442,
+    "CE": 7.344626426696777,
+    "CU": 7.587312698364258,
+    "PC": 7.0967535972595215,
+    "PQ": 7.737448692321777
+   },
+   {
+    "id": "RkID8_gnTxw",
+    "title": "K/DA - THE BADDEST ft. (G)I-DLE, Bea Miller, Wolftyla (Official Lyric Video) | League of Legends",
+    "views": 79723863,
+    "dur": 176,
+    "q": "seraphine k/da song",
+    "tempo": 151.99908088235293,
+    "loudness_lufs": -17.9,
+    "dynamics_lra": 5.3,
+    "brightness_hz": 2565.504983297534,
+    "bass_share": 0.6269589066505432,
+    "air_share": 0.017604531720280647,
+    "onsets_per_s": 4.7444444444444445,
+    "percussive_share": 0.19254760444164276,
+    "tonal_clarity": 0.04919770359992981,
+    "noisiness": 0.035109736025333405,
+    "CE": 7.241392135620117,
+    "CU": 7.58548641204834,
+    "PC": 7.105174541473389,
+    "PQ": 7.779980182647705
+   },
+   {
+    "id": "WW1BpABbzHs",
+    "title": "K/DA - I’LL SHOW YOU ft. TWICE, Bekuh BOOM, Annika Wells (Official Concept Video - Starring Ahri)",
+    "views": 29321880,
+    "dur": 212,
+    "q": "seraphine k/da song",
+    "tempo": 107.666015625,
+    "loudness_lufs": -18.5,
+    "dynamics_lra": 5.0,
+    "brightness_hz": 2608.830314319426,
+    "bass_share": 0.6149761080741882,
+    "air_share": 0.013918498530983925,
+    "onsets_per_s": 4.344444444444444,
+    "percussive_share": 0.20111338794231415,
+    "tonal_clarity": 0.04690869152545929,
+    "noisiness": 0.03481974080204964,
+    "CE": 7.26012659072876,
+    "CU": 7.611050128936768,
+    "PC": 7.108686447143555,
+    "PQ": 7.987723350524902
+   },
+   {
+    "id": "fWRISvgAygU",
+    "title": "Epic Chillstep Collection 2015 [2 Hours]",
+    "views": 26930494,
+    "dur": 7498,
+    "q": "melodic dubstep chill mix",
+    "tempo": 129.19921875,
+    "loudness_lufs": -18.7,
+    "dynamics_lra": 2.7,
+    "brightness_hz": 2535.6756415087443,
+    "bass_share": 0.6501458883285522,
+    "air_share": 0.014619180001318455,
+    "onsets_per_s": 3.9,
+    "percussive_share": 0.3949853777885437,
+    "tonal_clarity": 0.041002385318279266,
+    "noisiness": 0.04114267975091934,
+    "CE": 7.23816442489624,
+    "CU": 7.725592613220215,
+    "PC": 5.87661075592041,
+    "PQ": 7.838762283325195
+   },
+   {
+    "id": "Uvy_o058T40",
+    "title": "1MILLION X K/DA - MORE",
+    "views": 18744824,
+    "dur": 218,
+    "q": "seraphine k/da song",
+    "tempo": 143.5546875,
+    "loudness_lufs": -10.9,
+    "dynamics_lra": 3.0,
+    "brightness_hz": 2646.9700572309025,
+    "bass_share": 0.6699581742286682,
+    "air_share": 0.014665302820503712,
+    "onsets_per_s": 3.2222222222222223,
+    "percussive_share": 0.1918124258518219,
+    "tonal_clarity": 0.05442136526107788,
+    "noisiness": 0.03093653731048107,
+    "CE": 7.273653030395508,
+    "CU": 7.5855255126953125,
+    "PC": 7.114900588989258,
+    "PQ": 7.691380023956299
+   },
+   {
+    "id": "tPFz04LSa2U",
+    "title": "\"Coming Home\" Wonderful Melodic Dubstep Mix",
+    "views": 17762516,
+    "dur": 3601,
+    "q": "melodic dubstep chill mix",
+    "tempo": 83.35433467741936,
+    "loudness_lufs": -10.6,
+    "dynamics_lra": 4.5,
+    "brightness_hz": 2597.8818613380276,
+    "bass_share": 0.5108895301818848,
+    "air_share": 0.02015126682817936,
+    "onsets_per_s": 3.588888888888889,
+    "percussive_share": 0.27770647406578064,
+    "tonal_clarity": 0.0458887442946434,
+    "noisiness": 0.04913899302482605,
+    "CE": 6.852718830108643,
+    "CU": 7.641711711883545,
+    "PC": 6.472842693328857,
+    "PQ": 7.46885347366333
+   },
+   {
+    "id": "7j4WQ5qOBZY",
+    "title": "Best Drum & Bass Mix 2020 (Melodic/Liquid Drum and Bass)",
+    "views": 14288719,
+    "dur": 8920,
+    "q": "uplifting melodic bass music",
+    "tempo": 86.1328125,
+    "loudness_lufs": -9.7,
+    "dynamics_lra": 2.8,
+    "brightness_hz": 2521.7965207381,
+    "bass_share": 0.7980924844741821,
+    "air_share": 0.01261076144874096,
+    "onsets_per_s": 4.733333333333333,
+    "percussive_share": 0.21005836129188538,
+    "tonal_clarity": 0.11252430826425552,
+    "noisiness": 0.0317816324532032,
+    "CE": 7.316094398498535,
+    "CU": 7.598315715789795,
+    "PC": 6.640874862670898,
+    "PQ": 7.593996047973633
+   }
+  ],
+  "band": {
+   "tempo": [
+    85.299,
+    158.079,
+    136.377
+   ],
+   "loudness_lufs": [
+    -18.56,
+    -10.33,
+    -14.45
+   ],
+   "dynamics_lra": [
+    2.77,
+    5.09,
+    4.25
+   ],
+   "brightness_hz": [
+    2531.512,
+    2660.09,
+    2588.325
+   ],
+   "bass_share": [
+    0.584,
+    0.737,
+    0.66
+   ],
+   "air_share": [
+    0.012,
+    0.018,
+    0.014
+   ],
+   "onsets_per_s": [
+    3.269,
+    4.737,
+    4.122
+   ],
+   "percussive_share": [
+    0.185,
+    0.313,
+    0.197
+   ],
+   "tonal_clarity": [
+    0.044,
+    0.08,
+    0.048
+   ],
+   "noisiness": [
+    0.03,
+    0.044,
+    0.035
+   ],
+   "CE": [
+    7.1,
+    7.32,
+    7.25
+   ],
+   "PQ": [
+    7.56,
+    7.94,
+    7.76
+   ],
+   "CU": [
+    7.59,
+    7.7,
+    7.6
+   ],
+   "PC": [
+    6.29,
+    7.12,
+    7.1
+   ]
+  },
+  "ours": [
+   {
+    "tag": "U_B1_base64_s3_g7",
+    "file": "U_B1_base64_s3_g7.mp3",
+    "fit": 0.4,
+    "off": {
+     "brightness_hz": [
+      868.193,
+      [
+       2531.512,
+       2660.09
+      ]
+     ],
+     "air_share": [
+      0.0,
+      [
+       0.012,
+       0.018
+      ]
+     ],
+     "onsets_per_s": [
+      6.033,
+      [
+       3.269,
+       4.737
+      ]
+     ],
+     "percussive_share": [
+      0.508,
+      [
+       0.185,
+       0.313
+      ]
+     ],
+     "tonal_clarity": [
+      0.009,
+      [
+       0.044,
+       0.08
+      ]
+     ],
+     "noisiness": [
+      0.001,
+      [
+       0.03,
+       0.044
+      ]
+     ]
+    },
+    "tempo": 123.047,
+    "loudness_lufs": -14.2,
+    "dynamics_lra": 2.8,
+    "brightness_hz": 868.193,
+    "bass_share": 0.672,
+    "air_share": 0.0,
+    "onsets_per_s": 6.033,
+    "percussive_share": 0.508,
+    "tonal_clarity": 0.009,
+    "noisiness": 0.001,
+    "CE": 2.867281913757324,
+    "CU": 4.256986618041992,
+    "PC": 4.235800743103027,
+    "PQ": 4.954250335693359
+   },
+   {
+    "tag": "U_B2_base64_s3_g8_adg",
+    "file": "U_B2_base64_s3_g8_adg.mp3",
+    "fit": 0.4,
+    "off": {
+     "dynamics_lra": [
+      0.4,
+      [
+       2.77,
+       5.09
+      ]
+     ],
+     "brightness_hz": [
+      1326.86,
+      [
+       2531.512,
+       2660.09
+      ]
+     ],
+     "air_share": [
+      0.002,
+      [
+       0.012,
+       0.018
+      ]
+     ],
+     "onsets_per_s": [
+      8.589,
+      [
+       3.269,
+       4.737
+      ]
+     ],
+     "tonal_clarity": [
+      0.013,
+      [
+       0.044,
+       0.08
+      ]
+     ],
+     "noisiness": [
+      0.002,
+      [
+       0.03,
+       0.044
+      ]
+     ]
+    },
+    "tempo": 107.666,
+    "loudness_lufs": -12.1,
+    "dynamics_lra": 0.4,
+    "brightness_hz": 1326.86,
+    "bass_share": 0.68,
+    "air_share": 0.002,
+    "onsets_per_s": 8.589,
+    "percussive_share": 0.227,
+    "tonal_clarity": 0.013,
+    "noisiness": 0.002,
+    "CE": 2.131591796875,
+    "CU": 3.821139097213745,
+    "PC": 2.8461549282073975,
+    "PQ": 4.959409713745117
+   },
+   {
+    "tag": "U_B3_base32_s3_g5",
+    "file": "U_B3_base32_s3_g5.mp3",
+    "fit": 0.3,
+    "off": {
+     "dynamics_lra": [
+      2.0,
+      [
+       2.77,
+       5.09
+      ]
+     ],
+     "brightness_hz": [
+      1094.072,
+      [
+       2531.512,
+       2660.09
+      ]
+     ],
+     "air_share": [
+      0.002,
+      [
+       0.012,
+       0.018
+      ]
+     ],
+     "onsets_per_s": [
+      6.489,
+      [
+       3.269,
+       4.737
+      ]
+     ],
+     "percussive_share": [
+      0.381,
+      [
+       0.185,
+       0.313
+      ]
+     ],
+     "tonal_clarity": [
+      0.018,
+      [
+       0.044,
+       0.08
+      ]
+     ],
+     "noisiness": [
+      0.001,
+      [
+       0.03,
+       0.044
+      ]
+     ]
+    },
+    "tempo": 107.666,
+    "loudness_lufs": -11.6,
+    "dynamics_lra": 2.0,
+    "brightness_hz": 1094.072,
+    "bass_share": 0.652,
+    "air_share": 0.002,
+    "onsets_per_s": 6.489,
+    "percussive_share": 0.381,
+    "tonal_clarity": 0.018,
+    "noisiness": 0.001,
+    "CE": 3.50400972366333,
+    "CU": 4.629130840301514,
+    "PC": 5.945191383361816,
+    "PQ": 5.622758865356445
+   },
+   {
+    "tag": "U_B4_base64_s3_g7_noref",
+    "file": "U_B4_base64_s3_g7_noref.mp3",
+    "fit": 0.4,
+    "off": {
+     "brightness_hz": [
+      869.53,
+      [
+       2531.512,
+       2660.09
+      ]
+     ],
+     "air_share": [
+      0.0,
+      [
+       0.012,
+       0.018
+      ]
+     ],
+     "onsets_per_s": [
+      6.056,
+      [
+       3.269,
+       4.737
+      ]
+     ],
+     "percussive_share": [
+      0.485,
+      [
+       0.185,
+       0.313
+      ]
+     ],
+     "tonal_clarity": [
+      0.011,
+      [
+       0.044,
+       0.08
+      ]
+     ],
+     "noisiness": [
+      0.001,
+      [
+       0.03,
+       0.044
+      ]
+     ]
+    },
+    "tempo": 123.047,
+    "loudness_lufs": -14.4,
+    "dynamics_lra": 2.8,
+    "brightness_hz": 869.53,
+    "bass_share": 0.674,
+    "air_share": 0.0,
+    "onsets_per_s": 6.056,
+    "percussive_share": 0.485,
+    "tonal_clarity": 0.011,
+    "noisiness": 0.001,
+    "CE": 2.891087532043457,
+    "CU": 4.191003799438477,
+    "PC": 4.363707065582275,
+    "PQ": 4.90911865234375
+   },
+   {
+    "tag": "U_T0_turbo_now",
+    "file": "U_T0_turbo_now.mp3",
+    "fit": 0.5,
+    "off": {
+     "dynamics_lra": [
+      5.6,
+      [
+       2.77,
+       5.09
+      ]
+     ],
+     "brightness_hz": [
+      2695.793,
+      [
+       2531.512,
+       2660.09
+      ]
+     ],
+     "onsets_per_s": [
+      4.922,
+      [
+       3.269,
+       4.737
+      ]
+     ],
+     "percussive_share": [
+      0.377,
+      [
+       0.185,
+       0.313
+      ]
+     ],
+     "tonal_clarity": [
+      0.02,
+      [
+       0.044,
+       0.08
+      ]
+     ]
+    },
+    "tempo": 107.666,
+    "loudness_lufs": -16.0,
+    "dynamics_lra": 5.6,
+    "brightness_hz": 2695.793,
+    "bass_share": 0.718,
+    "air_share": 0.016,
+    "onsets_per_s": 4.922,
+    "percussive_share": 0.377,
+    "tonal_clarity": 0.02,
+    "noisiness": 0.031,
+    "CE": 7.73680305480957,
+    "CU": 8.15081787109375,
+    "PC": 6.551647186279297,
+    "PQ": 8.44758415222168
+   },
+   {
+    "tag": "U_T1_turbo_shift3",
+    "file": "U_T1_turbo_shift3.mp3",
+    "fit": 0.5,
+    "off": {
+     "brightness_hz": [
+      1967.735,
+      [
+       2531.512,
+       2660.09
+      ]
+     ],
+     "bass_share": [
+      0.85,
+      [
+       0.584,
+       0.737
+      ]
+     ],
+     "air_share": [
+      0.004,
+      [
+       0.012,
+       0.018
+      ]
+     ],
+     "tonal_clarity": [
+      0.026,
+      [
+       0.044,
+       0.08
+      ]
+     ],
+     "noisiness": [
+      0.016,
+      [
+       0.03,
+       0.044
+      ]
+     ]
+    },
+    "tempo": 107.666,
+    "loudness_lufs": -15.2,
+    "dynamics_lra": 4.8,
+    "brightness_hz": 1967.735,
+    "bass_share": 0.85,
+    "air_share": 0.004,
+    "onsets_per_s": 4.578,
+    "percussive_share": 0.3,
+    "tonal_clarity": 0.026,
+    "noisiness": 0.016,
+    "CE": 7.703243732452393,
+    "CU": 8.182113647460938,
+    "PC": 5.705416679382324,
+    "PQ": 8.340019226074219
+   }
+  ],
+  "ce_vs_views_spearman": -0.04761904761904763
+ }
+}
