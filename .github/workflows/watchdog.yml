@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   watch:
-    runs-on: [self-hosted, pc]  # ubuntu-latest: billing блокирует hosted-раннеры
+    runs-on: [self-hosted, release]  # ubuntu-latest: billing блокирует hosted-раннеры
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4

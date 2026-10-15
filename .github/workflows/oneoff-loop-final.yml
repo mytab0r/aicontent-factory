@@ -7,6 +7,10 @@ name: oneoff-loop-final
 # final.report.json (C1-C4), run.json (входы/тайминги/вердикт D).
 on:
   workflow_dispatch:
+# новый пуш в ветку эксперимента заменяет старый прогон, а не встаёт в очередь
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   final:
     runs-on: [self-hosted, pc]
