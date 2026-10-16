@@ -50,6 +50,18 @@ GENRE_PROMPTS = {
         "soft piano lead melody, warm major seventh chords, gentle laid back beat, deep round bass, "
         "clean polished studio mix, wide stereo, harmonious, uplifting, no vocals"
     ),
+    # 16.10 оркестратор (владелец 2 дня без ответа по A/B v1-v3; правило: 0$ и
+    # обратимо — решаю сам): направление chill phonk = v2 (I -13.9 ближе всех
+    # к цели -14, LRA 1.5 самый плотный; все три в гейте). Промпт = точный
+    # v2 из генерации (gen2.py на ПК); "да" владельца 14.10 на направление +
+    # "очень неплохо" на master-звук. Переиграет — замена промпта одним коммитом.
+    "chill phonk": (
+        "chill phonk, wave phonk, late night drive, slow 808 sub bass glide, "
+        "heavy punchy kick, crisp trap hi-hats, memphis cowbell lead melody, "
+        "dreamy detuned synth pads, airy reverb, soft pitched vocal chops, "
+        "sidechain pumping, hypnotic groove, polished modern mix, wide stereo, "
+        "instrumental"
+    ),
 }
 # ponytail: 8 жанров из конкурентного анализа (DECISIONS.md п.5) отключены
 # из прод-ротации — они никогда не проходили A/B прослушивание владельцем
@@ -86,15 +98,6 @@ CANDIDATE_GENRE_PROMPTS = {
         "75 BPM, instrumental, no vocals, introspective, cozy, late night"
     ),
     # Ниши из конкурентного анализа (DECISIONS.md п.5), не lofi-derived:
-    # "chill phonk" — промпт из генерации v1-v3 (gen2.py, одобрен владельцем
-    # 14.10 как направление; в GENRE_PROMPTS только после его выбора v1-v3).
-    "chill phonk": (
-        "chill phonk, wave phonk, late night drive, slow 808 sub bass glide, "
-        "heavy punchy kick, crisp trap hi-hats, memphis cowbell lead melody, "
-        "dreamy detuned synth pads, airy reverb, soft pitched vocal chops, "
-        "sidechain pumping, hypnotic groove, polished modern mix, wide stereo, "
-        "instrumental"
-    ),
     "nature ambient": (
         "nature ambient soundscape, soft sustained pads, distant birdsong, "
         "gentle flowing water texture, no drums, no percussion, minimal "

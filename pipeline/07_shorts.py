@@ -20,7 +20,19 @@ from common import latest_run_dir
 
 WIN_SEC = 40.0  # цель 30-45с
 MIN_SEC = 15.0
-HASHTAGS = "#Shorts #lofi #animelofi #studymusic"
+# Хэштеги по жанру (t_c678b8fa шаг 3): жанр определяется по слову в заголовке
+# long-form (тот же маркер, что в guard: watchdog.GENRE_IN_TITLE).
+GENRE_HASHTAGS = {
+    "phonk": "#Shorts #phonk #wavephonk #driftphonk",
+    "lofi": "#Shorts #lofi #animelofi #studymusic",
+}
+
+
+def hashtags_for(title: str) -> str:
+    low = (title or "").lower()
+    return GENRE_HASHTAGS["phonk"] if "phonk" in low else GENRE_HASHTAGS["lofi"]
+
+
 AI_NOTE = "AI-generated music and visuals (synthetic content)."
 # RESEARCH 13.10: у лидеров Shorts = крючок/ситуация, не "<long title> pt.N"; наши pt.1/pt.2 = 8-55 просм.
 HOOKS = [
@@ -96,7 +108,7 @@ def short_body(idea: dict, long_url: str, n: int) -> dict:
     # ponytail: 8 фиксированных крючков, ротация по хэшу заголовка; LLM-крючки — если CTR Shorts не вырастет
     hook = HOOKS[(zlib.crc32(idea["title"].encode()) + n - 1) % len(HOOKS)]
     title = f"{hook} | {scene_of(idea['title'])[:45]} #Shorts"
-    desc = f"Full mix: {long_url}\n\n{AI_NOTE}\n\n{HASHTAGS}"
+    desc = f"Full mix: {long_url}\n\n{AI_NOTE}\n\n{hashtags_for(idea['title'])}"
     return {
         "snippet": {"title": title[:100], "description": desc, "tags": idea.get("tags", []),
                     "categoryId": "10", "defaultLanguage": "en", "defaultAudioLanguage": "en"},

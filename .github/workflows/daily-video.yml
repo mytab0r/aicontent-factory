@@ -2,14 +2,17 @@ name: daily lo-fi video
 
 on:
   schedule:
-    # 3 слота = ретраи без внешнего cron (Hermes-cron пропал 15.10, выпуска не было); guard делает лишние слоты no-op
+    # 2 жанра/день (t_c678b8fa шаг 3): lofi 09:00 UTC + ретраи 13/17,
+    # phonk 11:00 + ретрай 15. Слоты жанра не пересекаются; guard теперь
+    # genre-aware (watchdog.already_published) — лишний слот = no-op.
     - cron: "0 9,13,17 * * *"
+    - cron: "0 11,15 * * *"
   # GitHub schedule опаздывает на 6-9 ч (04-13.10: старт 14:39-18:41 вместо 09:00).
   # Точное время даёт cron Hermes: dispatch с scheduled=true в 09:00 UTC (guard включён).
   workflow_dispatch:
     inputs:
       scheduled:
-        description: "плановый запуск: guard (пропуск, если long-form за сегодня уже есть)"
+        description: "плановый запуск: guard (пропуск, если long-form жанра за сегодня уже есть)"
         type: boolean
         default: false
 
@@ -26,12 +29,21 @@ permissions:
 jobs:
   build:
     # one video per genre per day, each into its own playlist (05_publish.py).
-    # Only owner-approved genres here (A/B rule); add after sample approval.
+    # 2 жанра = 2 выпуска/день (t_c678b8fa): "anime lofi" (одобрен 13.10) и
+    # "chill phonk" (направление одобрено 14.10, v2 выбран оркестратором 16.10).
+    # Каждый жанр на своих cron-слотах; ручной dispatch гоняет оба (guard-фильтр).
+    if: github.event_name != 'schedule' || github.event.schedule == matrix.slots
     strategy:
       max-parallel: 1  # single GPU
       fail-fast: false
       matrix:
-        genre: ["anime lofi"]
+        include:
+          - genre: "anime lofi"
+            slots: "0 9,13,17 * * *"
+            ref: /tmp/acf-ref/ref1.wav
+          - genre: "chill phonk"
+            slots: "0 11,15 * * *"
+            ref: ""  # phonk v1-v3 одобрены БЕЗ эталона (noref) — ref-трек не подмешивать
     # pc-acf-release: setup-uv падает EACCES (spawn uv, 16.10) — выпуск на проверенном pc-acf
     runs-on: [self-hosted, pc]
     timeout-minutes: 75
@@ -49,7 +61,8 @@ jobs:
       ACE15_ENDPOINT: http://ace-step:8001  # ACE-Step 1.5 REST на ПК (comfynet)
       # Эталон стиля, одобрен владельцем 13.10 (сэмпл ref1): 90с K/DA Seraphine.
       # Кэш на раннере; нет файла -> 03_music генерирует без эталона.
-      ACE15_REF_AUDIO: /tmp/acf-ref/ref1.wav
+      # phonk: пусто (noref-звук, Content ID и A/Bapproval без чужого стиля).
+      ACE15_REF_AUDIO: ${{ matrix.ref }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -103,7 +116,7 @@ jobs:
           echo "::error::ace-step не healthy за 4 мин"; exit 1
 
       - name: reference audio (cache)
-        if: steps.guard.outputs.published != '1'
+        if: steps.guard.outputs.published != '1' && env.ACE15_REF_AUDIO != ''
         continue-on-error: true
         run: |
           [ -s "$ACE15_REF_AUDIO" ] && exit 0

@@ -69,3 +69,13 @@ print("test_shorts hooks OK")
 for f in ("05_publish.py", "07_shorts.py"):
     assert "next_chunk(num_retries=" in (Path(__file__).parent / f).read_text(encoding="utf-8"), f
 print("test_shorts upload-retry OK")
+
+# ---- шаг 3 (t_c678b8fa): хэштеги Shorts по жанру ----
+def _short_desc_for(title):
+    return sh.short_body({"title": title, "tags": []}, "u", 1)["snippet"]["description"]
+
+_d_lofi = _short_desc_for("Rainy Night 🌙 Lofi Beats to Study")
+assert "#phonk" not in _d_lofi and "#lofi" in _d_lofi, _d_lofi
+_d_phonk = _short_desc_for("Neon Drive 🌃 Phonk Beats to Drift")
+assert "#phonk" in _d_phonk and "#lofi" not in _d_phonk, _d_phonk
+print("test_shorts genre-hashtags OK")

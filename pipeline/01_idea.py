@@ -25,9 +25,15 @@ SCENES = [
     ("Midnight Convenience Store", "🏪", "anime convenience store at midnight, glowing sign, quiet street"),
     ("Autumn Library", "🍂", "anime library with tall windows, autumn leaves outside, golden light"),
 ]
+# Теги по жанру (t_c678b8fa шаг 3): первый тег = жанр, остальное — общие нишевые.
+GENRE_TAGS = {
+    "anime lofi": ["lofi", "anime lofi", "lofi hip hop", "study music", "chill beats", "relaxing music",
+                   "focus music", "sleep music", "lofi beats", "chillhop", "japanese lofi"],
+    "chill phonk": ["phonk", "chill phonk", "wave phonk", "drift phonk", "phonk music", "night drive",
+                    "study music", "focus music", "chill beats", "brazilian phonk", "phonk mix"],
+}
+TAGS = GENRE_TAGS["anime lofi"]  # legacy-имя (тесты/фолбэк lofi)
 USES = ["Study and Relax to", "Sleep and Chill to", "Focus and Work to", "Read and Unwind to"]
-TAGS = ["lofi", "anime lofi", "lofi hip hop", "study music", "chill beats", "relaxing music",
-        "focus music", "sleep music", "lofi beats", "chillhop", "japanese lofi"]
 
 # Сезон по месяцу: топ lofi за 30 дн (13.10) = сезонные ролики малых каналов 85k-436k
 # просмотров (halloween/autumn). ponytail: фикс. таблица по месяцам, без календаря праздников.
@@ -44,9 +50,18 @@ def season_hint(today: date) -> str:
     return SEASONS[today.month]
 
 
+# Заголовочная формула по жанру: guard жанра (watchdog.GENRE_IN_TITLE) матчит
+# слово жанра в заголовке выпуска — формула обязана его туда принести.
+TITLE_FORMULAS = {
+    "anime lofi": "\"[Сезонная сцена] + emoji + [use-case] Music to Study/\n    Relax/Sleep/Focus to\" — например \"Pumpkin Café on a Rainy Night 🎃 Lofi Beats to\n    Study and Relax to\". Сцена конкретная, не общее \"Anime Nights\". Без фейковых чисел длительности.",
+    "chill phonk": "\"[Сезонная сцена] + emoji + Phonk Beats to [use-case]\" — например\n    \"Neon Highway at Midnight 🌃 Phonk Beats to Drift and Focus to\". Слово Phonk обязательно\n    в заголовке. Сцена конкретная (ночная дорога/неон/город), без \"Lofi\". Без фейковых чисел длительности.",
+}
+
+
 def build_prompt(mood: str, today: date, state_dir: Path | None = None) -> str:
     """LLM-промпт: сезон + ротируемая сцена, чтобы заголовки/обложки не повторялись."""
     name, _, scene = SCENES[rotate("scene", len(SCENES), state_dir)]
+    formula = TITLE_FORMULAS.get(mood, TITLE_FORMULAS["anime lofi"])
     return f"""Ты продюсер lo-fi/ambient YouTube-канала. Настроение трека: "{mood}".
 Сезон (обязательно отрази в сцене, обложке и заголовке): {season_hint(today)}.
 Базовая сцена для вариации: {name} ({scene}).
@@ -54,9 +69,7 @@ def build_prompt(mood: str, today: date, state_dir: Path | None = None) -> str:
   mood: строка (кратко, как дано)
   cover_prompt: промпт для генерации обложки (на английском, стиль aesthetic lofi album art, без текста на картинке; сезонные детали в сцене)
   title: заголовок до 70 символов, английский, по формуле топ-каналов ниши
-    (DECISIONS.md п.5): "[Сезонная сцена] + emoji + [use-case] Music to Study/
-    Relax/Sleep/Focus to" — например "Pumpkin Café on a Rainy Night 🎃 Lofi Beats to
-    Study and Relax to". Сцена конкретная, не общее "Anime Nights". Без фейковых чисел длительности.
+    (DECISIONS.md п.5): {formula}
   description: 2-3 предложения описания видео на английском для YouTube
   tags: список из 8-12 тегов (английские, через запятую в массиве JSON), включая сезонный тег
 """
@@ -66,13 +79,14 @@ def fallback_idea(mood: str, state_dir: Path | None = None) -> dict:
     i = rotate("fallback", len(SCENES) * len(USES), state_dir)
     name, emoji, scene = SCENES[i % len(SCENES)]
     use = USES[(i // len(SCENES)) % len(USES)]
+    genre_word = "Phonk" if "phonk" in mood.lower() else "Lofi"
     return {
         "mood": mood,
         "cover_prompt": f"{scene}, aesthetic lofi album art, soft pastel colors, no text",
-        "title": f"{name} {emoji} Lofi Beats to {use}"[:70],
+        "title": f"{name} {emoji} {genre_word} Beats to {use}"[:70],
         "description": f"{name.lower().capitalize()} — {mood} beats to {use.lower()}. "
                        "Calm instrumental music for long study, work and sleep sessions.",
-        "tags": TAGS,
+        "tags": GENRE_TAGS.get(mood, TAGS),
         "fallback": True,
     }
 
