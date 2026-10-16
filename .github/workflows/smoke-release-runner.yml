@@ -1,0 +1,11 @@
+name: smoke-release-runner
+# Проверка полосы label release: setup-uv должен исполнить uv в RUNNER_TEMP (t_3c5f3862).
+on:
+  workflow_dispatch:
+jobs:
+  smoke:
+    runs-on: [self-hosted, release]
+    timeout-minutes: 15
+    steps:
+      - uses: astral-sh/setup-uv@v3
+      - run: uv --version && grep -E " $RUNNER_TEMP| /tmp/runner" /proc/mounts || true

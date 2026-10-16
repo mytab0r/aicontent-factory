@@ -35,7 +35,10 @@ jobs:
             -e DISABLE_AUTOMATIC_DEREGISTRATION=true \
             -v /var/run/docker.sock:/var/run/docker.sock -v gh-runner-acf-release-data:/runner/data \
             -v gh-runner-aicontent-factory-tools:/opt/hostedtoolcache \
-            -v /tmp/runner/acf-release:/tmp/runner/acf-release myoung34/github-runner:ubuntu-noble
+            -v gh-runner-acf-release-work:/tmp/runner/acf-release myoung34/github-runner:ubuntu-noble
+          # host /tmp/runner/* = tmpfs noexec (Docker Desktop VM): setup-uv падал spawn EACCES (t_3c5f3862).
+          # workdir теперь named volume (ext4, exec). Гейт: раннер обязан уметь исполнять файлы в workdir.
+          docker exec gh-runner-acf-release sh -c 'f=/tmp/runner/acf-release/.exec-probe; printf "#!/bin/sh\necho EXEC_OK\n" > $f && chmod +x $f && $f && rm -f $f' | grep -qx EXEC_OK || { echo "::error::workdir noexec"; exit 1; }
           for n in comfynet gpu-net; do docker network connect $n gh-runner-acf-release || true; done
           sleep 20; docker logs --tail 15 gh-runner-acf-release
 
