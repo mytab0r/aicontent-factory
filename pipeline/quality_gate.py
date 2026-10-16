@@ -49,20 +49,40 @@ for f,s in zip(fs,p.forward([{"path":f} for f in fs])): print(f+chr(9)+json.dump
 
 def ce_scores(f):
     """3 отрывка по 30 с (10/50/90 % трека) -> audiobox. Ошибка критика = FAIL, не пропуск."""
-    dur = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(f)],
-                               capture_output=True, text=True).stdout)
+    return ce_batch([f])[0]
+
+
+def ce_batch(files):
+    """t_b4006a6e: CE для списка треков ОДНИМ прогоном критика (модель грузится 1 раз).
+    3 отрывка по 30 с (10/50/90 %) на трек. Возврат: [[c,c,c], ...] в порядке files."""
+    out = _ce_run([str(f) for f in files])
+    return out
+
+
+def _ce_run(files):
+    import time as _t
     td = tempfile.mkdtemp()
     subprocess.run(["docker", "exec", "ace-step", "sh", "-c", "rm -rf /app/output/qg && mkdir -p /app/output/qg/in"], check=True)
-    for i, frac in enumerate((0.1, 0.5, 0.9)):
-        p = f"{td}/c{i}.wav"
-        subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-ss", str(max(0.0, dur * frac - 15)), "-t", "30",
-                        "-i", str(f), p], check=True)
-        subprocess.run(["docker", "cp", p, "ace-step:/app/output/qg/in/"], check=True)
-    out = subprocess.run(["docker", "exec", "ace-step", "sh", "-c", AES], capture_output=True, text=True, timeout=1500)
-    ces = [json.loads(l.split("\t")[1])["CE"] for l in out.stdout.splitlines() if "\t" in l]
-    if len(ces) != 3:
-        raise RuntimeError(f"критик не отработал: {out.stdout[-300:]} {out.stderr[-600:]}")
-    return ces
+    clips = []
+    for fi, f in enumerate(files):
+        dur = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(f)],
+                                   capture_output=True, text=True).stdout)
+        for i, frac in enumerate((0.1, 0.5, 0.9)):
+            p = f"{td}/t{fi:02d}c{i}.wav"
+            subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-ss", str(max(0.0, dur * frac - 15)), "-t", "30",
+                            "-i", str(f), p], check=True)
+            subprocess.run(["docker", "cp", p, f"ace-step:/app/output/qg/in/"], check=True)
+            clips.append(f"in/{p.split('/')[-1]}")
+    aes = AES.replace('fs=sorted("in/"+f for f in os.listdir("in"))', f"fs={clips!r}")
+    out = subprocess.run(["docker", "exec", "ace-step", "sh", "-c", aes], capture_output=True, text=True, timeout=1500)
+    res = {}
+    for l in out.stdout.splitlines():
+        if "\t" in l:
+            k, v = l.split("\t", 1)
+            res[k] = json.loads(v)["CE"]
+    if sorted(res) != sorted(clips) or any(v is None for v in res.values()):
+        raise RuntimeError(f"критик не отработал ({len(res)}/{len(clips)}): {out.stdout[-300:]} {out.stderr[-600:]}")
+    return [[res[c] for c in clips[3 * i:3 * i + 3]] for i in range(len(files))]
 
 
 def main(argv):

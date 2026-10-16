@@ -101,7 +101,7 @@ with tempfile.TemporaryDirectory() as td:
     calls = []
     music.latest_run_dir = lambda: run
     music.generate_track_v15 = lambda p, d, s, out, **kw: (calls.append((p, kw)), Path(out).write_bytes(b"x"))
-    music.mastering.master = lambda *a: None
+    music.mastering.master = lambda *a, **k: None
     rot.REF_DIR = refs
     os.environ.update(G1ZM0_GATE="1", G1ZM0_DAY="2026-10-16", G1ZM0_ATTEMPT="1", GENRE="anime lofi",
                       ACE15_ENDPOINT="http://stub", TRACK_DURATION_SEC="60")

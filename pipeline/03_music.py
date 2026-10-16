@@ -219,7 +219,8 @@ class _Http:
 
 def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=None,
                        poll_sec: float = 5, timeout_sec: int = 3600, ref_audio=None,
-                       bpm: int | None = None, key: str | None = None) -> None:
+                       bpm: int | None = None, key: str | None = None,
+                       model: str | None = None) -> None:
     import json
     import time
     if os.environ.get("ACE15_TASK_TYPE", "text2music") != "text2music" or os.environ.get("ACE15_SRC_AUDIO"):
@@ -231,6 +232,9 @@ def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=
             "bpm": bpm or 70 + seed % 21, "key_scale": key or ACE15_KEYS[seed % len(ACE15_KEYS)],
             "time_signature": "4", "batch_size": 1, "thinking": True,
             "use_random_seed": False, "seed": seed, "audio_format": "mp3"}
+    m = model or os.environ.get("ACE15_MODEL")  # t_b4006a6e: модель на запрос (XL-sft), пусто = слот контейнера
+    if m:
+        body["model"] = m
     if ref_audio and Path(ref_audio).is_file():
         # Стиль по эталону (reference_audio): так одобрен звук 13.10.
         tid = api.post_file("/release_task", body, "reference_audio", ref_audio)["data"]["task_id"]
@@ -368,6 +372,7 @@ def main() -> None:
 
     out_path = run_dir / "track.mp3"
     chaps = []
+    bestof_meta = None
     ref, rot_meta, base_prompt = os.environ.get("ACE15_REF_AUDIO"), None, prompt
     if os.environ.get("G1ZM0_GATE") == "1":
         # t_d53850f6: эталон и промпт ротируются по дню; attempt>0 = перегенерация после Content ID claim
@@ -403,7 +408,23 @@ def main() -> None:
     elif os.environ.get("ACE15_ENDPOINT"):
         duration = min(duration, ACE15_MAX_SEC)
         tp, bpm, key = track_prompt(0)
-        generate_track_v15(tp, duration, seed, out_path, ref_audio=ref, bpm=bpm, key=key)
+        n = int(os.environ.get("ACE15_BESTOF") or 0)  # t_b4006a6e: best-of-N по CE, 0 = как раньше (1 кандидат)
+        if n >= 2:
+            import bestof
+            from quality_gate import ce_batch
+            cands = [run_dir / f"cand_{i:02d}.mp3" for i in range(n)]
+            bi, bp, ce = bestof.best_of(
+                n, lambda i: (generate_track_v15(tp, duration, seed + i, cands[i],
+                                                 ref_audio=ref, bpm=bpm, key=key) or str(cands[i])),
+                ce_batch)
+            import shutil
+            shutil.move(bp, out_path)
+            for c in cands:
+                c.unlink(missing_ok=True)  # карточка: кандидаты удаляются сразу после выбора (диск)
+            bestof_meta = {"n": n, "picked": bi, "ce": ce}
+            print(f"best-of-{n}: CE(min)={[min(x) for x in ce]} -> #{bi + 1}")
+        else:
+            generate_track_v15(tp, duration, seed, out_path, ref_audio=ref, bpm=bpm, key=key)
     else:
         chunks = chunk_plan(duration)
         chunk_paths = [
@@ -414,7 +435,8 @@ def main() -> None:
     mastering.master(out_path, out_path, genre=genre_name)
     (run_dir / "music_meta.json").write_text(
         json.dumps({"genre": genre_name, "prompt": prompt, "seed": seed, "duration": duration,
-                    "chapters": chaps, "ref": rot_meta and rot_meta["ref"], "rotation": rot_meta},
+                    "chapters": chaps, "ref": rot_meta and rot_meta["ref"], "rotation": rot_meta,
+                    "bestof": bestof_meta},
                    ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
