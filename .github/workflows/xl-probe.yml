@@ -160,7 +160,7 @@ jobs:
       # Tight-профиль 12GB: rank32, adamw8bit, offload-encoder). API недоступен
       # во время обучения (VRAM) — окно между прод-слотами.
       - name: train lora (approved only)
-        if: ${{ inputs.train_lora && steps.salvage.outputs.rc != '0' }}
+        if: ${{ inputs.train_lora }}
         timeout-minutes: 240
         run: |
           set -e
