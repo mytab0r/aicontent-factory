@@ -136,6 +136,15 @@ jobs:
         working-directory: pipeline
         run: ../.venv/bin/python 03_music.py
 
+      # t_397036f5: гейт связности warn-only — провал = ::warning, выпуск не блокирует
+      - name: coherence gate (warn-only)
+        if: steps.guard.outputs.published != '1'
+        continue-on-error: true
+        working-directory: pipeline
+        run: |
+          uv pip install --quiet --python ../.venv/bin/python numpy librosa
+          ../.venv/bin/python audio_gate.py "$(ls -d ../runs/*/ | sort | tail -1)track.mp3" --json ../coherence.json
+
       - name: 04 assemble (ffmpeg)
         if: steps.guard.outputs.published != '1'
         working-directory: pipeline
