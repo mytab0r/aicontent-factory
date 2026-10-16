@@ -210,10 +210,12 @@ jobs:
 
       - name: upload run artifact
         if: steps.guard.outputs.published != '1'
+        # ponytail: artifact is debug-only (video is on YouTube); storage quota must never fail the release
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: video-${{ github.run_id }}-${{ strategy.job-index }}
           path: |
             runs/*/video.mp4
             runs/*/short_*.mp4
-          retention-days: 14
+          retention-days: 3
