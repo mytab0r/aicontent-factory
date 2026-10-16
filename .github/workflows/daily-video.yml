@@ -15,6 +15,19 @@ on:
         description: "плановый запуск: guard (пропуск, если long-form жанра за сегодня уже есть)"
         type: boolean
         default: false
+      # g1zm0-gate.yml: перегенерация после Content ID claim (один жанр, другой эталон/промпт)
+      genre:
+        description: "только этот жанр матрицы (пусто = все)"
+        type: string
+        default: ""
+      g1zm0_day:
+        description: "день ротации YYYY-MM-DD (пусто = сегодня UTC)"
+        type: string
+        default: ""
+      g1zm0_attempt:
+        description: "попытка ротации (claim -> +1)"
+        type: string
+        default: "0"
 
 # слоты не перекрываются: второй run ждёт первый и guard видит выпуск
 concurrency:
@@ -37,12 +50,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # lofi (t_d53850f6): ротация CC BY эталонов/промптов по дню + Content ID гейт (unlisted, public после одобрения)
           - genre: "anime lofi"
             slots: "0 9,13,17 * * *"
-            ref: /tmp/acf-ref/ref1.wav
+            gate: "1"
           - genre: "chill phonk"
             slots: "0 11,15 * * *"
-            ref: ""  # phonk v1-v3 одобрены БЕЗ эталона (noref) — ref-трек не подмешивать
+            gate: "0"  # phonk v1-v3 одобрены БЕЗ эталона (noref) — эталон не подмешивать
     # pc-acf-release: setup-uv падает EACCES (spawn uv, 16.10) — выпуск на проверенном pc-acf
     runs-on: [self-hosted, release]
     # 16.10 run 38886770624: music 40 мин + аплоад часа >34 мин -> 75 обрезал 05 publish
@@ -59,10 +73,12 @@ jobs:
       TRACK_DURATION_SEC: "3600"  # >600 -> час-микс из цельных треков 1.5 + треклист-главы (ресёрч 13.10: хиты ниши 1-4 ч)
       GENRE: ${{ matrix.genre }}
       ACE15_ENDPOINT: http://ace-step:8001  # ACE-Step 1.5 REST на ПК (comfynet)
-      # Эталон стиля, одобрен владельцем 13.10 (сэмпл ref1): 90с K/DA Seraphine.
-      # Кэш на раннере; нет файла -> 03_music генерирует без эталона.
-      # phonk: пусто (noref-звук, Content ID и A/Bapproval без чужого стиля).
-      ACE15_REF_AUDIO: ${{ matrix.ref }}
+      # Чужой OST (K/DA Seraphine) убран 16.10: юр. риск + Content ID. Эталон = пул 10x90с CC BY
+      # (refs/LICENSES.md), кэш на раннере; нет файла -> 03_music генерирует без эталона.
+      G1ZM0_GATE: ${{ matrix.gate }}
+      G1ZM0_REF_DIR: /tmp/acf-refs
+      G1ZM0_DAY: ${{ inputs.g1zm0_day }}
+      G1ZM0_ATTEMPT: ${{ inputs.g1zm0_attempt || '0' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -72,12 +88,17 @@ jobs:
       # Слот жанра: cron-ы обеих матриц срабатывают оба, чужой слот = published=1 (скип всех шагов).
       - name: guard (один long-form жанра в сутки)
         id: guard
-        if: github.event_name == 'schedule' || inputs.scheduled
+        if: github.event_name == 'schedule' || inputs.scheduled || inputs.genre != ''
         working-directory: pipeline
         run: |
           if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" != "${{ matrix.slots }}" ]; then
             echo "не слот жанра $GENRE (его слоты: ${{ matrix.slots }}), скип"
             echo "published=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -n "${{ inputs.genre }}" ]; then
+            # перегенерация гейта: только свой жанр, guard дня не нужен (прошлая попытка = claim)
+            [ "${{ inputs.genre }}" = "$GENRE" ] || { echo "dispatch для ${{ inputs.genre }}, скип $GENRE"; echo "published=1" >> "$GITHUB_OUTPUT"; }
             exit 0
           fi
           python3 watchdog.py --guard
@@ -122,14 +143,11 @@ jobs:
           done
           echo "::error::ace-step не healthy за 4 мин"; exit 1
 
-      - name: reference audio (cache)
-        if: steps.guard.outputs.published != '1' && env.ACE15_REF_AUDIO != ''
-        continue-on-error: true
-        run: |
-          [ -s "$ACE15_REF_AUDIO" ] && exit 0
-          mkdir -p /tmp/acf-ref && python3 -m venv /tmp/acf-ref/v && /tmp/acf-ref/v/bin/pip install -q -U yt-dlp
-          /tmp/acf-ref/v/bin/yt-dlp -q -f bestaudio -o '/tmp/acf-ref/raw1.%(ext)s' https://youtu.be/CYZeAfaj3pc
-          ffmpeg -loglevel error -y -ss 30 -t 90 -i /tmp/acf-ref/raw1.* -ac 2 -ar 48000 "$ACE15_REF_AUDIO"
+      - name: reference pool (CC BY, cache)
+        if: steps.guard.outputs.published != '1' && env.G1ZM0_GATE == '1'
+        continue-on-error: true  # нет эталона -> генерация без него, выпуск не падает
+        timeout-minutes: 20
+        run: python3 pipeline/fetch_refs.py
 
       - name: 03 music (ACE-Step)
         if: steps.guard.outputs.published != '1'
@@ -164,7 +182,8 @@ jobs:
           fi
 
       - name: 07 shorts (2 x 9:16 из long-form, ссылка на него)
-        if: steps.guard.outputs.published != '1'
+        # гейт: long-form unlisted до одобрения -> публичные шортсы на него не льём
+        if: steps.guard.outputs.published != '1' && env.G1ZM0_GATE != '1'
         working-directory: pipeline
         run: |
           if [ -f ../.state/youtube_token.json ]; then
@@ -189,6 +208,7 @@ jobs:
           git config user.name "aicontent-factory-bot"
           git config user.email "actions@users.noreply.github.com"
           git add -f .state/*_idx.txt 2>/dev/null || true  # mood + scene + fallback ротации
+          git add -f .state/g1zm0_gate 2>/dev/null || true  # записи Content ID гейта (g1zm0-gate.yml)
           git diff --cached --quiet || git commit -m "chore: advance mood rotation [skip ci]"
           git pull --rebase -q || true
           git push

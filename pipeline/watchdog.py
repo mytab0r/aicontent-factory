@@ -104,6 +104,10 @@ def fetch_rss() -> str:
 
 def watch() -> None:
     today = dt.datetime.now(dt.timezone.utc).date()
+    import g1zm0_gate
+    if g1zm0_gate.pending_today(None, today):
+        print(f"OK: выпуск за {today} в Content ID гейте (unlisted), см. g1zm0-gate.yml")
+        return
     runs = gh(f"actions/workflows/{WORKFLOW}/runs?per_page=10")["workflow_runs"]
     alert, dispatch = decide(fetch_rss(), runs, today)
     if alert is None:
@@ -149,6 +153,9 @@ def guard() -> None:
     except Exception as e:  # RSS недоступен -> не блокируем выпуск
         print(f"RSS skip: {type(e).__name__}")
         done = False
+    if not done:  # unlisted выпуск Content ID гейта RSS не видит
+        import g1zm0_gate
+        done = g1zm0_gate.pending_today(os.environ.get("GENRE") or None, today)
     scope = f"long-form [{os.environ.get('GENRE')}]" if os.environ.get("GENRE") else "long-form"
     print(f"{scope} за {today}: {'уже есть, пропуск' if done else 'нет, выпускаем'}")
     if os.environ.get("GITHUB_OUTPUT"):
