@@ -116,3 +116,18 @@ with tempfile.TemporaryDirectory() as td:
     assert calls[0][1] == {"ref_audio": str(refs / f"{want}.wav"), "bpm": p["bpm"], "key": p["key"]}, calls
     assert p["instrument"] in calls[0][0] and music.GENRE_PROMPTS["anime lofi"] in calls[0][0]
 print("test_g1zm0_gate main OK")
+
+# ---- cover-режим недоступен: попытка включить -> CoverModeError, запрос в ACE-Step не уходит ----
+for env in ({"ACE15_TASK_TYPE": "cover"}, {"ACE15_SRC_AUDIO": "/x.wav"}):
+    os.environ.update(env)
+    try:
+        spec.loader.exec_module(music)  # свежий модуль, без стаба из теста выше
+        music.generate_track_v15("p", 10, 1, "/nonexistent", api=object())
+        raise AssertionError("cover не заблокирован")
+    except rot.CoverModeError:
+        pass
+    finally:
+        [os.environ.pop(k) for k in env]
+# A/B: 4 сэмпла, 4 разных эталона
+assert len({s["ref"] for s in rot.ab_samples(dt.date(2026, 10, 16))}) == 4
+print("test_g1zm0_gate cover OK")

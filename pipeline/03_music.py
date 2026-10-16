@@ -222,8 +222,11 @@ def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=
                        bpm: int | None = None, key: str | None = None) -> None:
     import json
     import time
+    if os.environ.get("ACE15_TASK_TYPE", "text2music") != "text2music" or os.environ.get("ACE15_SRC_AUDIO"):
+        import g1zm0_rotation  # cover/repaint/remix чужой мелодии запрещён (t_d53850f6, Content ID)
+        g1zm0_rotation.enable_cover_mode()
     api = api or _Http(os.environ["ACE15_ENDPOINT"])
-    body = {"prompt": prompt, "lyrics": "[Instrumental]",
+    body = {"prompt": prompt, "lyrics": "[Instrumental]", "task_type": "text2music",
             "audio_duration": min(int(duration_sec), ACE15_MAX_SEC),
             "bpm": bpm or 70 + seed % 21, "key_scale": key or ACE15_KEYS[seed % len(ACE15_KEYS)],
             "time_signature": "4", "batch_size": 1, "thinking": True,
