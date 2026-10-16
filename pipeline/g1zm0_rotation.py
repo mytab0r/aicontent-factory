@@ -12,12 +12,29 @@ from pathlib import Path
 
 REF_DIR = Path(os.environ.get("G1ZM0_REF_DIR", "refs"))
 REF_SECONDS = 90
-# 10 слотов (8-12). Первый = одобренный K/DA Seraphine; остальные кандидаты (OST).
-REF_POOL = [
-    "kda_seraphine", "persona5_last_surprise", "genshin_liyue", "nier_weight_of_the_world",
-    "stardew_valley_overture", "zelda_botw_main", "your_name_sparkle", "hades_good_riddance",
-    "celeste_resurrections", "sonic_mania_studiopolis",
-]
+# 10 слотов (8-12). Только CC BY 3.0 (Kevin MacLeod, Wikimedia Commons): чужой OST под
+# копирайтом не используем (юр. риск + Content ID). slug -> (файл Commons, старт среза, с).
+# Атрибуция обязательна: REF_CREDIT(slug) в описание видео. Детали: refs/LICENSES.md.
+REF_SOURCES = {
+    "macleod_clean_soul": ("File:Kevin MacLeod - Clean Soul.ogg", 30),
+    "macleod_smoother_move": ("File:Kevin MacLeod - Smoother Move.ogg", 30),
+    "macleod_dream_culture": ("File:Kevin MacLeod - Dream Culture.ogg", 30),
+    "macleod_inner_light": ("File:Kevin MacLeod - Inner Light.ogg", 60),
+    "macleod_autumn_day": ("File:Kevin MacLeod - Autumn Day.ogg", 30),
+    "macleod_silver_blue_light": ("File:Kevin MacLeod - Silver Blue Light.ogg", 60),
+    "macleod_carefree": ("File:Kevin MacLeod - Carefree.ogg", 30),
+    "macleod_calmant": ("File:Kevin MacLeod - Calmant.ogg", 30),
+    "macleod_windswept": ("File:Kevin MacLeod - Windswept.ogg", 30),
+    "macleod_early_riser": ("File:Kevin MacLeod - Early Riser.ogg", 30),
+}
+REF_POOL = list(REF_SOURCES)
+
+
+def REF_CREDIT(slug: str) -> str:
+    t = REF_SOURCES[slug][0].removeprefix("File:Kevin MacLeod - ").removesuffix(".ogg")
+    return f'Style reference: "{t}" by Kevin MacLeod (incompetech.com), CC BY 3.0 https://creativecommons.org/licenses/by/3.0/'
+
+
 INSTRUMENTS = ["rhodes piano", "plucked synth", "soft bells", "clean electric guitar", "marimba", "airy flute synth"]
 TEMPOS = [85, 90, 95, 100, 105]
 KEYS = ["C major", "G major", "F major", "D major", "A major", "E-flat major"]
@@ -139,6 +156,7 @@ if __name__ == "__main__":
     import tempfile
     # пул
     assert 8 <= len(REF_POOL) <= 12 and len(set(REF_POOL)) == len(REF_POOL)
+    assert all("MacLeod" in REF_CREDIT(r) for r in REF_POOL)
     # соседние дни различаются и по эталону, и по промпту
     d0 = dt.date(2026, 10, 14)
     for i in range(60):

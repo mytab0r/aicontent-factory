@@ -63,11 +63,18 @@ def publish(run_dir: Path) -> str:
     if not video_path.exists():
         raise SystemExit(f"нет video.mp4 в {run_dir} — сначала 04_assemble.py")
 
+    desc = full_description(idea["description"])
+    meta = run_dir / "music_meta.json"
+    ref = json.loads(meta.read_text(encoding="utf-8")).get("ref") if meta.exists() else None
+    if ref:  # CC BY эталон -> атрибуция обязательна (refs/LICENSES.md)
+        import g1zm0_rotation as rot
+        desc += "\n\n" + rot.REF_CREDIT(ref)
+
     youtube = _get_youtube_service()
     body = {
         "snippet": {
             "title": idea["title"][:100],
-            "description": full_description(idea["description"]),
+            "description": desc,
             "defaultLanguage": "en",
             "defaultAudioLanguage": "en",
             "tags": idea.get("tags", []),
