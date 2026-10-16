@@ -14,3 +14,7 @@ jobs:
       - uses: astral-sh/setup-uv@v3
       - run: echo "runner=$RUNNER_NAME temp=$RUNNER_TEMP"
       - run: uv --version && grep -E " $RUNNER_TEMP| /tmp/runner" /proc/mounts || true
+      - name: ace-step reachable (daily-video зависимость)
+        run: |
+          getent hosts ace-step && curl -s -m 10 -o /dev/null -w "ace-step http=%{http_code}\n" "http://ace-step:8001/health" || { echo "::error::ace-step не резолвится с раннера"; exit 1; }
+          docker info --format 'docker ok {{.ServerVersion}}'; nproc; free -m | head -2
