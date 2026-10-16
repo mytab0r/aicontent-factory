@@ -142,13 +142,17 @@ jobs:
           # ponytail: splice at fixed 30s/62s with 1.5s crossfades; upgrade = beat-aligned cut points (librosa beat_track)
           set -e; cd out; ls
           for v in VOX_*.mp3; do ffmpeg -loglevel error -y -ss 8 -t 10 -i $v -af "afade=t=in:d=0.3,afade=t=out:st=9.4:d=0.6" ${v%.mp3}_cut.wav; done
-          i=0; for bed in BED_*.mp3; do
-            for v in VOX_*_cut.wav; do i=$((i+1)); n=U_INS_$(basename $bed .mp3)_$(basename $v _cut.wav)
-              ffmpeg -loglevel error -y -i $bed -i $v -filter_complex \
-                "[0]atrim=0:30,asetpts=N/SR/TB[a];[0]atrim=40:62,asetpts=N/SR/TB[b];[0]atrim=72,asetpts=N/SR/TB[c];[1]asplit[v1][v2];\
-                 [a][v1]acrossfade=d=1.5[x];[x][b]acrossfade=d=1.5[y];[y][v2]acrossfade=d=1.5[z];[z][c]acrossfade=d=1.5,loudnorm=I=-14:TP=-1.5[o]" \
-                -map "[o]" -b:a 192k $n.mp3
+          # ponytail: runner ffmpeg 6.x truncated asplit/multi-atrim graph to 52s (expected 84s); cut to files, crossfade pairwise
+          xf(){ ffmpeg -loglevel error -y -i $1 -i $2 -filter_complex "[0][1]acrossfade=d=1.5" $3; }
+          for bed in BED_*.mp3; do
+            ffmpeg -loglevel error -y -i $bed -t 30 a.wav; ffmpeg -loglevel error -y -ss 40 -t 22 -i $bed b.wav; ffmpeg -loglevel error -y -ss 72 -i $bed c.wav
+            for v in VOX_*_cut.wav; do n=U_INS_$(basename $bed .mp3)_$(basename $v _cut.wav)
+              xf a.wav $v x.wav; xf x.wav b.wav y.wav; xf y.wav $v z.wav; xf z.wav c.wav w.wav
+              ffmpeg -loglevel error -y -i w.wav -af loudnorm=I=-14:TP=-1.5 -b:a 192k $n.mp3
+              d=$(ffprobe -v error -show_entries format=duration -of csv=p=0 $n.mp3); echo "$n $d"
+              python3 -c "import sys; assert float(sys.argv[1])>80, 'splice truncated: '+sys.argv[1]" "$d"
             done; done
+          rm -f a.wav b.wav c.wav x.wav y.wav z.wav w.wav
           rm -f *_cut.wav; ls -la
       - name: bench vs popular refs + hook score
         timeout-minutes: 60
