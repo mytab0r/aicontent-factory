@@ -19,6 +19,7 @@ import sys
 from pathlib import Path
 
 SRC = Path(sys.argv[1] if len(sys.argv) > 1 else "/tmp/xlrun")
+FILES = ("sample_A.mp3", "sample_B.mp3", "ce_report.json")
 
 
 def _ace_py(code: str) -> tuple[int, str]:
