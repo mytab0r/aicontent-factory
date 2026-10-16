@@ -45,7 +45,8 @@ jobs:
             ref: ""  # phonk v1-v3 одобрены БЕЗ эталона (noref) — ref-трек не подмешивать
     # pc-acf-release: setup-uv падает EACCES (spawn uv, 16.10) — выпуск на проверенном pc-acf
     runs-on: [self-hosted, pc]
-    timeout-minutes: 75
+    # 16.10 run 38886770624: music 40 мин + аплоад часа >34 мин -> 75 обрезал 05 publish
+    timeout-minutes: 150
     env:
       ROUTER_BASE_URL: https://9router.pxbt.app/v1
       ROUTER_API_KEY: ${{ secrets.ROUTER_API_KEY }}
