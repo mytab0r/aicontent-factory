@@ -103,3 +103,17 @@ jobs:
           test "$(curl -s -o /dev/null -w '%{http_code}' $H/i/$id)" = 200
           $R "grep -q 'invoice:$id' /h/$N/kv.json"
           docker logs $N
+
+  e2e-admin:
+    # Playwright e2e /admin (docs/pay/spec.md S1–S5): браузер внутри образа, раннер ничего не качает.
+    # DooD: bind-mount не годится (путь резолвит демон хоста), поэтому код копируется в образ.
+    runs-on: [self-hosted, release]
+    steps:
+      - uses: actions/checkout@v4
+      - name: playwright e2e pay.pxbt.app/admin
+        run: |
+          set -e
+          T=pay-e2e:$GITHUB_RUN_ID
+          trap "docker rmi -f $T >/dev/null 2>&1 || true" EXIT
+          docker build -q -f test/e2e/Dockerfile -t $T .
+          docker run --rm --ipc=host $T
