@@ -4,6 +4,7 @@
  * здесь никакой парольной логики нет; доступ к /api/admin/* тоже закрывается CF Access.
  */
 import { PAIRS } from '../lib/config.js';
+import { qrcodeFactory } from '../vendor/qrcode/qrcode.js';
 
 // JSON внутрь <script>: экранируем '<', чтобы данные не закрыли тег
 const inline = (v) => JSON.stringify(v).replace(/</g, '\\u003c');
@@ -27,10 +28,16 @@ export async function onRequestGet({ env } = {}) {
 <h1>pay.pxbt.app</h1>
 <div class="card">
  <h3>1. Подключить кошелёк (подпись = доказательство владения)</h3>
- <button onclick="claim('evm')">EVM (MetaMask/инжектед)</button>
- <button onclick="claim('tron')">Tron (TronLink)</button>
- <button onclick="claim('solana')">Solana (Phantom)</button>
+ <button id="connect-evm" onclick="claim('evm')">EVM (MetaMask/инжектед)</button>
+ <button id="connect-tron" onclick="claim('tron')">Tron (TronLink)</button>
+ <button id="connect-solana" onclick="claim('solana')">Solana (Phantom)</button>
  <div id="addresses" class="addr"></div>
+ <div id="nowallet" hidden>
+  <p>Расширение кошелька в этом браузере не найдено. Откройте страницу в мобильном кошельке:
+  отсканируйте QR телефоном или нажмите ссылку, затем подпишите там.</p>
+  <p><a class="deeplink" target="_blank" rel="noopener"></a></p>
+  <div class="qr" style="background:#fff;width:200px;padding:8px"></div>
+ </div>
 </div>
 <div class="card">
  <h3>2. Какие пары показывать клиенту</h3>
@@ -45,38 +52,110 @@ const PROVIDERS = ${inline(providers)};
 const CHAINS = { evm: 'evm', tron: 'tron', solana: 'solana' };
 const log = (m) => document.getElementById('log').textContent += m + '\\n';
 
-async function claim(chain) {
+const qrcode = (${qrcodeFactory.toString()})();
+const API_TIMEOUT = 15000;
+const api = async (url, body) => {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), API_TIMEOUT);
   try {
-    const r = await fetch('/api/claim/nonce', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ chain }) });
-    const { nonce, message } = await r.json();
-    let address, signature;
-    if (chain === 'evm') {
-      const accs = await ethereum.request({ method: 'eth_requestAccounts' });
-      address = accs[0];
-      signature = await ethereum.request({ method: 'personal_sign', params: [message, address] });
-    } else if (chain === 'tron') {
-      if (!window.tronWeb || !tronWeb.ready) throw new Error('TronLink не подключён');
-      address = tronWeb.defaultAddress.base58;
-      signature = await tronWeb.trx.signMessageV2(message);
-    } else {
-      if (!window.solana || !solana.isPhantom) throw new Error('Phantom не найден');
-      const resp = await solana.connect();
-      address = resp.publicKey.toString();
-      const encoded = new TextEncoder().encode(message);
-      const signed = await solana.signMessage(encoded, 'utf8');
-      signature = btoa(String.fromCharCode(...signed.signature));
-    }
-    const v = await fetch('/api/claim/verify', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ chain, address, signature, nonce }) });
-    const j = await v.json();
-    if (j.ok) { log('✔ ' + chain + ': адрес сохранён ' + j.address); loadConfig(); }
+    const r = await fetch(url, { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify(body), signal: ac.signal });
+    return await r.json();
+  } catch (e) { throw Object.assign(new Error('сеть недоступна'), { net: true }); }
+  finally { clearTimeout(t); }
+};
+const hexUtf8 = (s) => '0x' + Array.from(new TextEncoder().encode(s), (b) => b.toString(16).padStart(2, '0')).join('');
+const rejected = (e) => e && (e.code === 4001 || /declined|reject|denied|cancel/i.test(String(e.message || e)));
+
+function eip6963() {
+  return new Promise((res) => {
+    let first = null;
+    const on = (ev) => { if (!first && ev.detail && ev.detail.provider) first = ev.detail; };
+    window.addEventListener('eip6963:announceProvider', on);
+    window.dispatchEvent(new Event('eip6963:requestProvider'));
+    setTimeout(() => { window.removeEventListener('eip6963:announceProvider', on); res(first); }, 300);
+  });
+}
+const WALLETS = {
+  evm: {
+    async find() {
+      const d = await eip6963();
+      if (d) { log('evm: кошелёк ' + d.info.rdns); return d.provider; }
+      return window.ethereum || null;
+    },
+    async connect(p) { return (await p.request({ method: 'eth_requestAccounts' }))[0]; },
+    sign: (p, msg, address) => p.request({ method: 'personal_sign', params: [hexUtf8(msg), address] }),
+  },
+  tron: {
+    async find() { return window.tron || window.tronLink || (window.tronWeb ? { tronWeb: window.tronWeb } : null); },
+    async connect(p) {
+      if (p.request) {
+        const r = await p.request({ method: p === window.tron ? 'eth_requestAccounts' : 'tron_requestAccounts' });
+        if (r && (r.code === 4001 || r.code === 4000)) throw { code: 4001 };
+      }
+      const tw = p.tronWeb || window.tronWeb;
+      if (!tw || !tw.defaultAddress || !tw.defaultAddress.base58) throw new Error('TronLink заблокирован: разблокируйте кошелёк');
+      return tw.defaultAddress.base58;
+    },
+    sign: (p, msg) => (p.tronWeb || window.tronWeb).trx.signMessageV2(msg),
+  },
+  solana: {
+    async find() { return (window.phantom && window.phantom.solana) || window.solana || null; },
+    async connect(p) { return (await p.connect()).publicKey.toString(); },
+    async sign(p, msg) {
+      const signed = await p.signMessage(new TextEncoder().encode(msg), 'utf8');
+      return btoa(String.fromCharCode(...(signed.signature || signed)));
+    },
+  },
+};
+function deeplink(chain) {
+  const u = location.href.split('#')[0];
+  if (chain === 'evm') return 'https://link.metamask.io/dapp/' + location.host + location.pathname;
+  if (chain === 'tron') return 'tronlinkoutside://pull.activity?param=' + encodeURIComponent(JSON.stringify({ url: u, action: 'open', protocol: 'tronlink', version: '1.0' }));
+  return 'https://phantom.com/ul/browse/' + encodeURIComponent(u) + '?ref=' + encodeURIComponent(location.origin);
+}
+function showNoWallet(chain) {
+  const box = document.getElementById('nowallet');
+  const href = deeplink(chain);
+  const a = box.querySelector('a.deeplink');
+  a.href = href; a.textContent = 'Открыть в кошельке (' + chain + ')';
+  const q = qrcode(0, 'M'); q.addData(href); q.make();
+  box.querySelector('.qr').innerHTML = q.createSvgTag({ scalable: true, margin: 2 });
+  box.hidden = false;
+}
+
+async function claim(chain) {
+  const btn = document.getElementById('connect-' + chain);
+  btn.disabled = true;
+  let step = 'connect';
+  try {
+    const w = WALLETS[chain];
+    const p = await w.find();
+    if (!p) { log('✘ ' + chain + ': кошелёк не найден'); showNoWallet(chain); return; }
+    document.getElementById('nowallet').hidden = true;
+    const address = await w.connect(p);
+    if (!address) throw new Error('кошелёк не вернул адрес');
+    step = 'nonce';
+    const { nonce, message } = await api('/api/claim/nonce', { chain });
+    if (!nonce) throw new Error('сервер не выдал nonce');
+    step = 'sign';
+    const signature = await w.sign(p, message, address);
+    step = 'verify';
+    const j = await api('/api/claim/verify', { chain, address, signature, nonce });
+    if (j.ok) { log('✔ ' + chain + ': адрес сохранён ' + j.address); await loadConfig(); }
     else log('✘ ' + chain + ': ' + (j.error || 'отказ') + (j.detail ? ' — ' + j.detail : ''));
-  } catch (e) { log('✘ ' + chain + ': ' + e.message); }
+  } catch (e) {
+    if (e && e.net) log('✘ ' + chain + ': сеть недоступна');
+    else if (rejected(e)) log('✘ ' + chain + ': ' + (step === 'connect' ? 'подключение отклонено в кошельке' : 'подпись отклонена в кошельке'));
+    else log('✘ ' + chain + ': ' + ((e && e.message) || String(e)));
+  } finally { btn.disabled = false; }
 }
 
 async function loadConfig() {
   const cfg = await (await fetch('/api/admin/config')).json();
   const a = document.getElementById('addresses');
-  a.innerHTML = Object.entries(cfg.addresses).map(([k, v]) => k + ': ' + v).join('<br>') || '<i>адреса ещё не подключены</i>';
+  a.textContent = '';
+  for (const [k, v] of Object.entries(cfg.addresses)) { const d = document.createElement('div'); d.textContent = k + ': ' + v; a.appendChild(d); }
+  if (!a.firstChild) a.innerHTML = '<i>адреса ещё не подключены</i>';
   const p = document.getElementById('pairs');
   p.innerHTML = Object.keys(PAIRS).map((id) =>
     '<label class="pairline"><input type="checkbox" id="pair_' + id + '"' + (cfg.pairs[id] ? ' checked' : '') + '>' + PAIRS[id].label + '</label>'
