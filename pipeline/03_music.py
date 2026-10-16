@@ -44,7 +44,7 @@ SPACE = "ACE-Step/ACE-Step"
 # чем классический lofi hip-hop. ACE-Step берёт любой текстовый
 # жанр-промпт через тот же generate_track() — пайплайн не меняется.
 GENRE_PROMPTS = {
-    # Одобрен владельцем 13.10 (сэмпл ref1): звучит в паре с ACE15_REF_AUDIO.
+    # Одобрен владельцем 13.10 (сэмпл ref1). Эталон: ротация CC BY пула (G1ZM0_GATE, g1zm0_rotation).
     "anime lofi": (
         "dreamy lofi chillout instrumental, bright lush synth pads, sparkling bells and plucks, "
         "soft piano lead melody, warm major seventh chords, gentle laid back beat, deep round bass, "
@@ -218,13 +218,17 @@ class _Http:
 
 
 def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=None,
-                       poll_sec: float = 5, timeout_sec: int = 3600, ref_audio=None) -> None:
+                       poll_sec: float = 5, timeout_sec: int = 3600, ref_audio=None,
+                       bpm: int | None = None, key: str | None = None) -> None:
     import json
     import time
+    if os.environ.get("ACE15_TASK_TYPE", "text2music") != "text2music" or os.environ.get("ACE15_SRC_AUDIO"):
+        import g1zm0_rotation  # cover/repaint/remix чужой мелодии запрещён (t_d53850f6, Content ID)
+        g1zm0_rotation.enable_cover_mode()
     api = api or _Http(os.environ["ACE15_ENDPOINT"])
-    body = {"prompt": prompt, "lyrics": "[Instrumental]",
+    body = {"prompt": prompt, "lyrics": "[Instrumental]", "task_type": "text2music",
             "audio_duration": min(int(duration_sec), ACE15_MAX_SEC),
-            "bpm": 70 + seed % 21, "key_scale": ACE15_KEYS[seed % len(ACE15_KEYS)],
+            "bpm": bpm or 70 + seed % 21, "key_scale": key or ACE15_KEYS[seed % len(ACE15_KEYS)],
             "time_signature": "4", "batch_size": 1, "thinking": True,
             "use_random_seed": False, "seed": seed, "audio_format": "mp3"}
     if ref_audio and Path(ref_audio).is_file():
@@ -364,13 +368,32 @@ def main() -> None:
 
     out_path = run_dir / "track.mp3"
     chaps = []
+    ref, rot_meta, base_prompt = os.environ.get("ACE15_REF_AUDIO"), None, prompt
+    if os.environ.get("G1ZM0_GATE") == "1":
+        # t_d53850f6: эталон и промпт ротируются по дню; attempt>0 = перегенерация после Content ID claim
+        import datetime as _dt
+        import g1zm0_rotation as rot
+        day = _dt.date.fromisoformat(os.environ.get("G1ZM0_DAY") or _dt.datetime.now(_dt.timezone.utc).date().isoformat())
+        attempt = int(os.environ.get("G1ZM0_ATTEMPT") or 0)
+        ref_name = rot.pick_ref(day, attempt)
+        ref = str(rot.REF_DIR / f"{ref_name}.wav")
+        rot_meta = {"day": day.isoformat(), "attempt": attempt,
+                    "ref": ref_name if Path(ref).is_file() else None, "prompts": []}
+
+    def track_prompt(i):
+        """G1zm0-слот: инструмент/тональность/темп дня; трек i микса = шаг 3 (соседние дни не пересекаются)."""
+        if rot_meta is None:
+            return prompt, None, None
+        p = rot.pick_prompt(day, attempt + 3 * i)
+        rot_meta["prompts"].append({k: p[k] for k in ("instrument", "bpm", "key")})
+        return f"{base_prompt}, {p['instrument']} melody, {p['key']}, {p['bpm']} BPM", p["bpm"], p["key"]
+
     if os.environ.get("ACE15_ENDPOINT") and duration > ACE15_MAX_SEC:
         # ресёрч 13.10: хиты ниши 1-4 ч с треклистом; склеиваем ЦЕЛЬНЫЕ разные треки (не куски одного)
-        ref = os.environ.get("ACE15_REF_AUDIO")
-
         def gen(i):
             p = run_dir / f"mix_{i:02d}.mp3"
-            generate_track_v15(prompt, ACE15_MAX_SEC, seed + i, p, ref_audio=ref)
+            tp, bpm, key = track_prompt(i)
+            generate_track_v15(tp, ACE15_MAX_SEC, seed + i, p, ref_audio=ref, bpm=bpm, key=key)
             return str(p)
 
         paths, durs = plan_mix(duration, gen, _probe_sec)
@@ -379,8 +402,8 @@ def main() -> None:
         duration = int(sum(durs))
     elif os.environ.get("ACE15_ENDPOINT"):
         duration = min(duration, ACE15_MAX_SEC)
-        generate_track_v15(prompt, duration, seed, out_path,
-                           ref_audio=os.environ.get("ACE15_REF_AUDIO"))
+        tp, bpm, key = track_prompt(0)
+        generate_track_v15(tp, duration, seed, out_path, ref_audio=ref, bpm=bpm, key=key)
     else:
         chunks = chunk_plan(duration)
         chunk_paths = [
@@ -391,7 +414,7 @@ def main() -> None:
     mastering.master(out_path, out_path, genre=genre_name)
     (run_dir / "music_meta.json").write_text(
         json.dumps({"genre": genre_name, "prompt": prompt, "seed": seed, "duration": duration,
-                    "chapters": chaps},
+                    "chapters": chaps, "ref": rot_meta and rot_meta["ref"], "rotation": rot_meta},
                    ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
