@@ -212,23 +212,23 @@ jobs:
             exit 1
           fi
           echo "SRC=$SRC"
+          # исходящего 443 у контейнеров ПК нет (URLError Connection refused) —
+          # TG-отправку делает агент на VPS: сэмплы уходят base64 в лог задания,
+          # порядок версий случайный, маппинг В ЛОГ НЕ ПОПАДАЕТ (blind для владельца).
           SRC="$SRC" python3 - <<'PY'
-          import os, random, sys
+          import base64, hashlib, json, os, random
           from pathlib import Path
-          sys.path.insert(0, ".")
-          from common import tg_send
-          from fetch_xlrun import tg_send_file
           src = Path(os.environ["SRC"])
-          import json
           rep = json.loads((src / "ce_report.json").read_text())
           order = [("sample_A.mp3", "XL-sft best-of-8"), ("sample_B.mp3", "turbo prod")]
           random.shuffle(order)
-          ok = True
+          meta = {f"versija_{i + 1}": {"sha256": hashlib.sha256((src / f).read_bytes()).hexdigest(),
+                   "bytes": (src / f).stat().st_size} for i, (f, m) in enumerate(order)}
+          print("XLMETA " + json.dumps(meta, ensure_ascii=False))
           for i, (f, m) in enumerate(order):
-              ok &= tg_send_file(src / f, f"Слепой A/B t_b4006a6e — Версия {i + 1}. Какой трек лучше? Ответ: 1 или 2.")
-          if ok:
-              tg_send("A/B t_b4006a6e: два трека выше (Версия 1 и Версия 2). Ответь номером лучше. "
-                      f"CE: picked #{rep['picked'] + 1}/{rep['bestof']}, sec/cand {rep.get('sec_per_cand')}.")
-          print("BLIND MAP (не для владельца):", {f"Версия {i + 1}": m for i, (f, m) in enumerate(order)})
-          raise SystemExit(0 if ok else 2)
+              b = base64.b64encode((src / f).read_bytes()).decode()
+              print(f"XL64 versija_{i + 1} len={len(b)}")
+              for j in range(0, len(b), 60000):
+                  print(f"XL64 v{i + 1} {j // 60000:04d} {b[j:j + 60000]}")
+          print(f"XL64 ce {json.dumps(rep, ensure_ascii=False)}")
           PY
