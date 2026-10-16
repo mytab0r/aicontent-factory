@@ -40,11 +40,10 @@ PY=python3; for c in /app/.venv/bin/python /opt/venv/bin/python; do [ -x $c ] &&
 pi() { $PY -m pip install -q --target /app/output/aes/pkgs "$@" 2>/dev/null || uv pip install -q --python $PY --target /app/output/aes/pkgs "$@"; }
 $PY -c "import audiobox_aesthetics" 2>/dev/null || pi --no-deps audiobox_aesthetics
 for m in submitit tqdm huggingface_hub requests safetensors rich; do $PY -c "import $m" 2>/dev/null || pi $m; done
-$PY -c '
-import json,os
+$PY -c "import json,os
 from audiobox_aesthetics.infer import initialize_predictor
-p=initialize_predictor(); fs=sorted("in/"+f for f in os.listdir("in"))
-for f,s in zip(fs,p.forward([{"path":f} for f in fs])): print(f+chr(9)+json.dumps(s))'"""
+p=initialize_predictor(); fs=json.loads(os.environ[\"QG_CLIPS\"])
+for f,s in zip(fs,p.forward([{\"path\":f} for f in fs])): print(f+chr(9)+json.dumps(s))\""""
 
 
 def ce_scores(f):
@@ -60,7 +59,6 @@ def ce_batch(files):
 
 
 def _ce_run(files):
-    import time as _t
     td = tempfile.mkdtemp()
     subprocess.run(["docker", "exec", "ace-step", "sh", "-c", "rm -rf /app/output/qg && mkdir -p /app/output/qg/in"], check=True)
     clips = []
@@ -73,8 +71,10 @@ def _ce_run(files):
                             "-i", str(f), p], check=True)
             subprocess.run(["docker", "cp", p, f"ace-step:/app/output/qg/in/"], check=True)
             clips.append(f"in/{p.split('/')[-1]}")
-    aes = AES.replace('fs=sorted("in/"+f for f in os.listdir("in"))', f"fs={clips!r}")
-    out = subprocess.run(["docker", "exec", "ace-step", "sh", "-c", aes], capture_output=True, text=True, timeout=1500)
+    # список клипов через env (не инжект в код: кавычки ломают sh -c, видно на прогоне 4)
+    out = subprocess.run(["docker", "exec", "ace-step", "sh", "-c",
+                          f"QG_CLIPS='{json.dumps(clips)}' {AES}"],
+                         capture_output=True, text=True, timeout=1500)
     res = {}
     for l in out.stdout.splitlines():
         if "\t" in l:
