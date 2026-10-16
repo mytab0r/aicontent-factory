@@ -60,6 +60,8 @@ Deeplink-форматы (официальные доки):
 - TronLink TIP-1102 `window.tron.request({method:'eth_requestAccounts'})`, 4001; `tronWeb.trx.signMessageV2`
   при отказе rejects строкой `'Confirmation declined by user'`:
   https://docs.tronlink.org/plugin-wallet/active-requests/ , https://docs.tronlink.org/reference/error-code-map/
+- Reown AppKit: https://docs.reown.com/appkit/overview , JS core: https://docs.reown.com/appkit/javascript/core/installation
+- Solana Wallet Adapter: https://github.com/anza-xyz/wallet-adapter ; Wallet Standard: https://github.com/wallet-standard/wallet-standard
 - Phantom provider `connect()` / `signMessage(bytes,'utf8')`, 4001: https://docs.phantom.com/solana/signing-a-message
 
 ## Выбор и обоснование
