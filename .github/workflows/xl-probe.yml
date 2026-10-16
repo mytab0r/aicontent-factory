@@ -52,11 +52,12 @@ jobs:
             "$IMAGE"
           # сеть comfynet, чтобы ace-step:8001 резолвился с раннеров, как раньше
           docker network connect comfynet ace-step-new || true
-          for i in $(seq 1 60); do
+          # первый старт грузит turbo+base+LM в VRAM (заняло >6 мин на 12GB) — ждём до 18 мин
+          for i in $(seq 1 72); do
             [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step-new 2>/dev/null)" = healthy ] && break
-            sleep 6
+            sleep 15
           done
-          [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step-new)" = healthy ] || { docker logs --tail 40 ace-step-new; exit 1; }
+          [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step-new)" = healthy ] || { docker logs --tail 80 ace-step-new 2>&1 | tail -60; exit 1; }
           docker rm -f ace-step
           docker rename ace-step-new ace-step
           echo "ace-step пересоздан: turbo+base слоты, XL-sft по запросу (on-demand)"
