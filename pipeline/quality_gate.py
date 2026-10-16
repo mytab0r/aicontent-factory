@@ -42,8 +42,10 @@ $PY -c "import audiobox_aesthetics" 2>/dev/null || pi --no-deps audiobox_aesthet
 for m in submitit tqdm huggingface_hub requests safetensors rich; do $PY -c "import $m" 2>/dev/null || pi $m; done
 $PY -c "import json,os
 from audiobox_aesthetics.infer import initialize_predictor
-p=initialize_predictor(); fs=json.loads(os.environ[\"QG_CLIPS\"])
-for f,s in zip(fs,p.forward([{\"path\":f} for f in fs])): print(f+chr(9)+json.dumps(s))\""""
+p=initialize_predictor(); fs=json.loads(os.environ['QG_CLIPS'])
+for f,s in zip(fs,p.forward([{'path':f} for f in fs])): print(f+chr(9)+json.dumps(s))"
+"""
+
 
 
 def ce_scores(f):
