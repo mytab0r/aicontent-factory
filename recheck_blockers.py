@@ -8,7 +8,7 @@
 КРОМЕ случая «решено в комментарии»: после последнего события blocked есть
 комментарий «блокер снят» / «UNBLOCK-решение» — снимаем так же (ready/done по
 on_resolve; явный fail в needs сильнее комментария). Снятие пишет task_events
-(unblocked/completed) и чистит block_kind/block_recurrences.
+(unblocked/completed) и чистит block_kind, block_recurrences=0 (в проде NOT NULL).
 
 `ck_url` не следует редиректам: 3xx (CF Access/SSO) = fail.
 
@@ -197,7 +197,7 @@ def _lift(c, tid, new_status, dry_run, lines, via):
     with c:
         if new_status == "done":
             c.execute(
-                "update tasks set status='done', block_kind=null, block_recurrences=null,"
+                "update tasks set status='done', block_kind=null, block_recurrences=0,"
                 " claim_lock=null, claim_expires=null, completed_at=? where id=?",
                 (ts, tid),
             )
@@ -205,7 +205,7 @@ def _lift(c, tid, new_status, dry_run, lines, via):
                       (tid, "completed", payload, ts))
         else:
             c.execute(
-                "update tasks set status='ready', block_kind=null, block_recurrences=null,"
+                "update tasks set status='ready', block_kind=null, block_recurrences=0,"
                 " claim_lock=null, claim_expires=null where id=?",
                 (tid,),
             )
@@ -264,7 +264,7 @@ def _selftest_db(tmp, ok_file):
     c = sqlite3.connect(db)
     c.executescript(
         "create table tasks (id text primary key, title text, body text, status text,"
-        " block_kind text, block_recurrences integer, claim_lock text, claim_expires integer,"
+        " block_kind text, block_recurrences integer not null default 0, claim_lock text, claim_expires integer,"
         " completed_at integer);"
         "create table task_comments (id integer primary key autoincrement, task_id text,"
         " author text, body text, created_at integer);"
@@ -359,7 +359,7 @@ def selftest():
     assert ev["t_ok"] == "completed" and ev["t_cmt"] == "unblocked" and ev["t_cmt_done"] == "completed", ev
     assert "t_cmt_hold" not in ev and "t_cmt_fail" not in ev, ev
     assert bk["t_cmt"] is None and bk["t_ok"] is None, bk
-    assert all(v is None for v in br.values()), br
+    assert all(v == 0 for v in br.values()), br  # прод: NOT NULL
     print("SELFTEST OK (redirect=fail, одна проверка на need, needs→done+event, "
           "комментарий→ready/done+event, fail сильнее комментария, комментарий до blocked не считается)")
     return 0
