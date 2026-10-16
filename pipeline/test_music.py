@@ -29,6 +29,13 @@ approved = set(music.GENRE_PROMPTS)
 candidates = set(getattr(music, "CANDIDATE_GENRE_PROMPTS", {}))
 assert not (approved & candidates), "жанр не может быть одновременно продом и кандидатом"
 
+# 16.10 оркестратор (владелец 2 дня без ответа, 0$ и обратимо): направление
+# chill phonk = v2 (I -13.9 ближе всех к -14, LRA 1.5). Прод = промпт v2 из
+# gen2.py; владелец может переиграть — тогда замена промпта одним коммитом.
+assert "chill phonk" in music.GENRE_PROMPTS, "phonk-слот должен быть в проде"
+assert "late night drive" in music.GENRE_PROMPTS["chill phonk"], "промпт не тот (должен быть v2 из gen2.py)"
+assert "chill phonk" not in candidates, "одобренный жанр остался в кандидатах"
+
 # genre_for_mood детерминирован
 name1, _ = music.genre_for_mood("rainy night study")
 name2, _ = music.genre_for_mood("rainy night study")

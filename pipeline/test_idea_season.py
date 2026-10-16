@@ -44,3 +44,13 @@ if __name__ == "__main__":
         if name.startswith("test_"):
             fn()
             print("ok", name)
+
+
+def test_title_formula_has_genre_word():
+    """Guard жанра матчит слово жанра в заголовке (watchdog.GENRE_IN_TITLE):
+    формула LLM обязана включать слово жанра, иначе phonk-выпуск guard не увидит."""
+    with tempfile.TemporaryDirectory() as d:
+        p_lofi = idea.build_prompt("anime lofi", date(2026, 10, 13), Path(d))
+        p_phonk = idea.build_prompt("chill phonk", date(2026, 10, 13), Path(d))
+    assert "lofi" in p_lofi.lower()
+    assert "phonk" in p_phonk.lower()

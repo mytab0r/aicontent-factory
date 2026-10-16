@@ -35,10 +35,33 @@ def videos_on(rss_xml: str, day: dt.date) -> list[dict]:
     return out
 
 
-def already_published(rss_xml: str, day: dt.date) -> bool:
+GENRE_IN_TITLE = {
+    # ключ = имя жанра из GENRE_PROMPTS/matrix; значение = маркер в заголовке выпуска.
+    # Заголовочная формула 01_idea.py обязана содержать слово жанра (см. test_idea_season).
+    "anime lofi": ("lofi", "lo-fi"),
+    "chill phonk": ("phonk",),
+}
+
+
+def _genre_tokens(genre: str | None) -> tuple[str, ...]:
+    if not genre:
+        return ()
+    low = genre.lower()
+    if low in GENRE_IN_TITLE:
+        return GENRE_IN_TITLE[low]
+    return (low.split()[-1],)  # "deep focus ambient" -> "ambient"
+
+
+def already_published(rss_xml: str, day: dt.date, genre: str | None = None) -> bool:
     """Есть ли за day (UTC) long-form (не #Shorts): GitHub schedule опаздывает до вечера,
-    без проверки поздний запуск даёт второй ролик за сутки (дубли 12.10)."""
-    return any("#shorts" not in v["title"].lower() for v in videos_on(rss_xml, day))
+    без проверки поздний запуск даёт второй ролик за сутки (дубли 12.10).
+    С жанром (два слота/день, t_c678b8fa шаг 3) блокирует только выпуск ЭТОГО жанра:
+    заголовок содержит слово жанра (GENRE_IN_TITLE); без жанра — любой long-form."""
+    longs = [v for v in videos_on(rss_xml, day) if "#shorts" not in v["title"].lower()]
+    toks = _genre_tokens(genre)
+    if toks:
+        return any(any(t in v["title"].lower() for t in toks) for v in longs)
+    return bool(longs)
 
 
 def run_date(run: dict) -> dt.date:
@@ -118,14 +141,16 @@ def report() -> None:
 
 
 def guard() -> None:
-    """--guard: exit 0 + published=1 в GITHUB_OUTPUT, если long-form за сегодня уже есть."""
+    """--guard: exit 0 + published=1 в GITHUB_OUTPUT, если long-form этого жанра за сегодня уже есть.
+    Жанр из env GENRE (matrix workflow); без GENRE — любой long-form (как раньше)."""
     today = dt.datetime.now(dt.timezone.utc).date()
     try:
-        done = already_published(fetch_rss(), today)
+        done = already_published(fetch_rss(), today, os.environ.get("GENRE") or None)
     except Exception as e:  # RSS недоступен -> не блокируем выпуск
         print(f"RSS skip: {type(e).__name__}")
         done = False
-    print(f"long-form за {today}: {'уже есть, пропуск' if done else 'нет, выпускаем'}")
+    scope = f"long-form [{os.environ.get('GENRE')}]" if os.environ.get("GENRE") else "long-form"
+    print(f"{scope} за {today}: {'уже есть, пропуск' if done else 'нет, выпускаем'}")
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a") as f:
             f.write(f"published={int(done)}\n")

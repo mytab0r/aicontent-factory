@@ -8,14 +8,24 @@ from common import router_post, latest_run_dir
 
 MODEL = "cx/gpt-image-1.5"
 SIZE = "1536x1024"  # горизонталь под кадр 16:9 (квадрат давал чёрные поля)
-# единый узнаваемый стиль канала: меняется только сцена из idea.json
+# единый узнаваемый стиль канала: меняется только сцена из idea.json.
+# Phonk-выпуск (t_c678b8fa шаг 3) — свой стиль: ночная дорога/неон вместо
+# тёплой аниме-комнаты; концепт берётся из cover_prompt (LLM уже знает жанр).
 STYLE = ("cozy anime lofi illustration, 90s anime cel shading, soft film grain, "
          "warm muted pastel palette, gentle lamp light, wide 16:9 composition, "
          "scene fills the whole frame, no text, no letters, no watermark")
+STYLE_PHONK = ("moody night drive phonk illustration, neon city glow, wet asphalt reflections, "
+               "cinematic haze, dark muted palette with magenta and cyan accents, "
+               "wide 16:9 composition, scene fills the whole frame, no text, no letters, no watermark")
 
 
 def styled(prompt: str) -> str:
-    return f"{prompt.rstrip(' ,.')}. Style: {STYLE}"
+    # жанр определяем по env GENRE (ставит workflow matrix); cover_prompt может
+    # не содержать слова жанра (фолбэк-сцены аниме-специфичны).
+    import os
+    genre = (os.environ.get("GENRE") or "").lower()
+    style = STYLE_PHONK if "phonk" in genre else STYLE
+    return f"{prompt.rstrip(' ,.')}. Style: {style}"
 
 
 def fallback_cover(prompt: str, out_path) -> None:

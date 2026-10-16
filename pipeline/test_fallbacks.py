@@ -137,3 +137,14 @@ if __name__ == "__main__":
         if n.startswith("test_"):
             f()
             print("ok", n)
+
+# ---- шаг 3 (t_c678b8fa): cover-стиль по жанру ----
+cover_mod = load("02_cover.py")
+os.environ["GENRE"] = "chill phonk"
+_p = cover_mod.styled("Neon Highway at Midnight, night drive")
+assert "night drive phonk" in _p and "anime lofi illustration" not in _p, _p
+os.environ["GENRE"] = "anime lofi"
+_p2 = cover_mod.styled("Rainy Tokyo street, anime girl at window")
+assert "anime lofi illustration" in _p2 and "phonk" not in _p2.lower(), _p2
+os.environ.pop("GENRE")
+print("ok cover style per genre")
