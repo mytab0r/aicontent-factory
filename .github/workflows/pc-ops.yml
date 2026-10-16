@@ -10,6 +10,7 @@ on:
         description: "status | deploy-comfyui | download-models"
         default: "status"
         type: choice
+        options: [status, deploy-comfyui, download-models, comfy-object-list, add-release-runner, diag-release-runner, add-repo-runner]
       repo:
         description: "owner/repo for add-repo-runner"
         required: false
@@ -26,7 +27,6 @@ on:
         description: "extra labels for add-repo-runner"
         required: false
         type: string
-        options: [status, deploy-comfyui, download-models, comfy-object-list, add-release-runner, diag-release-runner, add-repo-runner]
 
 jobs:
   ops:
