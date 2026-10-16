@@ -5,8 +5,8 @@
 gate-samples не грузится. /tmp/xlrun на контейнере раннера pc переживает
 прогоны — результаты прошлого прогона спасаем и отдаём в TG-топик.
 Сеть: у контейнера раннера pc нет резолва api.telegram.org (URLError мгновенно),
-поэтому TG-вызовы уходят через `docker run curlimages/curl` на default bridge,
-а файлы — через workdir-volume раннера (имя берётся из docker inspect).
+поэтому TG-вызовы уходят через python3 в контейнере ace-step (comfynet, интернет есть),
+а аудио-файл — через docker cp в /tmp контейнера.
 Возврат: 0 = отправлено (SALVAGE=1 в GITHUB_ENV, gen скипается),
 1 = файлов нет (нужен полный прогон), 2 = файлы есть, TG не прошёл.
 Порядок версий случайный; маппинг пишется в лог задания (не владельцу).
@@ -16,62 +16,54 @@ import os
 import random
 import subprocess
 import sys
-import urllib.parse
 from pathlib import Path
 
 SRC = Path(sys.argv[1] if len(sys.argv) > 1 else "/tmp/xlrun")
-FILES = ("sample_A.mp3", "sample_B.mp3", "ce_report.json")
-RUNNER = os.environ.get("RUNNER_CONTAINER", "gh-runner-aicontent-factory")
-CURL_IMG = "curlimages/curl:8.10.1"
 
 
-def _sh(s: str) -> str:
-    return "'" + s.replace("'", "'\\''") + "'"
-
-
-def _work_mount() -> str:
-    """-v спецификация для workdir-тома раннера. Свой контейнер находим по hostname
-    (Docker: hostname = короткий id), работаём только mount, содержащий GITHUB_WORKSPACE."""
-    wd = os.environ.get("GITHUB_WORKSPACE") or str(Path.cwd())
-    cid = ""
-    try:
-        cid = open("/etc/hostname").read().strip()
-    except OSError:
-        pass
-    for name in ([cid] if cid else []) + [RUNNER]:
-        out = subprocess.run(["docker", "inspect", name, "--format",
-                              "{{range .Mounts}}{{.Type}}\\t{{.Name}}\\t{{.Source}}\\t{{.Destination}}\\n{{end}}"],
-                             capture_output=True, text=True).stdout
-        for line in out.splitlines():
-            t, vname, src, dest = (line.split("\\t") + ["", "", ""])[:4]
-            if dest and wd.startswith(dest.rstrip("/") + "/"):
-                return (f"{vname}:/files:ro" if t == "volume" else f"{src}:/files:ro")
-    return ""
+def _ace_py(code: str) -> tuple[int, str]:
+    cmd = ["docker", "exec", "-i", "ace-step", "python3", "-"]
+    r = subprocess.run(cmd, input=code.encode(), capture_output=True, timeout=300)
+    return r.returncode, (r.stdout + r.stderr).decode(errors="replace")
 
 
 def _curl_tg(method: str, fields: list[tuple[str, str]], file_field: tuple[str, Path] | None = None) -> bool:
-    """TG Bot API через docker run curl (bridge-сеть раннер-контейнера не резолвит TG)."""
+    """TG Bot API через python3 внутри ace-step (у раннера pc нет резолва TG)."""
     token, chat = os.environ.get("TG_BOT_TOKEN"), os.environ.get("TG_CHAT_ID")
     if not token or not chat:
         print("TG skip: нет TG_BOT_TOKEN/TG_CHAT_ID")
         return False
-    mnt = _work_mount()
-    if file_field and not mnt:
-        print("TG fail: не нашёл workdir-том раннера для docker run")
-        return False
-    curl = [f"-X POST {_sh('https://api.telegram.org/bot' + token + '/' + method)}",
-            f"-F chat_id={_sh(chat)}"]
-    if os.environ.get("TG_THREAD_ID"):
-        curl.append(f"-F message_thread_id={_sh(os.environ['TG_THREAD_ID'])}")
-    curl += [f"-F {k}={_sh(v)}" for k, v in fields]
     if file_field:
-        curl.append(f"-F {file_field[0]}=@/files/{file_field[1].name}")
-    cmd = ["docker", "run", "--rm"] + ([f"-v", mnt] if file_field else []) + [CURL_IMG, "sh", "-c",
-           "curl -sf -m 120 " + " ".join(curl)]
-    r = subprocess.run(cmd, capture_output=True, text=True)
-    if r.returncode != 0:
-        print(f"TG fail: curl rc={r.returncode} {r.stderr[-200:]}")
-    return r.returncode == 0
+        subprocess.run(["docker", "cp", str(file_field[1]), "ace-step:/tmp/ab_file.mp3"], check=True)
+    lines = [
+        "import json,urllib.request,uuid",
+        f"tok={token!r}; chat={chat!r}; method={method!r}",
+        "thid = " + repr(os.environ.get("TG_THREAD_ID") or ""),
+        f"fields = {fields!r}",
+        "b = uuid.uuid4().hex",
+        "data = b''",
+        "def part(name, val):",
+        "    global data",
+        "    data += ('--%s\\r\\nContent-Disposition: form-data; name=\"%s\"\\r\\n\\r\\n%s\\r\\n' % (b, name, val)).encode()",
+    ]
+    for k, v in fields:
+        lines.append(f"part({k!r}, {v!r})")
+    if os.environ.get("TG_THREAD_ID"):
+        lines.append("part('message_thread_id', thid)")
+    if file_field:
+        lines += [
+            "data += ('--%s\\r\\nContent-Disposition: form-data; name=\"audio\"; filename=\"ab.mp3\"\\r\\nContent-Type: audio/mpeg\\r\\n\\r\\n' % b).encode() + open('/tmp/ab_file.mp3','rb').read() + b'\\r\\n'",
+        ]
+    lines += [
+        "data += ('--%s--\\r\\n' % b).encode()",
+        "req = urllib.request.Request('https://api.telegram.org/bot' + tok + '/' + method, data=data, headers={'Content-Type': 'multipart/form-data; boundary=' + b})",
+        "urllib.request.urlopen(req, timeout=120).read()",
+        "print('TG OK', method)",
+    ]
+    rc, out = _ace_py("\n".join(lines))
+    if rc != 0:
+        print(f"TG fail: {out[-300:]}")
+    return rc == 0
 
 
 def main() -> int:
@@ -90,10 +82,10 @@ def main() -> int:
             ("performer", "blind A/B"), ("title", f"versija-{i + 1}")],
             file_field=("audio", SRC / f))
     if ok:
-        q = urllib.parse.urlencode({"text": "A/B t_b4006a6e: два трека выше (Версия 1 и Версия 2). "
-                                   f"Ответь номером лучше. CE: picked #{rep['picked'] + 1}/{rep['bestof']}, "
-                                   f"sec/cand {rep.get('sec_per_cand')}."})
-        ok &= _curl_tg("sendMessage", [("text", q)])
+        ok &= _curl_tg("sendMessage", [(
+            "text", "A/B t_b4006a6e: два трека выше (Версия 1 и Версия 2). "
+            f"Ответь номером лучше. CE: picked #{rep['picked'] + 1}/{rep['bestof']}, "
+            f"sec/cand {rep.get('sec_per_cand')}.")])
     if ok:
         gev = os.environ.get("GITHUB_ENV")
         if gev:
