@@ -9,6 +9,7 @@
 AGENTS.md п.4. selfDeclaredMadeForKids=False (канал не детский).
 """
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -112,18 +113,24 @@ def publish(run_dir: Path) -> str:
     meta_path = run_dir / "music_meta.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
     chaps = meta.get("chapters")
+    gated = os.environ.get("G1ZM0_GATE") == "1"
+    desc = full_description(idea["description"], chaps)
+    if meta.get("ref"):  # CC BY эталон -> атрибуция обязательна (refs/LICENSES.md)
+        import g1zm0_rotation as rot
+        desc += "\n\n" + rot.REF_CREDIT(meta["ref"])
     youtube = _get_youtube_service()
     body = {
         "snippet": {
             "title": title_with_length(idea["title"], meta.get("duration")),
-            "description": full_description(idea["description"], chaps),
+            "description": desc,
             "defaultLanguage": "en",
             "defaultAudioLanguage": "en",
             "tags": idea.get("tags", []),
             "categoryId": "10",  # Music
         },
         "status": {
-            "privacyStatus": "public",
+            # Content ID гейт (g1zm0_gate.py): unlisted, public только после clean + одобрения владельца
+            "privacyStatus": "unlisted" if gated else "public",
             "selfDeclaredMadeForKids": False,
         },
     }
@@ -148,11 +155,13 @@ def publish(run_dir: Path) -> str:
             youtube.thumbnails().set(videoId=video_id, media_body=MediaFileUpload(str(cover), mimetype="image/png")).execute()
         except Exception as e:
             print(f"thumbnail skip: {type(e).__name__}: {e}")
-    meta = run_dir / "music_meta.json"
-    if meta.exists():
-        genre = json.loads(meta.read_text(encoding="utf-8"))["genre"]
+    if gated:  # плейлист добавит g1zm0_gate.py при переводе в public
+        import g1zm0_gate
+        g1zm0_gate.record(video_id, meta.get("genre"), meta)
+    elif meta.get("genre"):
+        genre = meta["genre"]
         print(f"playlist -> {add_to_genre_playlist(youtube, video_id, genre)} ({genre})")
-    print(f"OK: опубликовано {url}")
+    print(f"OK: {'загружено unlisted (Content ID гейт)' if gated else 'опубликовано'} {url}")
     return url
 
 
