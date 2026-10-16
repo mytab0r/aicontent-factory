@@ -81,3 +81,24 @@ with tempfile.TemporaryDirectory() as td:
     assert -15 <= c["i"] <= -13 and c["lra"] <= 8 and c["tp"] <= -1, c
 
 print("test_mastering OK")
+
+
+# ---- lofi: одобренный 13.10 звук ref1 (LRA ~11) цепочка phonk давила до LRA 1.8 = «каша» (16.10) ----
+def run_master_genre(src: Path, dst: Path, genre: str) -> None:
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("mastering", MASTERING)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    m.master(src, dst, genre=genre)
+
+
+with tempfile.TemporaryDirectory() as td:
+    raw = Path(td) / "raw.wav"
+    synth(raw)
+    out = Path(td) / "lofi.mp3"
+    run_master_genre(raw, out, "anime lofi")
+    got = measure(out)
+    print(f"lofi: I={got['i']} LRA={got['lra']} TP={got['tp']}")
+    assert -15 <= got["i"] <= -13 and got["tp"] <= -1, got
+    assert got["lra"] >= 5, f"lofi-мастер раздавил динамику: {got}"
+print("test_mastering lofi OK")
