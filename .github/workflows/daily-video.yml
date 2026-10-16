@@ -136,6 +136,13 @@ jobs:
         working-directory: pipeline
         run: ../.venv/bin/python 03_music.py
 
+      # 16.10: на канал ушла «каша» (LRA 1.4), проверялись только тишина/LUFS. Критик: эталон жанра + audiobox CE.
+      # FAIL = выпуск не публикуется (TG alert ниже); следующий слот жанра генерирует заново.
+      - name: 03c quality gate (критик, FAIL = не публиковать)
+        if: steps.guard.outputs.published != '1'
+        working-directory: pipeline
+        run: python3 quality_gate.py
+
       - name: 04 assemble (ffmpeg)
         if: steps.guard.outputs.published != '1'
         working-directory: pipeline

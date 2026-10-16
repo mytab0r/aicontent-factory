@@ -25,8 +25,14 @@ def measure(path: str) -> dict:
             "tp": float(re.findall(r"Peak:\s+(-?[\d.]+) dBFS", tail)[-1])}
 
 
-def master(src: str, dst: str) -> dict:
-    af = ("highpass=f=28,bass=g=3:f=55,equalizer=f=300:t=q:w=1.2:g=-2,"
+# lofi (одобрен 13.10 по ref1, LRA ~11): только громкость платформы, без EQ/компрессоров.
+# Цепочка ниже одобрена для phonk (14.10); на lofi она давила LRA 10.9 -> 1.8 («каша», 16.10).
+LOFI_AF = "highpass=f=28,loudnorm=I=-14:TP=-2:LRA=11"
+
+
+def master(src: str, dst: str, genre: str = "chill phonk") -> dict:
+    phonk = "phonk" in genre
+    af = LOFI_AF if not phonk else ("highpass=f=28,bass=g=3:f=55,equalizer=f=300:t=q:w=1.2:g=-2,"
           "treble=g=2:f=10000,"
           "acompressor=threshold=-18dB:ratio=2.5:attack=20:release=250:makeup=2,"
           "extrastereo=m=1.2,"
@@ -48,12 +54,12 @@ def master(src: str, dst: str) -> dict:
     # ponytail: экстремальная динамика (длинные паузы) ломает LRA одним проходом —
     # повторные полные проходы сходятся (LRA 15.6->6.5->2.5); 3 прохода, дальше гейт.
     for _ in range(2):
-        if -15 <= m["i"] <= -13 and m["lra"] <= 8 and m["tp"] <= -1:
+        if -15 <= m["i"] <= -13 and (m["lra"] <= 8 or not phonk) and m["tp"] <= -1:
             break
         run(dst, dst)
         m = measure(dst)
     assert -15 <= m["i"] <= -13, f"гейт I: {m}"
-    assert m["lra"] <= 8, f"гейт LRA: {m}"
+    assert m["lra"] <= 8 or not phonk, f"гейт LRA: {m}"
     assert m["tp"] <= -1, f"гейт TP: {m}"
     return m
 

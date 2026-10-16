@@ -388,7 +388,7 @@ def main() -> None:
             for i, c in enumerate(chunks)
         ]
         concat_tracks(chunk_paths, out_path)
-    mastering.master(out_path, out_path)
+    mastering.master(out_path, out_path, genre=genre_name)
     (run_dir / "music_meta.json").write_text(
         json.dumps({"genre": genre_name, "prompt": prompt, "seed": seed, "duration": duration,
                     "chapters": chaps},
