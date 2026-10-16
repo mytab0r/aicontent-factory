@@ -219,7 +219,8 @@ class _Http:
 
 def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=None,
                        poll_sec: float = 5, timeout_sec: int = 3600, ref_audio=None,
-                       bpm: int | None = None, key: str | None = None) -> None:
+                       bpm: int | None = None, key: str | None = None,
+                       model: str | None = None) -> None:
     import json
     import time
     if os.environ.get("ACE15_TASK_TYPE", "text2music") != "text2music" or os.environ.get("ACE15_SRC_AUDIO"):
@@ -231,6 +232,11 @@ def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=
             "bpm": bpm or 70 + seed % 21, "key_scale": key or ACE15_KEYS[seed % len(ACE15_KEYS)],
             "time_signature": "4", "batch_size": 1, "thinking": True,
             "use_random_seed": False, "seed": seed, "audio_format": "mp3"}
+    # t_b4006a6e: модель на запрос (ACE15_MODEL, напр. acestep-v15-xl-sft). Нет в
+    # загруженных слотах -> сервер молча берёт primary; on-demand swap включается
+    # на контейнере (ACESTEP_ON_DEMAND_MODEL_LOAD, 1 worker) в xl-probe workflow.
+    if model:
+        body["model"] = model
     if ref_audio and Path(ref_audio).is_file():
         # Стиль по эталону (reference_audio): так одобрен звук 13.10.
         tid = api.post_file("/release_task", body, "reference_audio", ref_audio)["data"]["task_id"]
@@ -368,6 +374,7 @@ def main() -> None:
 
     out_path = run_dir / "track.mp3"
     chaps = []
+    bestof_meta = None
     ref, rot_meta, base_prompt = os.environ.get("ACE15_REF_AUDIO"), None, prompt
     if os.environ.get("G1ZM0_GATE") == "1":
         # t_d53850f6: эталон и промпт ротируются по дню; attempt>0 = перегенерация после Content ID claim
@@ -403,7 +410,27 @@ def main() -> None:
     elif os.environ.get("ACE15_ENDPOINT"):
         duration = min(duration, ACE15_MAX_SEC)
         tp, bpm, key = track_prompt(0)
-        generate_track_v15(tp, duration, seed, out_path, ref_audio=ref, bpm=bpm, key=key)
+        if os.environ.get("ACE15_BESTOF") and duration <= 120:
+            # t_b4006a6e: best-of-N по CE-критику (короткие релизы). XL-sft на N
+            # вызовов дороже по времени (50 шагов против 8), включается env-ом.
+            import bestof
+            n = int(os.environ["ACE15_BESTOF"])
+            cand = [run_dir / f"cand_{i:02d}.mp3" for i in range(n)]
+            for i, p in enumerate(cand):
+                generate_track_v15(tp, duration, seed + 1000 * i, p, ref_audio=ref,
+                                   bpm=bpm, key=key, model=os.environ.get("ACE15_MODEL"))
+            from quality_gate import ce_batch
+            bi, _, ce_all = bestof.best_of(n, lambda i: cand[i], ce_batch)
+            import shutil
+            shutil.copy(cand[bi], out_path)
+            for p in cand:
+                p.unlink(missing_ok=True)
+            bestof_meta = {"bestof": n, "model": os.environ.get("ACE15_MODEL"), "picked": bi,
+                           "ce": [[round(c, 2) for c in row] for row in ce_all]}
+        else:
+            bestof_meta = None
+            generate_track_v15(tp, duration, seed, out_path, ref_audio=ref, bpm=bpm, key=key,
+                               model=os.environ.get("ACE15_MODEL"))
     else:
         chunks = chunk_plan(duration)
         chunk_paths = [
@@ -414,7 +441,8 @@ def main() -> None:
     mastering.master(out_path, out_path)
     (run_dir / "music_meta.json").write_text(
         json.dumps({"genre": genre_name, "prompt": prompt, "seed": seed, "duration": duration,
-                    "chapters": chaps, "ref": rot_meta and rot_meta["ref"], "rotation": rot_meta},
+                    "chapters": chaps, "ref": rot_meta and rot_meta["ref"], "rotation": rot_meta,
+                    "bestof": bestof_meta},
                    ensure_ascii=False, indent=2),
         encoding="utf-8",
     )

@@ -113,7 +113,8 @@ with tempfile.TemporaryDirectory() as td:
     m = json.loads((run / "music_meta.json").read_text())
     p = rot.pick_prompt(dt.date(2026, 10, 16), 1)
     assert m["ref"] == want and m["rotation"]["attempt"] == 1, m
-    assert calls[0][1] == {"ref_audio": str(refs / f"{want}.wav"), "bpm": p["bpm"], "key": p["key"]}, calls
+    assert calls[0][1] == {"ref_audio": str(refs / f"{want}.wav"), "bpm": p["bpm"], "key": p["key"],
+                           "model": None}, calls  # model=None: ACE15_MODEL не задан в тесте
     assert p["instrument"] in calls[0][0] and music.GENRE_PROMPTS["anime lofi"] in calls[0][0]
 print("test_g1zm0_gate main OK")
 

@@ -1,0 +1,153 @@
+name: xl-probe
+# t_b4006a6e: живая проверка XL-sft + best-of-8 CE + LoRA на ПК (RTX 5070, 12GB).
+# Ручной запуск в окне между прод-слотами daily-video (следующий 09:00 UTC):
+#   workflow_dispatch train_lora=true делает всё; false = только XL+best-of-8.
+# Порядок: скачать XL-sft (18.8GB, один раз) -> on-demand swap -> 8 кандидатов XL-sft
+# -> CE всех одним прогоном критика -> winner + blind A/B -> (опция) LoRA на одобренных.
+on:
+  workflow_dispatch:
+    inputs:
+      train_lora:
+        description: "обучить LoRA на одобренных треках+эталонах после best-of-8"
+        type: boolean
+        default: false
+concurrency:
+  group: daily-video
+  cancel-in-progress: false
+jobs:
+  run:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: download xl_sft
+        run: |
+          docker exec ace-step sh -c 'test -f /app/checkpoints/acestep-v15-xl-sft/config.json' \
+            && { echo HAVE-XL; exit 0; } || true
+          docker run --rm -v /run/desktop/mnt/host/c/dockerlocal/ace15/checkpoints:/ck \
+            -e HF_TOKEN -e HF_HOME=/tmp/hf python:3.12-slim \
+            python -c "from huggingface_hub import snapshot_download; snapshot_download('ACE-Step/acestep-v15-xl-sft', local_dir='/ck/acestep-v15-xl-sft')"
+          docker exec ace-step sh -c 'test -f /app/checkpoints/acestep-v15-xl-sft/config.json'
+
+      # on-demand swap требует env на контейнере (env нельзя добавить без recreate):
+      # recreate с теми же mounts + новыми env. EOF-скрипт: старые env читаем из inspect.
+      - name: recreate ace-step with on-demand load
+        run: |
+          docker inspect ace-step --format '{{json .Config.Env}}' | grep -q ACESTEP_ON_DEMAND_MODEL_LOAD && { echo already; exit 0; }
+          IMAGE=$(docker inspect ace-step --format '{{.Config.Image}}')
+          docker run -d --name ace-step-new --restart unless-stopped \
+            --gpus all \
+            -e ACESTEP_MODE=api -e ACESTEP_LLM_BACKEND=pt \
+            -e ACESTEP_CONFIG_PATH=acestep-v15-turbo \
+            -e ACESTEP_CONFIG_PATH2=acestep-v15-base \
+            -e ACESTEP_LM_MODEL_PATH=acestep-5Hz-lm-1.7B \
+            -e ACESTEP_ON_DEMAND_MODEL_LOAD=true \
+            -e ACESTEP_QUEUE_WORKERS=1 -e ACESTEP_API_WORKERS=1 \
+            -e ACESTEP_API_HOST=0.0.0.0 -e ACESTEP_INIT_SERVICE=true \
+            -v /run/desktop/mnt/host/c/dockerlocal/ace15/checkpoints:/app/checkpoints \
+            -v /run/desktop/mnt/host/c/dockerlocal/ace15/output:/app/output \
+            -v /run/desktop/mnt/host/c/dockerlocal/ace15/hf:/root/.cache/huggingface \
+            "$IMAGE"
+          # сеть comfynet, чтобы ace-step:8001 резолвился с раннеров, как раньше
+          docker network connect comfynet ace-step-new || true
+          for i in $(seq 1 60); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step-new 2>/dev/null)" = healthy ] && break
+            sleep 6
+          done
+          [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step-new)" = healthy ] || { docker logs --tail 40 ace-step-new; exit 1; }
+          docker rm -f ace-step
+          docker rename ace-step-new ace-step
+          echo "ace-step пересоздан: turbo+base слоты, XL-sft по запросу (on-demand)"
+
+      - name: install deps
+        run: |
+          set -e
+          command -v ffmpeg >/dev/null || sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          python3 -m venv /tmp/xlv && /tmp/xlv/bin/pip -q install gradio_client numpy
+
+      - name: best-of-8 xl-sft + CE log + blind A/B
+        timeout-minutes: 240
+        run: |
+          set -e
+          cd pipeline
+          ACE15_ENDPOINT=http://ace-step:8001 /tmp/xlv/bin/python - <<'PY'
+          import importlib.util, json, shutil, sys, time
+          from pathlib import Path
+          sys.path.insert(0, ".")
+          spec = importlib.util.spec_from_file_location("music", "03_music.py")
+          music = importlib.util.module_from_spec(spec); spec.loader.exec_module(music)
+          spec_b = importlib.util.spec_from_file_location("bestof", "bestof.py")
+          bestof = importlib.util.module_from_spec(spec_b); spec_b.loader.exec_module(bestof)
+          from quality_gate import ce_batch
+          out = Path("/tmp/xlrun"); out.mkdir(exist_ok=True)
+          prompt = music.GENRE_PROMPTS["anime lofi"]
+          n = 8
+          cand = [out / f"cand_{i:02d}.mp3" for i in range(n)]
+          def gen(i):
+              # t0_00: сид фиксирован, отличие только сэмпл-шум модели
+              music.generate_track_v15(prompt, 90, 7000 + i, cand[i],
+                                       model="acestep-v15-xl-sft")
+              return str(cand[i])
+          t0 = time.time()
+          bi, bp, ce = bestof.best_of(n, gen, ce_batch)
+          dt_s = round(time.time() - t0)
+          rows = [{"cand": i, "ce": ce[i], "ce_min": min(ce[i])} for i in range(n)]
+          report = {"model": "acestep-v15-xl-sft", "bestof": n, "picked": bi,
+                    "gen_sec_total": dt_s, "sec_per_cand": round(dt_s / n), "ce": rows}
+          (out / "ce_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=1))
+          print(json.dumps(report, ensure_ascii=False, indent=1))
+          # слепой A/B: winner XL-sft (sample_A) против текущего прода turbo (sample_B)
+          shutil.copy(bp, out / "sample_A.mp3")
+          music.generate_track_v15(prompt, 90, 7000 + bi, out / "sample_B.mp3")
+          (out / ".labels.json").write_text(json.dumps(
+              {"sample_A.mp3": "xl-sft best-of-8 winner", "sample_B.mp3": "turbo prod"}))
+          print("blind A/B ready: sample_A/sample_B")
+          PY
+
+      - name: upload gate-samples
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-samples
+          path: |
+            /tmp/xlrun/sample_A.mp3
+            /tmp/xlrun/sample_B.mp3
+            /tmp/xlrun/ce_report.json
+
+      # LoRA: только одобренные владельцем треки (A/B v4 clean: calmant, carefree,
+      # windswept) + одобренные эталоны CC BY. Обучение в контейнере (train.py,
+      # Tight-профиль 12GB: rank32, adamw8bit, offload-encoder). API недоступен
+      # во время обучения (VRAM) — окно между прод-слотами.
+      - name: train lora (approved only)
+        if: ${{ inputs.train_lora }}
+        timeout-minutes: 240
+        run: |
+          set -e
+          docker exec ace-step mkdir -p /app/output/lora/audio
+          # A/B v4 clean (t_6aa41295): файлы в workspace репо t_6aa41295 на этом же раннере
+          for f in ab_2_macleod_calmant ab_1_macleod_carefree ab_3_macleod_windswept; do
+            SRC=$(find /tmp/runner -name "$f.mp3" 2>/dev/null | head -1)
+            [ -n "$SRC" ] && docker cp "$SRC" ace-step:/app/output/lora/audio/ && echo "approved: $f"
+          done
+          # эталоны CC BY (одобрены как источники стиля, refs/LICENSES.md)
+          python3 pipeline/fetch_refs.py || true
+          for w in /tmp/acf-refs/*.wav; do
+            [ -e "$w" ] && docker cp "$w" ace-step:/app/output/lora/audio/
+          done
+          N=$(docker exec ace-step sh -c 'ls /app/output/lora/audio | wc -l')
+          echo "dataset: $N approved files"
+          [ "$N" -ge 4 ] || { echo "::error::одобренных треков < 4, LoRA не обучаем"; exit 1; }
+          docker exec ace-step sh -c 'cd /app && python train.py fixed \
+            --checkpoint-dir /app/checkpoints --model-variant acestep-v15-xl-sft \
+            --base-model xl_sft --preprocess --audio-dir /app/output/lora/audio \
+            --tensor-output /app/output/lora/tensors --output-dir /app/output/lora/out \
+            --rank 32 --optimizer-type adamw8bit --offload-encoder \
+            --batch-size 1 --gradient-accumulation 8 --epochs 3 --plain --yes'
+          docker exec ace-step sh -c 'ls -la /app/output/lora/out'
+
+      - name: upload lora
+        if: ${{ inputs.train_lora }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: lora-xl-sft
+          path: /tmp/lora/out
