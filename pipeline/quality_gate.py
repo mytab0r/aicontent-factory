@@ -73,9 +73,8 @@ def _ce_run(files):
                             "-i", str(f), p], check=True)
             subprocess.run(["docker", "cp", p, f"ace-step:/app/output/qg/in/"], check=True)
             clips.append(f"in/{p.split('/')[-1]}")
-    # список клипов через env (не инжект в код: кавычки ломают sh -c, видно на прогоне 4)
-    out = subprocess.run(["docker", "exec", "ace-step", "sh", "-c",
-                          f"QG_CLIPS='{json.dumps(clips)}' {AES}"],
+    # список клипов через docker exec -e (env в команду не попасть: sh -c сбрасывает префикс внутри AES)
+    out = subprocess.run(["docker", "exec", "-e", f"QG_CLIPS={json.dumps(clips)}", "ace-step", "sh", "-c", AES],
                          capture_output=True, text=True, timeout=1500)
     res = {}
     for l in out.stdout.splitlines():
