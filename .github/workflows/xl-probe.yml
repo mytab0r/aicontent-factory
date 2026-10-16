@@ -27,7 +27,8 @@ jobs:
             && { echo HAVE-XL; exit 0; } || true
           docker run --rm -v /run/desktop/mnt/host/c/dockerlocal/ace15/checkpoints:/ck \
             -e HF_TOKEN -e HF_HOME=/tmp/hf python:3.12-slim \
-            python -c "from huggingface_hub import snapshot_download; snapshot_download('ACE-Step/acestep-v15-xl-sft', local_dir='/ck/acestep-v15-xl-sft')"
+            sh -c "pip install -q --no-warn-script-location 'huggingface_hub[hf_transfer]' && \
+              python -c \"from huggingface_hub import snapshot_download; snapshot_download('ACE-Step/acestep-v15-xl-sft', local_dir='/ck/acestep-v15-xl-sft', max_workers=4)\""
           docker exec ace-step sh -c 'test -f /app/checkpoints/acestep-v15-xl-sft/config.json'
 
       # on-demand swap требует env на контейнере (env нельзя добавить без recreate):
