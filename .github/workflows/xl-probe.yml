@@ -90,6 +90,7 @@ jobs:
           mkdir -p /tmp/runner/aicontent-factory/xlrun
           cp /tmp/xlrun/sample_A.mp3 /tmp/xlrun/sample_B.mp3 /tmp/xlrun/ce_report.json \
             /tmp/runner/aicontent-factory/xlrun/ 2>/dev/null || true
+          [ -d /tmp/xlrun/ab4 ] && cp -r /tmp/xlrun/ab4 /tmp/runner/aicontent-factory/xlrun/ 2>/dev/null || true
           ls -la /tmp/runner/aicontent-factory/xlrun/
 
       - name: best-of-8 xl-sft + CE log + blind A/B
@@ -131,6 +132,24 @@ jobs:
               {"sample_A.mp3": "xl-sft best-of-8 winner", "sample_B.mp3": "turbo prod"}))
           print("blind A/B ready: sample_A/sample_B")
           PY
+
+      # A/B v4 (t_d53850f6, обновлено t_b4006a6e): 4 сэмпла дня на 4 разных CC BY эталонах.
+      # Генерится каждый прогон независимо от salvage (это уже другая пара для владельца).
+      - name: fetch refs (CC BY pool)
+        run: |
+          set -e
+          G1ZM0_REF_DIR=/tmp/acf-refs python3 pipeline/fetch_refs.py || true   # 429-ретраи внутри
+          ls /tmp/acf-refs/*.wav | wc -l
+      - name: blind A/B v4 (4 refs)
+        if: ${{ steps.salvage.outputs.rc != '0' }}
+        timeout-minutes: 120
+        run: |
+          set -e
+          cd pipeline
+          G1ZM0_REF_DIR=/tmp/acf-refs ACE15_ENDPOINT=http://ace-step:8001 \
+          ACE15_MODEL=acestep-v15-xl-sft /tmp/xlv/bin/python g1zm0_ab.py "$(date -u +%F)" /tmp/xlrun/ab4 90
+          rm -f /tmp/xlrun/ab4/upload_day.txt /tmp/xlrun/ab4/report.md  # владельцу файлы не нужны
+          ls -la /tmp/xlrun/ab4/
 
       - name: upload gate-samples
         if: ${{ steps.salvage.outputs.rc != '0' }}
@@ -238,3 +257,22 @@ jobs:
                   print(f"XL64 v{i + 1} {j // 60000:04d} {b[j:j + 60000]}")
           print(f"XL64 ce {json.dumps(rep, ensure_ascii=False)}")
           PY
+          # A/B v4 (4 эталона) — тоже в лог для агента VPS
+          AB4D=""
+          for d in /tmp/runner/aicontent-factory/xlrun/ab4 /tmp/xlrun/ab4; do
+          if [ -d "$d" ]; then AB4D="$d"; break; fi
+          done
+          if [ -n "$AB4D" ]; then
+          SRC="$AB4D" python3 - <<'PY'
+          import base64, hashlib, json, os
+          from pathlib import Path
+          src = Path(os.environ["SRC"])
+          files = sorted(src.glob("ab_*.mp3"))
+          print("AB4META " + json.dumps({f.name: hashlib.sha256(f.read_bytes()).hexdigest() for f in files}))
+          for f in files:
+              b = base64.b64encode(f.read_bytes()).decode()
+              print(f"AB64 {f.name} len={len(b)}")
+              for j in range(0, len(b), 60000):
+                  print(f"AB64 {f.name} {j // 60000:04d} {b[j:j + 60000]}")
+          PY
+          fi
