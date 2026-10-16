@@ -32,7 +32,8 @@ jobs:
       fail-fast: false
       matrix:
         genre: ["anime lofi"]
-    runs-on: [self-hosted, release]
+    # pc-acf-release: setup-uv падает EACCES (spawn uv, 16.10) — выпуск на проверенном pc-acf
+    runs-on: [self-hosted, pc]
     timeout-minutes: 75
     env:
       ROUTER_BASE_URL: https://9router.pxbt.app/v1
