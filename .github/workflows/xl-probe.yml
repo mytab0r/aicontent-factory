@@ -85,6 +85,12 @@ jobs:
           else
             echo "rc=1" >> "$GITHUB_OUTPUT"; echo "результатов нет — полный прогон"
           fi
+          # копия в workdir (volume хоста): salvage-tg на release-полосе заберёт отсюда
+          rm -rf /tmp/runner/aicontent-factory/xlrun
+          mkdir -p /tmp/runner/aicontent-factory/xlrun
+          cp /tmp/xlrun/sample_A.mp3 /tmp/xlrun/sample_B.mp3 /tmp/xlrun/ce_report.json \
+            /tmp/runner/aicontent-factory/xlrun/ 2>/dev/null || true
+          ls -la /tmp/runner/aicontent-factory/xlrun/
 
       - name: best-of-8 xl-sft + CE log + blind A/B
         if: ${{ steps.salvage.outputs.rc != '0' }}
