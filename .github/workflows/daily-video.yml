@@ -31,8 +31,7 @@ jobs:
     # one video per genre per day, each into its own playlist (05_publish.py).
     # 2 жанра = 2 выпуска/день (t_c678b8fa): "anime lofi" (одобрен 13.10) и
     # "chill phonk" (направление одобрено 14.10, v2 выбран оркестратором 16.10).
-    # Каждый жанр на своих cron-слотах; ручной dispatch гоняет оба (guard-фильтр).
-    if: github.event_name != 'schedule' || github.event.schedule == matrix.slots
+    # Жанр живёт на своих cron-слотах (см. guard-step); ручной dispatch гоняет оба.
     strategy:
       max-parallel: 1  # single GPU
       fail-fast: false
@@ -69,11 +68,18 @@ jobs:
           clean: true  # self-hosted: wipe previous runs/ so disk doesn't grow
 
       # schedule опаздывает до 18:41 UTC -> второй long-form за сутки (12.10). Ручной dispatch = намеренный.
-      - name: guard (один long-form в сутки)
+      # Слот жанра: cron-ы обеих матриц срабатывают оба, чужой слот = published=1 (скип всех шагов).
+      - name: guard (один long-form жанра в сутки)
         id: guard
         if: github.event_name == 'schedule' || inputs.scheduled
         working-directory: pipeline
-        run: python3 watchdog.py --guard
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" != "${{ matrix.slots }}" ]; then
+            echo "не слот жанра $GENRE (его слоты: ${{ matrix.slots }}), скип"
+            echo "published=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          python3 watchdog.py --guard
 
       - uses: astral-sh/setup-uv@v3
         if: steps.guard.outputs.published != '1'
