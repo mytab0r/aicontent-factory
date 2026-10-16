@@ -72,6 +72,23 @@ def ab_samples(day) -> list[dict]:
     return [{"ref": pick_ref(day, i), **pick_prompt(day, i)} for i in range(4)]
 
 
+# Дни выпусков daily-video (Mon=0). Дневной лимит загрузок канала общий: A/B-заливки
+# (4 unlisted) в день выпуска съедают его -> uploadLimitExceeded (t_6aa41295, 16.10).
+# ponytail: дефолт = все дни (cron daily-video "* * *"); свободный день появится, только если
+# задать G1ZM0_RELEASE_WEEKDAYS (напр. "0,1,2,3,4,5"). Апгрейд: бюджет по счётчику загрузок дня.
+RELEASE_WEEKDAYS = {int(x) for x in os.environ.get("G1ZM0_RELEASE_WEEKDAYS", "0,1,2,3,4,5,6").split(",") if x.strip()}
+
+
+def ab_upload_day(day, release_weekdays=None, horizon: int = 14):
+    """Ближайший день >= day без выпусков для A/B-заливки; None = свободных дней нет в горизонте."""
+    rw = RELEASE_WEEKDAYS if release_weekdays is None else set(release_weekdays)
+    for i in range(horizon):
+        d = day + dt.timedelta(i)
+        if d.weekday() not in rw:
+            return d
+    return None
+
+
 def approve(marker_dir: Path, track_id: str) -> None:
     Path(marker_dir).mkdir(parents=True, exist_ok=True)
     (Path(marker_dir) / f"{track_id}.approved").write_text("ok")
@@ -110,9 +127,13 @@ def yt_claim_status(youtube, video_id: str) -> str:
     return "clean"
 
 
-def upload_unlisted(youtube, path: str, title: str):
+def upload_unlisted(youtube, path: str, title: str, today=None):
     """Загрузка ТОЛЬКО unlisted (никогда public) для Content ID пре-чека.
-    None = uploadLimitExceeded: слот пропущен, одно TG-сообщение, файл не тронут."""
+    None = отложено: день выпуска (ab_upload_day) или uploadLimitExceeded (одно TG), файл не тронут."""
+    today = today or dt.datetime.now(dt.timezone.utc).date()
+    if ab_upload_day(today) != today:
+        print(f"defer: {Path(path).name} -- день выпуска, A/B-заливка в ближайший свободный день")
+        return None
     from googleapiclient.http import MediaFileUpload
     body = {"snippet": {"title": title[:100], "categoryId": "10"},
             "status": {"privacyStatus": "unlisted", "selfDeclaredMadeForKids": False,

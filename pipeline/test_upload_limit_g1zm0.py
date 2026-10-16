@@ -12,6 +12,7 @@ sent = []
 sys.modules["common"] = types.SimpleNamespace(tg_send=lambda t: sent.append(t) or True)
 sys.path.insert(0, str(Path(__file__).parent))
 import g1zm0_rotation as rot  # noqa: E402
+rot.RELEASE_WEEKDAYS = set()  # день без выпусков: проверяем именно uploadLimitExceeded (t_841ee449)
 
 
 def http_error(cls, status, reason):

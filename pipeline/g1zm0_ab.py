@@ -30,9 +30,13 @@ def main() -> int:
         music.generate_track_v15(prompt, sec, 1000 + i, f, ref_audio=str(ref), bpm=s["bpm"], key=s["key"])
         rows.append(f"| {i + 1} | {f.name} | {s['ref']} | {s['instrument']} | {s['key']} | {s['bpm']} | {f.stat().st_size} |")
         print("ok", f)
+    # генерация лимит загрузок не тратит; заливка unlisted -- только в день без выпуска
+    up = rot.ab_upload_day(day)
+    (out / "upload_day.txt").write_text(up.isoformat() if up else "", encoding="utf-8")
     (out / "report.md").write_text(
         f"# G1zm0 A/B {day}\n\n4 сэмпла, 4 разных эталона (CC BY 3.0, refs/LICENSES.md). "
         "Публикация только после одобрения владельца.\n\n"
+        f"Заливка unlisted (Content ID): {up or 'нет дня без выпуска, задай G1ZM0_RELEASE_WEEKDAYS'}\n\n"
         "| # | файл | эталон | инструмент | тональность | BPM | байт |\n|---|---|---|---|---|---|---|\n"
         + "\n".join(rows) + "\n", encoding="utf-8")
     return 0
