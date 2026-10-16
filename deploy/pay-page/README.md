@@ -56,9 +56,9 @@ KV = `$DATA_DIR/kv.json`. CI: `ci` (тесты + smoke образа) → на ma
    `CF_ACCESS_AUD` (AUD-тег приложения Access), `PAY_API_TOKEN` (для создания счетов ботом).
 2. `mkdir -p data && sudo chown 1000:1000 data` (процесс в контейнере — uid 1000 `node`;
    root-owned каталог = контейнер не стартует с ошибкой про chown), затем `docker compose up -d`; Cloudflare Tunnel/прокси: `pay.pxbt.app` → `127.0.0.1:8090`.
-3. Zero Trust → Access → приложение `pay.pxbt.app/admin`, `/api/admin/*`, `/api/claim/*`,
-   policy = email владельца. Сервер сам проверяет JWT Access (RS256, aud, iss, exp, email);
-   без настроенных `CF_ACCESS_*` админка закрыта (403).
+3. Вход в админку — Zoraxy SSO (`sso.pxbt.app`), см. «Доступ к /admin». В `.env`
+   задать `PROXY_AUTH_SECRET` (случайный); тот же секрет — в Zoraxy как заголовок
+   `x-pay-proxy-auth` для `pay.pxbt.app`. `CF_ACCESS_*` — устаревший запасной путь.
 
 Создать счёт: `curl -X POST https://pay.pxbt.app/api/invoice -H "authorization: Bearer $PAY_API_TOKEN" -d '{"amount":1}'`.
 
@@ -72,9 +72,19 @@ Ponytail: хвостов 999 на одну базовую сумму; колли
 
 ## Доступ к /admin
 
-Cloudflare Zero Trust → Access → приложение на `pay.pxbt.app/admin` (и
-`/api/admin/*` + `/api/claim/*`): policy = email владельца. Подпись кошелька —
-второй фактор (адрес не сохранится без валидной подписи).
+Zoraxy SSO (единый вход `sso.pxbt.app`) на весь хост `pay.pxbt.app`:
+- Zoraxy: AuthMethod=SSO; исключения (без логина): `/i/`, `/api/invoice`, `/healthz`;
+  UserDefinedHeaders `x-pay-proxy-auth=<PROXY_AUTH_SECRET>`.
+- Сервер пускает в `/admin`, `/api/admin/*`, `/api/claim/*` только с этим заголовком
+  (или с JWT CF Access, если `CF_ACCESS_*` заданы). Подделка заголовка извне не проходит:
+  без входа Zoraxy отвечает 307 на SSO раньше приложения.
+- Создание счёта (`POST /api/invoice`) — только Bearer `PAY_API_TOKEN` или владелец.
+- CF Access apps на `pay.pxbt.app/*` не используются (Zoraxy SSO заменил их).
+- Подпись кошелька — второй фактор (адрес не сохранится без валидной подписи).
+
+Проверка (2026-10-16): `/`, `/admin`, `/api/admin/*`, `/api/claim/*` → 307
+`sso.pxbt.app`; `/healthz` 200; `/i/x` и `/api/invoice/x` 404 без логина;
+`POST /api/invoice` без токена 403; `/admin` с поддельным `x-pay-proxy-auth` → 307.
 
 ## Альтернатива: CF Pages (без контейнера)
 
@@ -84,7 +94,7 @@ Cloudflare Zero Trust → Access → приложение на `pay.pxbt.app/adm
 2. Pages project → Settings → Functions → KV namespace bindings:
    `KV` → создать namespace `pay_pxbt_kv` (Free-плана достаточно).
 3. Custom domain: `pay.pxbt.app` (зона pxbt.app уже в CF).
-4. Zero Trust → Access (см. выше).
+4. Доступ к админке — см. «Доступ к /admin».
 5. Подключить кошельки: открыть `https://pay.pxbt.app/admin`, подключить
    EVM/Tron(/Solana), включить пары, «Сохранить».
 6. Создать тестовый инвойс и проверить оплату (acceptance #4):
