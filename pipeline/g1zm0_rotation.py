@@ -110,8 +110,9 @@ def yt_claim_status(youtube, video_id: str) -> str:
     return "clean"
 
 
-def upload_unlisted(youtube, path: str, title: str) -> str:
-    """Загрузка ТОЛЬКО unlisted (никогда public) для Content ID пре-чека."""
+def upload_unlisted(youtube, path: str, title: str):
+    """Загрузка ТОЛЬКО unlisted (никогда public) для Content ID пре-чека.
+    None = uploadLimitExceeded: слот пропущен, одно TG-сообщение, файл не тронут."""
     from googleapiclient.http import MediaFileUpload
     body = {"snippet": {"title": title[:100], "categoryId": "10"},
             "status": {"privacyStatus": "unlisted", "selfDeclaredMadeForKids": False,
@@ -119,8 +120,16 @@ def upload_unlisted(youtube, path: str, title: str) -> str:
     req = youtube.videos().insert(part="snippet,status", body=body,
                                   media_body=MediaFileUpload(path, resumable=True, chunksize=4 << 20))
     resp = None
-    while resp is None:
-        _, resp = req.next_chunk(num_retries=5)
+    try:
+        while resp is None:
+            _, resp = req.next_chunk(num_retries=5)
+    except Exception as e:
+        # дневной лимит загрузок канала (общий с daily-video): слот пропускаем, файл не трогаем
+        if b"uploadLimitExceeded" not in (getattr(e, "content", None) or b""):
+            raise
+        from common import tg_send
+        tg_send(f"⏸ YouTube uploadLimitExceeded: {Path(path).name} не загружен, повтор в следующем слоте")
+        return None
     return resp["id"]
 
 
