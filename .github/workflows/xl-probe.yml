@@ -74,7 +74,22 @@ jobs:
           done
           /tmp/xlv/bin/python -c "import gradio_client, numpy"
 
+      # артефакты GitHub упираются в storage quota (пересчёт 6-12 ч): если результаты
+      # прошлого прогона целы на раннере (/tmp/xlrun) — спасаем их в TG и скипаем gen.
+      - name: salvage previous run (quota workaround)
+        id: salvage
+        working-directory: pipeline
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          TG_THREAD_ID: ${{ secrets.TG_THREAD_ID }}
+        run: |
+          python3 fetch_xlrun.py /tmp/xlrun; rc=$?   # 0=отправлено+skip gen, 1=нет файлов, 2=TG fail
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          exit 0  # шаг не должен валить прогон: rc решает только, генерить ли заново
+
       - name: best-of-8 xl-sft + CE log + blind A/B
+        if: ${{ steps.salvage.outputs.rc != '0' }}
         timeout-minutes: 240
         run: |
           set -e
@@ -114,6 +129,8 @@ jobs:
           PY
 
       - name: upload gate-samples
+        if: ${{ steps.salvage.outputs.rc != '0' }}
+        continue-on-error: true  # quota может быть ещё не пересчитана — не валить прогон
         uses: actions/upload-artifact@v4
         with:
           name: gate-samples
@@ -127,7 +144,7 @@ jobs:
       # Tight-профиль 12GB: rank32, adamw8bit, offload-encoder). API недоступен
       # во время обучения (VRAM) — окно между прод-слотами.
       - name: train lora (approved only)
-        if: ${{ inputs.train_lora }}
+        if: ${{ inputs.train_lora && steps.salvage.outputs.rc != '0' }}
         timeout-minutes: 240
         run: |
           set -e

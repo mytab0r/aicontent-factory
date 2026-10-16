@@ -1,35 +1,36 @@
 #!/usr/bin/env python3
-"""t_b4006a6e, run 198: обойти Artifact storage quota GitHub (пересчёт 6-12 ч).
+"""t_b4006a6e: слепая отправка A/B сэмплов владельцу через TG sendAudio + salvage.
 
-Результаты прогона 8 лежат на диске раннера ПК (/tmp/xlrun): ce_report.json,
-sample_A.mp3 (XL best-of-8), sample_B.mp3 (prod turbo), .labels.json.
-Запуск на ПК: python3 fetch_xlrun.py <workspace_dir> [/tmp/xlrun]
-Копирует результаты в канбан-workspace (их приложу к карточке) и шлёт
-слепой A/B владельцу в TG-топик quality_gate (sendAudio через Bot API).
+Зачем: Artifact storage quota GitHub исчерпана (пересчёт 6-12 ч), артефакт
+gate-samples не грузится; /tmp/xlrun на раннере persists между запусками
+контейнера — результаты прошлого прогона спасаем и отдаём в TG-топик.
+Возврат: 0 = отправлено (в GITHUB_ENV пишется SALVAGE=1, gen можно скипнуть),
+1 = файлов нет (прогон обязан сгенерить заново), 2 = файлы есть, TG не прошёл.
+Порядок версий в сообщениях случайный, маппинг пишется в лог задания.
 """
 import json
+import os
+import random
 import sys
+import urllib.parse
 import urllib.request
+import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from common import tg_send  # noqa: E402
 
-WS = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(".")
-SRC = Path(sys.argv[2] if len(sys.argv) > 2 else "/tmp/xlrun")
+SRC = Path(sys.argv[1] if len(sys.argv) > 1 else "/tmp/xlrun")
+FILES = ("sample_A.mp3", "sample_B.mp3", "ce_report.json")
 
 
 def tg_send_file(path: Path, caption: str) -> bool:
-    """sendAudio в TG-топик (TG_BOT_TOKEN/TG_CHAT_ID[/TG_THREAD_ID])."""
-    import os
-    import urllib.parse
-    import uuid
     token, chat = os.environ.get("TG_BOT_TOKEN"), os.environ.get("TG_CHAT_ID")
     if not token or not chat:
         print("TG skip: нет TG_BOT_TOKEN/TG_CHAT_ID")
         return False
     boundary = uuid.uuid4().hex
-    parts = [("chat_id", chat), ("caption", caption), ("performer", "A/B")]
+    parts = [("chat_id", chat), ("caption", caption[:1000]), ("performer", "blind A/B"), ("title", path.stem)]
     if os.environ.get("TG_THREAD_ID"):
         parts.append(("message_thread_id", os.environ["TG_THREAD_ID"]))
     body = b""
@@ -41,7 +42,7 @@ def tg_send_file(path: Path, caption: str) -> bool:
     req = urllib.request.Request(f"https://api.telegram.org/bot{token}/sendAudio", data=body,
                                  headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
     try:
-        urllib.request.urlopen(req, timeout=60)
+        urllib.request.urlopen(req, timeout=120)
         return True
     except Exception as e:
         print(f"TG fail: {type(e).__name__}")
@@ -49,24 +50,26 @@ def tg_send_file(path: Path, caption: str) -> bool:
 
 
 def main() -> int:
-    missing = [n for n in ("sample_A.mp3", "sample_B.mp3", "ce_report.json") if not (SRC / n).is_file()]
+    missing = [n for n in FILES if not (SRC / n).is_file()]
     if missing:
-        print(f"нет файлов на раннере: {missing}")
+        print(f"salvage: нет файлов ({missing}) — нужен полный прогон")
         return 1
-    WS.mkdir(parents=True, exist_ok=True)
-    for n in ("sample_A.mp3", "sample_B.mp3", "ce_report.json"):
-        (WS / n).write_bytes((SRC / n).read_bytes())
-    print("copied:", sorted(p.name for p in WS.iterdir()))
     rep = json.loads((SRC / "ce_report.json").read_text())
+    order = [("sample_A.mp3", "XL-sft best-of-8"), ("sample_B.mp3", "turbo prod")]
+    random.shuffle(order)
+    print("BLIND MAP (не для владельца):", {f"Версия {i + 1}": m for i, (f, m) in enumerate(order)})
     ok = True
-    for n, cap in (("sample_A.mp3", "Версия 1"), ("sample_B.mp3", "Версия 2")):
-        ok &= tg_send_file(WS / n, f"Слепой A/B t_b4006a6e: {cap}. Какой трек лучше? Ответ: 1 или 2.")
+    for i, (f, m) in enumerate(order):
+        ok &= tg_send_file(SRC / f, f"Слепой A/B t_b4006a6e — Версия {i + 1}. Какой трек лучше? Ответ: 1 или 2.")
     if ok:
-        tg_send(f"Слепой A/B t_b4006a6e отправлен двумя сообщениями выше. "
-                f"best-of-8 XL-sft: picked #{rep['picked'] + 1}, CE {rep['ce']}")
-    else:
-        print("sendAudio не прошёл — файлы лежат в workspace, вложу в канбан-карточку")
-    return 0 if ok else 2
+        tg_send(f"A/B t_b4006a6e: два трека выше (Версия 1 и Версия 2). Ответь номером лучше. "
+                f"CE отчёт: picked #{rep['picked'] + 1}/{rep['bestof']}, sec/cand {rep.get('sec_per_cand')}.")
+        gev = os.environ.get("GITHUB_ENV")
+        if gev:
+            with open(gev, "a") as fh:
+                fh.write("SALVAGE=1\n")
+        return 0
+    return 2
 
 
 if __name__ == "__main__":
