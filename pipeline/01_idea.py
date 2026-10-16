@@ -8,6 +8,7 @@ from pathlib import Path
 
 import dd_channel
 from common import STATE_DIR, rotate, router_post, next_mood, new_run_dir
+from watchdog import GENRE_IN_TITLE
 
 # ponytail: фолбэк по списку; квота gemini кончается -> следующая модель
 MODELS = ["gemini/gemini-3.8-flash", "auto-worker-combo", "cx/gpt-5.5"]
@@ -91,6 +92,22 @@ def fallback_idea(mood: str, state_dir: Path | None = None) -> dict:
     }
 
 
+def ensure_genre_word(title: str, mood: str) -> str:
+    """Гарантия слова жанра в title: guard дублей (watchdog.already_published)
+    ищет маркер жанра в заголовке; если LLM его не принёс — дописываем
+    детерминированно («... Phonk Beats»), сохраняя лимит 70 символов."""
+    toks = GENRE_IN_TITLE.get((mood or "").lower())
+    if not toks or any(t in title.lower() for t in toks):
+        return title
+    word = toks[0].capitalize()
+    for suffix in (f" {word} Beats", f" | {word}", f" [{word}]"):
+        if len(title + suffix) <= 70:
+            return title + suffix
+    # ponytail: обрезка хвоста под маркер; аудиту заголовков — при жалобах guard'а.
+    keep = title[: 70 - len(suffix) - 1].rstrip()
+    return f"{keep} {suffix.strip()}" if keep else suffix.strip()
+
+
 def main() -> None:
     channel = os.environ.get("CHANNEL", "lofi")
     if channel == "dd":
@@ -136,6 +153,13 @@ def main() -> None:
     if channel == "dd":
         idea["channel"] = "dd"
         idea["scene"] = scene["name"] if scene else None
+    else:
+        # Пост-проверка слова жанра (t_93ee3737): guard дублей матчит маркер жанра
+        # в заголовке; если LLM его пропустил — детерминированно дописываем.
+        fixed = ensure_genre_word(idea.get("title", ""), mood)
+        if fixed != idea.get("title"):
+            print(f"title без слова жанра ({mood}); исправлено: {fixed!r}"[:300])
+            idea["title"] = fixed
 
     run_dir = new_run_dir()
     out_path = run_dir / "idea.json"
