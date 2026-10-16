@@ -146,6 +146,9 @@ jobs:
         working-directory: pipeline
         env:
           YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}  # uploadLimitExceeded -> одно TG-сообщение
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          TG_THREAD_ID: ${{ secrets.TG_THREAD_ID }}
         run: |
           if [ -n "$YOUTUBE_TOKEN_JSON" ]; then
             mkdir -p ../.state
