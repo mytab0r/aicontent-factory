@@ -141,10 +141,10 @@ jobs:
           G1ZM0_REF_DIR=/tmp/acf-refs python3 pipeline/fetch_refs.py || true   # 429-ретраи внутри
           ls /tmp/acf-refs/*.wav | wc -l
       - name: blind A/B v4 (4 refs)
-        if: ${{ steps.salvage.outputs.rc != '0' }}
         timeout-minutes: 120
         run: |
           set -e
+          rm -rf /tmp/xlrun/ab4   # старьё прошлых прогонов не должно уйти владельцу
           cd pipeline
           G1ZM0_REF_DIR=/tmp/acf-refs ACE15_ENDPOINT=http://ace-step:8001 \
           ACE15_MODEL=acestep-v15-xl-sft /tmp/xlv/bin/python g1zm0_ab.py "$(date -u +%F)" /tmp/xlrun/ab4 90
