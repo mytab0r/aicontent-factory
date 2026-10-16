@@ -1,0 +1,16 @@
+name: xl-probe
+on:
+  push: {branches: ["exp/xl-sft"], paths: [".github/workflows/xl-probe.yml"]}
+jobs:
+  run:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 15
+    steps:
+      - name: probe
+        run: |
+          docker run --rm -v /run/desktop/mnt/host:/h:ro alpine:3.20 df -h /h/c /h/d
+          docker info --format 'mem={{.MemTotal}} cpus={{.NCPU}}'
+          docker inspect ace-step --format 'img={{.Config.Image}} env={{json .Config.Env}} mounts={{json .Mounts}} mem={{.HostConfig.Memory}}'
+          docker run --rm -v /run/desktop/mnt/host/c/dockerlocal/ace15:/a:ro alpine:3.20 sh -c 'du -sh /a/checkpoints/* /a/output 2>/dev/null; ls /a/output | head'
+          docker exec ace-step sh -c 'free -g; nvidia-smi --query-gpu=memory.used,memory.total --format=csv; cd /app && git log -1 --oneline 2>/dev/null; ls /app; python -c "import torchao;print(torchao.__version__)" 2>&1 | tail -1; ls /app/acestep/training_v2 2>/dev/null | head'
+          docker ps --format '{{.Names}} {{.Status}}'
