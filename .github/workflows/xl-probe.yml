@@ -201,8 +201,10 @@ jobs:
           done
           if [ -z "$SRC" ]; then
             echo "прямой путь не найден — пробую volume pc-раннера"
+            docker run --rm -v gh-runner-aicontent-factory-work:/w:ro alpine:3.20 \
+              sh -c 'find /w -maxdepth 4 -type d -name xlrun; find /w -maxdepth 4 -name "sample_A.mp3"; ls -la /w' || true
             docker run --rm -v gh-runner-aicontent-factory-work:/w:ro -v "$PWD":/out alpine:3.20 \
-              sh -c 'find /w -maxdepth 3 -name sample_A.mp3 -exec cp -r "$(dirname "$(dirname {})" )" /out/xlrun \;' || true
+              sh -c 'f=$(find /w -maxdepth 5 -name sample_A.mp3 | head -1); [ -n "$f" ] && cp -r "$(dirname "$f")" /out/xlrun' || true
             [ -f ./xlrun/sample_A.mp3 ] && SRC=./xlrun
           fi
           if [ -z "$SRC" ]; then
