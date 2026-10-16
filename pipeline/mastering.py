@@ -38,7 +38,7 @@ def master(src: str, dst: str) -> dict:
           "loudnorm=I=-14:TP=-2:LRA=8")
     def run(s: str, d: str) -> None:
         # пишем во временный файл: ffmpeg не может писать в свой же вход (src == dst)
-        tmp = d + ".tmp.mp3"
+        tmp = f"{d}.tmp.mp3"  # d бывает Path (03_music)
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", s, "-af", af,
                         "-c:a", "libmp3lame", "-b:a", "192k", tmp], check=True)
         os.replace(tmp, d)

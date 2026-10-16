@@ -51,7 +51,7 @@ def run_master(src: Path, dst: Path) -> None:
     spec = importlib.util.spec_from_file_location("mastering", MASTERING)
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
-    m.master(str(src), str(dst))
+    m.master(src, dst)  # Path, как в 03_music (run 38881864243: TypeError Path+str)
 
 
 with tempfile.TemporaryDirectory() as td:
