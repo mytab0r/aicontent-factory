@@ -2,7 +2,8 @@ name: daily lo-fi video
 
 on:
   schedule:
-    - cron: "0 9 * * *"  # 09:00 UTC daily
+    # 3 слота = ретраи без внешнего cron (Hermes-cron пропал 15.10, выпуска не было); guard делает лишние слоты no-op
+    - cron: "0 9,13,17 * * *"
   # GitHub schedule опаздывает на 6-9 ч (04-13.10: старт 14:39-18:41 вместо 09:00).
   # Точное время даёт cron Hermes: dispatch с scheduled=true в 09:00 UTC (guard включён).
   workflow_dispatch:
@@ -11,6 +12,11 @@ on:
         description: "плановый запуск: guard (пропуск, если long-form за сегодня уже есть)"
         type: boolean
         default: false
+
+# слоты не перекрываются: второй run ждёт первый и guard видит выпуск
+concurrency:
+  group: daily-video
+  cancel-in-progress: false
 
 # push ротации .state: default token = read -> было 403, ротация не сохранялась
 permissions:
