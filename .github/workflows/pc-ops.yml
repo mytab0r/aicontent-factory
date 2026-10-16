@@ -65,6 +65,8 @@ jobs:
           R="${{ inputs.name }}"
           test -n "$R" || { echo "::error::name required"; exit 1; }
           docker rm -f "gh-runner-$R" 2>/dev/null || true
+          # config lives in this volume; without purge the old identity/labels get reused
+          docker volume rm -f "gh-runner-$R-data" 2>/dev/null || true
           docker run -d --name "gh-runner-$R" --restart unless-stopped --cpus 4 --memory 4g \
             -e REPO_URL="https://github.com/${{ inputs.repo }}" -e RUNNER_SCOPE=repo \
             -e RUNNER_NAME="pc-gh-runner-$R" -e LABELS="${{ inputs.labels }}" \
