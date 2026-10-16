@@ -37,6 +37,7 @@ jobs:
         run: |
           docker inspect ace-step --format '{{json .Config.Env}}' | grep -q ACESTEP_ON_DEMAND_MODEL_LOAD && { echo already; exit 0; }
           IMAGE=$(docker inspect ace-step --format '{{.Config.Image}}')
+          docker rm -f ace-step-new 2>/dev/null || true  # хвост прошлого неудачного прогона
           docker run -d --name ace-step-new --restart unless-stopped \
             --gpus all \
             -e ACESTEP_MODE=api -e ACESTEP_LLM_BACKEND=pt \
