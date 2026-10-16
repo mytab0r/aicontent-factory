@@ -30,15 +30,22 @@ def _sh(s: str) -> str:
 
 
 def _work_mount() -> str:
-    """-v спецификация для workdir-тома раннера (volume:имя или bind:src)."""
-    wd = os.environ.get("RUNNER_WORKDIR") or str(Path.cwd())
-    out = subprocess.run(["docker", "inspect", RUNNER, "--format",
-                          "{{range .Mounts}}{{.Type}}\\t{{.Name}}\\t{{.Source}}\\t{{.Destination}}\\n{{end}}"],
-                         capture_output=True, text=True).stdout
-    for line in out.splitlines():
-        t, name, src, dest = (line.split("\\t") + ["", "", ""])[:4]
-        if dest and (dest == wd or wd.startswith(dest.rstrip("/") + "/")):
-            return (f"{name}:/files:ro" if t == "volume" else f"{src}:/files:ro")
+    """-v спецификация для workdir-тома раннера. Свой контейнер находим по hostname
+    (Docker: hostname = короткий id), работаём только mount, содержащий GITHUB_WORKSPACE."""
+    wd = os.environ.get("GITHUB_WORKSPACE") or str(Path.cwd())
+    cid = ""
+    try:
+        cid = open("/etc/hostname").read().strip()
+    except OSError:
+        pass
+    for name in ([cid] if cid else []) + [RUNNER]:
+        out = subprocess.run(["docker", "inspect", name, "--format",
+                              "{{range .Mounts}}{{.Type}}\\t{{.Name}}\\t{{.Source}}\\t{{.Destination}}\\n{{end}}"],
+                             capture_output=True, text=True).stdout
+        for line in out.splitlines():
+            t, vname, src, dest = (line.split("\\t") + ["", "", ""])[:4]
+            if dest and wd.startswith(dest.rstrip("/") + "/"):
+                return (f"{vname}:/files:ro" if t == "volume" else f"{src}:/files:ro")
     return ""
 
 
