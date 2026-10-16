@@ -39,6 +39,33 @@ def test_prompt_has_season_and_rotating_scene():
     assert any(n in p1 for n in names) and any(n in p2 for n in names)
 
 
+def test_llm_title_without_genre_word_fixed_for_guard():
+    """Пост-проверка LLM-пути (t_93ee3737): title без слова жанра чинится
+    детерминированно, иначе guard дублей (watchdog.already_published) не увидит
+    выпуск и retry-слот опубликует второй ролик жанра за день."""
+    import datetime as dt
+
+    from watchdog import already_published
+
+    def rss_with(title):
+        return f'''<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns:yt="http://www.youtube.com/xml/schemas/2015" xmlns="http://www.w3.org/2005/Atom">
+ <entry><yt:videoId>v1</yt:videoId><title>{title}</title><published>2026-10-13T09:00:00+00:00</published></entry>
+</feed>'''
+
+    for mood in ("anime lofi", "chill phonk"):
+        bad = "Neon Highway at Midnight Beats to Drift and Focus to"
+        assert not already_published(rss_with(bad), dt.date(2026, 10, 13), mood)
+        fixed = idea.ensure_genre_word(bad, mood)
+        assert fixed != bad and len(fixed) <= 70
+        assert already_published(rss_with(fixed), dt.date(2026, 10, 13), mood)
+    # уже корректный title не меняется
+    assert idea.ensure_genre_word("Pumpkin Cafe Lofi Beats to Study to", "anime lofi") \
+        == "Pumpkin Cafe Lofi Beats to Study to"
+    assert idea.ensure_genre_word("Neon Highway Phonk Beats to Drift to", "chill phonk") \
+        == "Neon Highway Phonk Beats to Drift to"
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):
