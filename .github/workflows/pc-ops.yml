@@ -10,6 +10,22 @@ on:
         description: "status | deploy-comfyui | download-models"
         default: "status"
         type: choice
+      repo:
+        description: "owner/repo for add-repo-runner"
+        required: false
+        type: string
+      name:
+        description: "runner suffix for add-repo-runner (gh-runner-<name>)"
+        required: false
+        type: string
+      token:
+        description: "registration token (single-use) for add-repo-runner"
+        required: false
+        type: string
+      labels:
+        description: "extra labels for add-repo-runner"
+        required: false
+        type: string
         options: [status, deploy-comfyui, download-models, comfy-object-list, add-release-runner, diag-release-runner, add-repo-runner]
 
 jobs:
