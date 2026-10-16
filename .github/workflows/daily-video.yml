@@ -44,7 +44,7 @@ jobs:
             slots: "0 11,15 * * *"
             ref: ""  # phonk v1-v3 одобрены БЕЗ эталона (noref) — ref-трек не подмешивать
     # pc-acf-release: setup-uv падает EACCES (spawn uv, 16.10) — выпуск на проверенном pc-acf
-    runs-on: [self-hosted, pc]
+    runs-on: [self-hosted, release]
     # 16.10 run 38886770624: music 40 мин + аплоад часа >34 мин -> 75 обрезал 05 publish
     timeout-minutes: 150
     env:
