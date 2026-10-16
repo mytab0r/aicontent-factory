@@ -212,13 +212,13 @@ jobs:
             exit 1
           fi
           echo "SRC=$SRC"
-          python3 - <<'PY'
-          import random, sys
+          SRC="$SRC" python3 - <<'PY'
+          import os, random, sys
           from pathlib import Path
           sys.path.insert(0, ".")
           from common import tg_send
           from fetch_xlrun import tg_send_file
-          src = Path("$SRC")
+          src = Path(os.environ["SRC"])
           import json
           rep = json.loads((src / "ce_report.json").read_text())
           order = [("sample_A.mp3", "XL-sft best-of-8"), ("sample_B.mp3", "turbo prod")]
