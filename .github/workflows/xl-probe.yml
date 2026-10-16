@@ -76,7 +76,7 @@ jobs:
 
       # артефакты GitHub упираются в storage quota (пересчёт 6-12 ч): если результаты
       # прошлого прогона целы на раннере (/tmp/xlrun) — скипаем дорогой gen (модель+CE),
-      # доставку владельцу делает job salvage-tg на release-полосе (там есть TG-резолв).
+      # доставка владельцу: шаг exfil (base64 в лог) -> VPS.
       - name: skip gen if previous results intact
         id: salvage
         run: |
@@ -85,13 +85,6 @@ jobs:
           else
             echo "rc=1" >> "$GITHUB_OUTPUT"; echo "результатов нет — полный прогон"
           fi
-          # копия в workdir (volume хоста): salvage-tg на release-полосе заберёт отсюда
-          rm -rf /tmp/runner/aicontent-factory/xlrun
-          mkdir -p /tmp/runner/aicontent-factory/xlrun
-          cp /tmp/xlrun/sample_A.mp3 /tmp/xlrun/sample_B.mp3 /tmp/xlrun/ce_report.json \
-            /tmp/runner/aicontent-factory/xlrun/ 2>/dev/null || true
-          [ -d /tmp/xlrun/ab4 ] && cp -r /tmp/xlrun/ab4 /tmp/runner/aicontent-factory/xlrun/ 2>/dev/null || true
-          ls -la /tmp/runner/aicontent-factory/xlrun/
 
       - name: best-of-8 xl-sft + CE log + blind A/B
         if: ${{ steps.salvage.outputs.rc != '0' }}
@@ -200,79 +193,21 @@ jobs:
           name: lora-xl-sft
           path: /tmp/lora/out
 
-  salvage-tg:
-    # доставка слепого A/B владельцу мимо Artifact quota: release-раннер имеет резолв TG
-    # (watchdog, g1zm0-gate шлют оттуда). /tmp/xlrun pc-раннера не виден -> чекаем
-    # артефакты API; если quota ещё держит — берём файлы с pc через ace-step volume.
-    runs-on: [self-hosted, release]
-    needs: run
-    if: ${{ always() }}
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - name: blind A/B to owner
-        working-directory: pipeline
-        env:
-          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
-          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-          TG_THREAD_ID: ${{ secrets.TG_THREAD_ID }}
+      # Контейнеры ПК без исходящего 443 и artifact quota исчерпана -> файлы уходят base64
+      # в лог этого job'а; VPS собирает их (gh run view --job --log) и доставляет владельцу.
+      # Маппинг XL/turbo в лог не пишем: имена sample_A/B, в ce_report только CE-числа.
+      - name: exfil to log (base64)
+        if: ${{ always() }}
         run: |
-          set -e
-          # release-раннер = контейнер на том же хосте, что pc-раннер; workdir pc-раннера
-          # лежит в его volume. Если прямой путь не нашёлся — tar из volume через docker.
-          SRC=""
-          for d in /tmp/runner/*/xlrun /tmp/xlrun; do
-            [ -f "$d/sample_A.mp3" ] && { SRC="$d"; break; }
-          done
-          if [ -z "$SRC" ]; then
-            echo "прямой путь не найден — пробую volume pc-раннера"
-            docker run --rm -v gh-runner-aicontent-factory-work:/w:ro alpine:3.20 \
-              sh -c 'find /w -maxdepth 4 -type d -name xlrun; find /w -maxdepth 4 -name "sample_A.mp3"; ls -la /w' || true
-            docker run --rm -v gh-runner-aicontent-factory-work:/w:ro -v "$PWD":/out alpine:3.20 \
-              sh -c 'f=$(find /w -maxdepth 5 -name sample_A.mp3 | head -1); [ -n "$f" ] && cp -r "$(dirname "$f")" /out/xlrun' || true
-            [ -f ./xlrun/sample_A.mp3 ] && SRC=./xlrun
-          fi
-          if [ -z "$SRC" ]; then
-            echo "::error::sample_A не найден (ни workdir, ни volume pc-раннера) — см. логи pc-job"
-            exit 1
-          fi
-          echo "SRC=$SRC"
-          # исходящего 443 у контейнеров ПК нет (URLError Connection refused) —
-          # TG-отправку делает агент на VPS: сэмплы уходят base64 в лог задания,
-          # порядок версий случайный, маппинг В ЛОГ НЕ ПОПАДАЕТ (blind для владельца).
-          SRC="$SRC" python3 - <<'PY'
-          import base64, hashlib, json, os, random
+          cd /tmp/xlrun
+          /tmp/xlv/bin/python - <<'PY'
+          import base64, hashlib, json
           from pathlib import Path
-          src = Path(os.environ["SRC"])
-          rep = json.loads((src / "ce_report.json").read_text())
-          order = [("sample_A.mp3", "XL-sft best-of-8"), ("sample_B.mp3", "turbo prod")]
-          random.shuffle(order)
-          meta = {f"versija_{i + 1}": {"sha256": hashlib.sha256((src / f).read_bytes()).hexdigest(),
-                   "bytes": (src / f).stat().st_size} for i, (f, m) in enumerate(order)}
-          print("XLMETA " + json.dumps(meta, ensure_ascii=False))
-          for i, (f, m) in enumerate(order):
-              b = base64.b64encode((src / f).read_bytes()).decode()
-              print(f"XL64 versija_{i + 1} len={len(b)}")
-              for j in range(0, len(b), 60000):
-                  print(f"XL64 v{i + 1} {j // 60000:04d} {b[j:j + 60000]}")
-          print(f"XL64 ce {json.dumps(rep, ensure_ascii=False)}")
-          PY
-          # A/B v4 (4 эталона) — тоже в лог для агента VPS
-          AB4D=""
-          for d in /tmp/runner/aicontent-factory/xlrun/ab4 /tmp/xlrun/ab4; do
-          if [ -d "$d" ]; then AB4D="$d"; break; fi
-          done
-          if [ -n "$AB4D" ]; then
-          SRC="$AB4D" python3 - <<'PY'
-          import base64, hashlib, json, os
-          from pathlib import Path
-          src = Path(os.environ["SRC"])
-          files = sorted(src.glob("ab_*.mp3"))
-          print("AB4META " + json.dumps({f.name: hashlib.sha256(f.read_bytes()).hexdigest() for f in files}))
+          files = sorted(Path(".").glob("sample_*.mp3")) + sorted(Path("ab4").glob("ab_*.mp3")) + [Path("ce_report.json")]
+          files = [f for f in files if f.is_file()]
+          print("XFMETA " + json.dumps({str(f): hashlib.sha256(f.read_bytes()).hexdigest() for f in files}))
           for f in files:
               b = base64.b64encode(f.read_bytes()).decode()
-              print(f"AB64 {f.name} len={len(b)}")
               for j in range(0, len(b), 60000):
-                  print(f"AB64 {f.name} {j // 60000:04d} {b[j:j + 60000]}")
+                  print(f"XF64 {f} {j // 60000:04d} {b[j:j + 60000]}")
           PY
-          fi
