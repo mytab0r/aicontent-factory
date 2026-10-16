@@ -75,18 +75,16 @@ jobs:
           /tmp/xlv/bin/python -c "import gradio_client, numpy"
 
       # артефакты GitHub упираются в storage quota (пересчёт 6-12 ч): если результаты
-      # прошлого прогона целы на раннере (/tmp/xlrun) — спасаем их в TG и скипаем gen.
-      - name: salvage previous run (quota workaround)
+      # прошлого прогона целы на раннере (/tmp/xlrun) — скипаем дорогой gen (модель+CE),
+      # доставку владельцу делает job salvage-tg на release-полосе (там есть TG-резолв).
+      - name: skip gen if previous results intact
         id: salvage
-        working-directory: pipeline
-        env:
-          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
-          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-          TG_THREAD_ID: ${{ secrets.TG_THREAD_ID }}
         run: |
-          python3 fetch_xlrun.py /tmp/xlrun; rc=$?   # 0=отправлено+skip gen, 1=нет файлов, 2=TG fail
-          echo "rc=$rc" >> "$GITHUB_OUTPUT"
-          exit 0  # шаг не должен валить прогон: rc решает только, генерить ли заново
+          if [ -f /tmp/xlrun/sample_A.mp3 ] && [ -f /tmp/xlrun/sample_B.mp3 ] && [ -f /tmp/xlrun/ce_report.json ]; then
+            echo "rc=0" >> "$GITHUB_OUTPUT"; echo "нашёл результаты прошлого прогона — gen скипается"
+          else
+            echo "rc=1" >> "$GITHUB_OUTPUT"; echo "результатов нет — полный прогон"
+          fi
 
       - name: best-of-8 xl-sft + CE log + blind A/B
         if: ${{ steps.salvage.outputs.rc != '0' }}
@@ -176,3 +174,59 @@ jobs:
         with:
           name: lora-xl-sft
           path: /tmp/lora/out
+
+  salvage-tg:
+    # доставка слепого A/B владельцу мимо Artifact quota: release-раннер имеет резолв TG
+    # (watchdog, g1zm0-gate шлют оттуда). /tmp/xlrun pc-раннера не виден -> чекаем
+    # артефакты API; если quota ещё держит — берём файлы с pc через ace-step volume.
+    runs-on: [self-hosted, release]
+    needs: run
+    if: ${{ always() }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: blind A/B to owner
+        working-directory: pipeline
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          TG_THREAD_ID: ${{ secrets.TG_THREAD_ID }}
+        run: |
+          set -e
+          # release-раннер = контейнер на том же хосте, что pc-раннер; workdir pc-раннера
+          # лежит в его volume. Если прямой путь не нашёлся — tar из volume через docker.
+          SRC=""
+          for d in /tmp/runner/*/xlrun /tmp/xlrun; do
+            [ -f "$d/sample_A.mp3" ] && { SRC="$d"; break; }
+          done
+          if [ -z "$SRC" ]; then
+            echo "прямой путь не найден — пробую volume pc-раннера"
+            docker run --rm -v gh-runner-aicontent-factory-work:/w:ro -v "$PWD":/out alpine:3.20 \
+              sh -c 'find /w -maxdepth 3 -name sample_A.mp3 -exec cp -r "$(dirname "$(dirname {})" )" /out/xlrun \;' || true
+            [ -f ./xlrun/sample_A.mp3 ] && SRC=./xlrun
+          fi
+          if [ -z "$SRC" ]; then
+            echo "::error::sample_A не найден (ни workdir, ни volume pc-раннера) — см. логи pc-job"
+            exit 1
+          fi
+          echo "SRC=$SRC"
+          python3 - <<'PY'
+          import random, sys
+          from pathlib import Path
+          sys.path.insert(0, ".")
+          from common import tg_send
+          from fetch_xlrun import tg_send_file
+          src = Path("$SRC")
+          import json
+          rep = json.loads((src / "ce_report.json").read_text())
+          order = [("sample_A.mp3", "XL-sft best-of-8"), ("sample_B.mp3", "turbo prod")]
+          random.shuffle(order)
+          ok = True
+          for i, (f, m) in enumerate(order):
+              ok &= tg_send_file(src / f, f"Слепой A/B t_b4006a6e — Версия {i + 1}. Какой трек лучше? Ответ: 1 или 2.")
+          if ok:
+              tg_send("A/B t_b4006a6e: два трека выше (Версия 1 и Версия 2). Ответь номером лучше. "
+                      f"CE: picked #{rep['picked'] + 1}/{rep['bestof']}, sec/cand {rep.get('sec_per_cand')}.")
+          print("BLIND MAP (не для владельца):", {f"Версия {i + 1}": m for i, (f, m) in enumerate(order)})
+          raise SystemExit(0 if ok else 2)
+          PY
