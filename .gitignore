@@ -5,3 +5,4 @@ __pycache__/
 *.pyc
 *.log
 .worktrees/
+node_modules/
