@@ -45,7 +45,8 @@ def test_mix_max_tracks_cap():
 
 
 def test_mix_gated_segment_regenerated_fail_not_in_mix(tmp=None):
-    """t_187762da: каждый сегмент час-микса через quality_gate; FAIL -> новый seed, в микс не попадает."""
+    """t_187762da: best-of-K на сегмент: все K кандидатов, гейт, MAX CE среди прошедших;
+    брак (в т.ч. с FAIL по objective) в микс не попадает и удаляется с диска."""
     import tempfile
     d = Path(tempfile.mkdtemp())
     made = []
@@ -54,14 +55,31 @@ def test_mix_gated_segment_regenerated_fail_not_in_mix(tmp=None):
         p.write_bytes(b"x")
         made.append(p.name)
         return str(p)
-    bad = {"s1_0.mp3"}  # сегмент 1, попытка 0 — брак (как 17.10: полоса 20-60 Гц -2.2 дБ)
+    bad = {"s1_0.mp3"}  # сегмент 1, кандидат 0 — брак (как 17.10: полоса 20-60 Гц -2.2 дБ)
     scores = lambda fs: [[3.0] * 3 if Path(f).name in bad else [7.5] * 3 for f in fs]
     gen = music.gated_gen(raw, scores, lambda p: [], attempts=3, log=lambda *a: None)
     paths, durs = music.plan_mix(1500, gen, lambda p: 500.0)
     names = [Path(x).name for x in paths]
     assert names == ["s0_0.mp3", "s1_1.mp3", "s2_0.mp3"], names
     assert "s1_0.mp3" not in names and not (d / "s1_0.mp3").exists()  # брак удалён с диска
-    assert made == ["s0_0.mp3", "s1_0.mp3", "s1_1.mp3", "s2_0.mp3"]
+    assert made == ["s0_0.mp3", "s0_1.mp3", "s0_2.mp3",
+                    "s1_0.mp3", "s1_1.mp3", "s1_2.mp3",
+                    "s2_0.mp3", "s2_1.mp3", "s2_2.mp3"]  # все K кандидатов на сегмент
+
+
+def test_mix_gated_segment_picks_max_ce_among_passing():
+    """Выбор MAX CE среди прошедших (7.6 > 7.0 > 7.2), а не первого/минимального."""
+    ce = {"s0_0": 7.0, "s0_1": 7.6, "s0_2": 7.2}
+    scores = lambda fs: [[ce[Path(f).name]] * 3 for f in fs]
+    gen = music.gated_gen(lambda i, k: f"s0_{k}", scores, lambda p: [], attempts=3,
+                          log=lambda *a: None)
+    assert gen(0) == "s0_1"
+    # прошедших по objective двое, но у s0_2 CE ниже порога -> победитель s0_0
+    obj = lambda p: ["FAIL"] if p == "s0_1" else []
+    ce2 = {"s0_0": 7.0, "s0_1": 9.9, "s0_2": 6.4}
+    scores2 = lambda fs: [[ce2[Path(f).name]] * 3 for f in fs]
+    gen = music.gated_gen(lambda i, k: f"s0_{k}", scores2, obj, attempts=3, log=lambda *a: None)
+    assert gen(0) == "s0_0"
 
 
 def test_mix_segment_dropped_after_k_fails_if_mix_long_enough():

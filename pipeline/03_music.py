@@ -287,29 +287,33 @@ def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=
 def gated_gen(raw, scores, objective, attempts=3, log=print):
     """Гейт сегмента час-микса (t_187762da): качество меряется по КАЖДОМУ сегменту,
     а не только по склейке (17.10: целый час упал на одной полосе 20-60 Гц одного трека).
-    Аналог best_of (PR #59) с N=1 на раунд: провал -> новый seed, до attempts попыток,
-    первый прошедший = победитель. Брак удаляется с диска; 0 из attempts = None
-    (сегмент выкидывается, план проверяет min_sec). Ошибка критика = ошибка шага:
-    вслепую сегмент не берём.
-    ponytail: критик грузится на каждый сегмент (~3 мин); станет узко —
-    один ce_batch на все сегменты раунда."""
+    best-of-K как PR #59: attempts кандидатов с разными seed, ОДИН батчевый прогон
+    критика на сегмент, победитель = MAX CE среди прошедших (objective + CE >= MIN_CE),
+    брак удаляется с диска; 0 из attempts = None (сегмент выкидывается, план проверяет
+    min_sec). Ошибка критика = ошибка шага: вслепую сегмент не берём."""
     from pathlib import Path
 
     from quality_gate import MIN_CE
 
     def gen(i):
-        best = None
-        for k in range(attempts):
-            p = raw(i, k)
-            ce = scores([p])[0]
+        paths = [raw(i, k) for k in range(attempts)]
+        ce_list = scores(paths)  # один прогон критика на сегмент (модель грузится 1 раз)
+        if len(ce_list) != len(paths):
+            raise RuntimeError(f"критик вернул {len(ce_list)}/{len(paths)} оценок: {ce_list!r}")
+        best, fails = None, []
+        for k, (p, ce) in enumerate(zip(paths, ce_list)):
             why = list(objective(p)) + ([f"CE {min(ce):.2f} < {MIN_CE}"] if min(ce) < MIN_CE else [])
-            log(f"сегмент {i} попытка {k + 1}/{attempts}: CE(min)={min(ce):.2f}, "
+            log(f"сегмент {i} кандидат {k + 1}/{attempts}: CE(min)={min(ce):.2f}, "
                 + ("FAIL: " + "; ".join(why) if why else "OK"))
             if why:
+                fails.append(why)
                 Path(p).unlink(missing_ok=True)
-            else:
-                return p  # перегенерация только при провале; среди прошедших выбирать не из чего
-        return None  # 0 из attempts прошли: сегмент выбрасывается (план проверит min_sec)
+            elif best is None or min(ce) > best[0]:
+                best = (min(ce), p)
+        if best is None:
+            log(f"сегмент {i}: 0 из {attempts} прошли гейт: " + "; ".join(map(str, fails)))
+            return None  # сегмент выбрасывается (план проверит min_sec)
+        return best[1]
 
     return gen
 
