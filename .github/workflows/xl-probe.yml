@@ -11,6 +11,10 @@ on:
         description: "обучить LoRA на одобренных треках+эталонах после best-of-8"
         type: boolean
         default: false
+      reuse:
+        description: "взять готовые варианты из /tmp/xlrun прошлого прогона (без генерации)"
+        type: boolean
+        default: true
 concurrency:
   group: daily-video
   cancel-in-progress: false
@@ -81,10 +85,6 @@ jobs:
       # /v1/lora/load + /v1/lora/status в лог) -> best-of-8 через quality_gate (objective + CE >= MIN_CE,
       # max CE среди прошедших, 0 прошли = до 3 раундов) -> music_meta.json. Тот же код включит daily-video.
       # Слепой A/B: 2 сэмпла XL+LoRA+best-of-8 и 2 сэмпла текущего прода (turbo, без LoRA, 1 кандидат).
-      # Прод-путь 03_music.main() целиком: ACE15_MODEL/LORA/BESTOF -> ace15_prepare (/v1/init +
-      # /v1/lora/load + /v1/lora/status в лог) -> best-of-8 через quality_gate (objective + CE >= MIN_CE,
-      # max CE среди прошедших, 0 прошли = до 3 раундов) -> music_meta.json. Тот же код включит daily-video.
-      # Слепой A/B: 2 сэмпла XL+LoRA+best-of-8 и 2 сэмпла текущего прода (turbo, без LoRA, 1 кандидат).
       # Варианты независимы: падение одного не убивает остальные (частичный A/B > никакого);
       # stderr+stdout пишутся и в консоль (лог задания), и в /tmp/xlrun/<name>.log на случай
       # повторного BlobNotFound при аплоаде логов раннером.
@@ -97,7 +97,13 @@ jobs:
         run: |
           set -e
           set -o pipefail   # if pipe|tee: код python, не tee
-          rm -rf /tmp/xlrun runs && mkdir -p /tmp/xlrun
+          # reuse: сырые варианты прошлого прогона целы на раннере -> не генерим заново (часы GPU)
+          HAVE=$(find /tmp/xlrun -maxdepth 1 -name '*.mp3' ! -name 'versija_*' 2>/dev/null | wc -l)
+          if [ "${{ inputs.reuse }}" = true ] && [ "$HAVE" -ge 2 ]; then
+            echo "REUSE: $HAVE готовых вариантов в /tmp/xlrun"; SKIP_GEN=1
+          else
+            rm -rf /tmp/xlrun runs && mkdir -p /tmp/xlrun; SKIP_GEN=0
+          fi
           docker exec ace-step ls -la /app/output/lora/out/final
           gen() {  # $1 = имя, далее env прод-варианта
             local name=$1; shift
@@ -112,12 +118,15 @@ jobs:
             sleep 1
           }
           XL="ACE15_MODEL=acestep-v15-xl-sft ACE15_LORA=/app/output/lora/out/final ACE15_BESTOF=8"
-          gen xl_1 $XL; gen xl_2 $XL
-          curl -sf -m 300 -X POST "$ACE15_ENDPOINT/v1/lora/unload" -H 'Content-Type: application/json' -d '{}' || true
-          gen turbo_1 ACE15_MODEL=acestep-v15-turbo; gen turbo_2 ACE15_MODEL=acestep-v15-turbo
-          N=$(ls /tmp/xlrun/versija_*.mp3 2>/dev/null | wc -l)
-          ls /tmp/xlrun/*.mp3 | wc -l
-          [ "${N%% *}" -ge 2 ] || { echo "::error::A/B не собран: прошло $N варианта, логи:"; cat /tmp/xlrun/*.log; exit 1; }
+          if [ "$SKIP_GEN" = 0 ]; then
+            gen xl_1 $XL; gen xl_2 $XL
+            curl -sf -m 300 -X POST "$ACE15_ENDPOINT/v1/lora/unload" -H 'Content-Type: application/json' -d '{}' || true
+            gen turbo_1 ACE15_MODEL=acestep-v15-turbo; gen turbo_2 ACE15_MODEL=acestep-v15-turbo
+          fi
+          # считаем сырые варианты (versija_* создаются ниже); find, т.к. ls без совпадений + pipefail = exit
+          N=$(find /tmp/xlrun -maxdepth 1 -name '*.mp3' ! -name 'versija_*' | wc -l)
+          echo "вариантов: $N"
+          [ "$N" -ge 2 ] || { echo "::error::A/B не собран: прошло $N варианта, логи:"; cat /tmp/xlrun/*.log; exit 1; }
           /tmp/xlv/bin/python - <<'PY'
           import json, random, shutil
           from pathlib import Path
