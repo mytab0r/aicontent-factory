@@ -193,13 +193,13 @@ class _Http:
     def __init__(self, base):
         self.base = base.rstrip("/")
 
-    def post(self, path, body):
+    def post(self, path, body, timeout=600):
         import json
         import urllib.request
         r = urllib.request.Request(self.base + path, json.dumps(body).encode(),
                                    {"Content-Type": "application/json"})
         # 600: после рестарта ace-step первый запрос грузит модели >60 с (13.10 TimeoutError)
-        return json.load(urllib.request.urlopen(r, timeout=600))
+        return json.load(urllib.request.urlopen(r, timeout=timeout))
 
     def get(self, path):
         import urllib.request
@@ -217,8 +217,31 @@ class _Http:
         return json.loads(out)
 
 
+def ace15_prepare(model: str | None, lora: str | None, api=None) -> dict:
+    """t_b4006a6e: LoRA через /v1/lora/load (в /release_task поля LoRA нет). Модель НЕ через /v1/init:
+    XL init на 12 ГБ висел 3x1 ч (run 39017603255) -> модель уходит в body запроса (on-demand, run 38971884880).
+    Возврат /v1/lora/status — доказательство в лог; LoRA не встала = ошибка шага."""
+    if not lora:
+        return {}
+    import json
+    import tempfile
+    api = api or _Http(os.environ["ACE15_ENDPOINT"])
+    if model:
+        # on-demand swap пересоздаёт primary-хендлер (initialize_service) -> LoRA, загруженная ДО swap,
+        # теряется. Короткий прогрев моделью: swap в очереди, затем LoRA на уже XL-хендлер.
+        with tempfile.TemporaryDirectory() as td:
+            generate_track_v15("warmup", 10, 0, Path(td) / "w.mp3", api=api, model=model)
+    r = api.post("/v1/lora/load", {"lora_path": lora})
+    st = json.loads(api.get("/v1/lora/status"))["data"]
+    if r.get("code") != 200 or not (st.get("lora_loaded") and st.get("use_lora")):
+        raise RuntimeError(f"LoRA {lora} не подключена: {str(r)[:200]} {st}")
+    print(f"ACE15 ready: model={model} lora={lora} status={st}")
+    return st
+
+
 def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=None,
-                       poll_sec: float = 5, timeout_sec: int = 3600, ref_audio=None) -> None:
+                       poll_sec: float = 5, timeout_sec: int = 3600, ref_audio=None,
+                       model: str | None = None) -> dict:
     import json
     import time
     api = api or _Http(os.environ["ACE15_ENDPOINT"])
@@ -227,6 +250,9 @@ def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=
             "bpm": 70 + seed % 21, "key_scale": ACE15_KEYS[seed % len(ACE15_KEYS)],
             "time_signature": "4", "batch_size": 1, "thinking": True,
             "use_random_seed": False, "seed": seed, "audio_format": "mp3"}
+    m = model or os.environ.get("ACE15_MODEL")  # t_b4006a6e: модель на запрос (XL-sft), пусто = слот контейнера
+    if m:
+        body["model"] = m
     if ref_audio and Path(ref_audio).is_file():
         # Стиль по эталону (reference_audio): так одобрен звук 13.10.
         tid = api.post_file("/release_task", body, "reference_audio", ref_audio)["data"]["task_id"]
@@ -242,7 +268,12 @@ def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=
         time.sleep(poll_sec)
     if d["status"] != 1:
         raise RuntimeError(f"ACE-Step 1.5 task {tid} failed: {str(d.get('result'))[:300]}")
-    Path(out_path).write_bytes(api.get(json.loads(d["result"])[0]["file"]))
+    item = json.loads(d["result"])[0]
+    # сервер при неизвестной модели молча берёт primary ("not found ... using primary") — ловим
+    if m and item.get("dit_model") and item["dit_model"] != m:
+        raise RuntimeError(f"запрошена {m}, сгенерировала {item['dit_model']}")
+    Path(out_path).write_bytes(api.get(item["file"]))
+    return item
 
 
 def plan_mix(target_sec, gen, dur, budget_sec=1800, max_tracks=12, now=None):
@@ -364,6 +395,9 @@ def main() -> None:
 
     out_path = run_dir / "track.mp3"
     chaps = []
+    bestof_meta = None
+    if os.environ.get("ACE15_ENDPOINT"):
+        ace15_prepare(os.environ.get("ACE15_MODEL"), os.environ.get("ACE15_LORA"))
     if os.environ.get("ACE15_ENDPOINT") and duration > ACE15_MAX_SEC:
         # ресёрч 13.10: хиты ниши 1-4 ч с треклистом; склеиваем ЦЕЛЬНЫЕ разные треки (не куски одного)
         ref = os.environ.get("ACE15_REF_AUDIO")
@@ -379,8 +413,28 @@ def main() -> None:
         duration = int(sum(durs))
     elif os.environ.get("ACE15_ENDPOINT"):
         duration = min(duration, ACE15_MAX_SEC)
-        generate_track_v15(prompt, duration, seed, out_path,
-                           ref_audio=os.environ.get("ACE15_REF_AUDIO"))
+        ref = os.environ.get("ACE15_REF_AUDIO")
+        n = int(os.environ.get("ACE15_BESTOF") or 0)  # t_b4006a6e: best-of-N через quality_gate, 0 = 1 кандидат
+        if n >= 2:
+            import bestof
+            import shutil
+            from quality_gate import ce_batch, objective
+
+            def cand(k):
+                c = run_dir / f"cand_{k:02d}.mp3"  # мастерится как прод: гейт меряет то, что уйдёт на канал
+                generate_track_v15(prompt, duration, seed + k, c, ref_audio=ref)
+                mastering.master(c, c, genre=genre_name)
+                return str(c)
+
+            bi, bp, rows = bestof.best_of(n, cand, ce_batch, objective=lambda p: objective(p, genre_name)[0])
+            shutil.move(bp, out_path)
+            for c in run_dir.glob("cand_*.mp3"):
+                c.unlink()  # кандидаты удаляются сразу после выбора (диск)
+            bestof_meta = {"n": n, "picked": bi, "model": os.environ.get("ACE15_MODEL"),
+                           "lora": os.environ.get("ACE15_LORA"),
+                           "cands": [{k: r[k] for k in ("cand", "ce", "fail")} for r in rows]}
+        else:
+            generate_track_v15(prompt, duration, seed, out_path, ref_audio=ref)
     else:
         chunks = chunk_plan(duration)
         chunk_paths = [
@@ -388,10 +442,11 @@ def main() -> None:
             for i, c in enumerate(chunks)
         ]
         concat_tracks(chunk_paths, out_path)
-    mastering.master(out_path, out_path, genre=genre_name)
+    if bestof_meta is None:  # победитель best-of уже отмастерен
+        mastering.master(out_path, out_path, genre=genre_name)
     (run_dir / "music_meta.json").write_text(
         json.dumps({"genre": genre_name, "prompt": prompt, "seed": seed, "duration": duration,
-                    "chapters": chaps},
+                    "chapters": chaps, "bestof": bestof_meta},
                    ensure_ascii=False, indent=2),
         encoding="utf-8",
     )

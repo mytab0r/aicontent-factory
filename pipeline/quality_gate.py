@@ -70,21 +70,29 @@ for f,s in zip(fs,p.forward([{"path":f} for f in fs])): print(f+chr(9)+json.dump
 
 
 def ce_scores(f):
-    """3 отрывка по 30 с (10/50/90 % трека) -> audiobox. Ошибка критика = FAIL, не пропуск."""
-    dur = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(f)],
-                               capture_output=True, text=True).stdout)
+    return ce_batch([f])[0]
+
+
+def ce_batch(files):
+    """t_b4006a6e: CE для списка треков ОДНИМ прогоном критика (модель грузится 1 раз).
+    3 отрывка по 30 с (10/50/90 %) на трек. Возврат [[c,c,c], ...] в порядке files. Ошибка критика = FAIL."""
     td = tempfile.mkdtemp()
     subprocess.run(["docker", "exec", "ace-step", "sh", "-c", "rm -rf /app/output/qg && mkdir -p /app/output/qg/in"], check=True)
-    for i, frac in enumerate((0.1, 0.5, 0.9)):
-        p = f"{td}/c{i}.wav"
-        subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-ss", str(max(0.0, dur * frac - 15)), "-t", "30",
-                        "-i", str(f), p], check=True)
-        subprocess.run(["docker", "cp", p, "ace-step:/app/output/qg/in/"], check=True)
+    clips = []
+    for fi, f in enumerate(files):
+        dur = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(f)],
+                                   capture_output=True, text=True).stdout)
+        for i, frac in enumerate((0.1, 0.5, 0.9)):
+            p = f"{td}/t{fi:03d}c{i}.wav"  # имя сортируется = порядок files (AES читает sorted listdir)
+            subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-ss", str(max(0.0, dur * frac - 15)), "-t", "30",
+                            "-i", str(f), p], check=True)
+            subprocess.run(["docker", "cp", p, "ace-step:/app/output/qg/in/"], check=True)
+            clips.append(f"in/t{fi:03d}c{i}.wav")
     out = subprocess.run(["docker", "exec", "ace-step", "sh", "-c", AES], capture_output=True, text=True, timeout=1500)
-    ces = [json.loads(l.split("\t")[1])["CE"] for l in out.stdout.splitlines() if "\t" in l]
-    if len(ces) != 3:
-        raise RuntimeError(f"критик не отработал: {out.stdout[-300:]} {out.stderr[-600:]}")
-    return ces
+    res = {l.split("\t")[0]: json.loads(l.split("\t")[1])["CE"] for l in out.stdout.splitlines() if "\t" in l}
+    if sorted(res) != sorted(clips):
+        raise RuntimeError(f"критик не отработал ({len(res)}/{len(clips)}): {out.stdout[-300:]} {out.stderr[-600:]}")
+    return [[res[c] for c in clips[3 * i:3 * i + 3]] for i in range(len(files))]
 
 
 def main(argv):
