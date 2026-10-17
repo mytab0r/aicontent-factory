@@ -110,6 +110,7 @@ jobs:
               cp "$d/music_meta.json" "/tmp/xlrun/$name.json"
             else
               echo "VARIANT-FAIL $name (лог в $name.log)" >&2
+              docker logs ace-step --since 40m 2>&1 | grep -aE "On-demand|on demand|using primary|not found|Loading model|API Server" | tail -30 || true
             fi
             sleep 1
           }
@@ -160,7 +161,7 @@ jobs:
         if: ${{ always() }}
         run: |
           cd /tmp/xlrun
-          /tmp/xlv/bin/python - <<'PY'
+          python3 - <<'PY'
           import base64, hashlib, json
           from pathlib import Path
           files = sorted(Path(".").glob("versija_*.mp3")) + [Path("ce_report.json")] + sorted(Path(".").glob("*.log"))

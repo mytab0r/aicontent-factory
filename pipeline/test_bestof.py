@@ -108,15 +108,45 @@ class _PrepApi:
 a = _PrepApi()
 st = music.ace15_prepare("acestep-v15-xl-sft", "/app/output/lora/out/final", api=a)
 paths = [c[0] for c in a.calls]
-assert "/v1/init" not in paths, "XL /v1/init висел 3x1 ч — только on-demand через запрос"
-# прогрев моделью (swap) СТРОГО до LoRA: swap пересоздаёт хендлер и сбросил бы LoRA
+# прогрев моделью (swap) СТРОГО до LoRA: swap пересоздаёт хендлер и сбросил бы LoRA;
+# /v1/init — только fallback после неудавшегося swap (прогон 39064436852)
 assert paths == ["/release_task", "/query_result", "/v1/lora/load"], paths
 assert a.calls[0][1]["model"] == "acestep-v15-xl-sft" and st["lora_loaded"]
+
+class _TurboApi(_PrepApi):
+    def post(self, path, body, timeout=600):
+        self.calls.append((path, body))
+        if path == "/query_result":
+            return {"data": [{"status": 1, "result": '[{"file": "f", "dit_model": "acestep-v15-turbo"}]'}]}
+        if path == "/v1/init":
+            return {"code": 200, "data": {"loaded_model": body["model"]}}
+        return {"code": 200, "data": {"message": "ok", "task_id": "w"}}
+a = _TurboApi()
+st = music.ace15_prepare("acestep-v15-xl-sft", "/lora", api=a)
+paths = [c[0] for c in a.calls]
+assert paths == ["/release_task", "/query_result", "/v1/init", "/v1/lora/load"], paths
+assert a.calls[2][1] == {"model": "acestep-v15-xl-sft"} and st["lora_loaded"]
 try:
     music.ace15_prepare("acestep-v15-xl-sft", "/bad", api=_PrepApi(loaded=False))
     raise SystemExit("должен был упасть: LoRA не встала")
 except RuntimeError:
     pass
+
+class _FailInitNoLora(_TurboApi):
+    def post(self, path, body, timeout=600):
+        if path == "/v1/init":
+            return {"code": 500, "error": "init failed"}
+        return super().post(path, body, timeout=timeout)
+    def get(self, path):
+        return json.dumps({"data": {"lora_loaded": False, "use_lora": False}}).encode()
+
+# swap молча не включился (39064436852: "сгенерировала turbo") -> /v1/init fallback (короткий, 900 с)
+try:
+    music.ace15_prepare("acestep-v15-xl-sft", "/lora", api=_FailInitNoLora())
+    raise SystemExit("должен был упасть: init не подтвердил модель")
+except RuntimeError as e:
+    assert "/v1/init" in str(e)
+
 a = _PrepApi()
 assert music.ace15_prepare(None, None, api=a) == {} and a.calls == [], "прод без env: ни init, ни LoRA"
 assert music.ace15_prepare("acestep-v15-xl-sft", None, api=a) == {} and a.calls == [], "без /v1/init: модель в body"

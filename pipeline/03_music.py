@@ -229,8 +229,16 @@ def ace15_prepare(model: str | None, lora: str | None, api=None) -> dict:
     if model:
         # on-demand swap пересоздаёт primary-хендлер (initialize_service) -> LoRA, загруженная ДО swap,
         # теряется. Короткий прогрев моделью: swap в очереди, затем LoRA на уже XL-хендлер.
+        # Swap мог не включиться (env воркеров/прочее, прогон 39064436852: "сгенерировала turbo")
+        # -> единственный /v1/init с жёстким потолком 900 с (не час, как 39017603255).
         with tempfile.TemporaryDirectory() as td:
-            generate_track_v15("warmup", 10, 0, Path(td) / "w.mp3", api=api, model=model)
+            try:
+                generate_track_v15("warmup", 10, 0, Path(td) / "w.mp3", api=api, model=model)
+            except RuntimeError as e:
+                print(f"on-demand swap не сработал ({e}); /v1/init 900 с")
+                r = api.post("/v1/init", {"model": model}, timeout=900)
+                if r.get("code") != 200 or (r.get("data") or {}).get("loaded_model") != model:
+                    raise RuntimeError(f"/v1/init {model}: {str(r)[:300]}") from e
     r = api.post("/v1/lora/load", {"lora_path": lora})
     st = json.loads(api.get("/v1/lora/status"))["data"]
     if r.get("code") != 200 or not (st.get("lora_loaded") and st.get("use_lora")):
