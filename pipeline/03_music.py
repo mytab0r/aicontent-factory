@@ -284,19 +284,60 @@ def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=
     return item
 
 
-def plan_mix(target_sec, gen, dur, budget_sec=1800, max_tracks=12, now=None):
+def gated_gen(raw, scores, objective, attempts=3, log=print):
+    """Гейт сегмента час-микса (t_187762da): качество меряется по КАЖДОМУ сегменту,
+    а не только по склейке (17.10: целый час упал на одной полосе 20-60 Гц одного трека).
+    Аналог best_of (PR #59) с N=1 на раунд: провал -> новый seed, до attempts попыток,
+    первый прошедший = победитель. Брак удаляется с диска; 0 из attempts = None
+    (сегмент выкидывается, план проверяет min_sec). Ошибка критика = ошибка шага:
+    вслепую сегмент не берём.
+    ponytail: критик грузится на каждый сегмент (~3 мин); станет узко —
+    один ce_batch на все сегменты раунда."""
+    from pathlib import Path
+
+    from quality_gate import MIN_CE
+
+    def gen(i):
+        best = None
+        for k in range(attempts):
+            p = raw(i, k)
+            ce = scores([p])[0]
+            why = list(objective(p)) + ([f"CE {min(ce):.2f} < {MIN_CE}"] if min(ce) < MIN_CE else [])
+            log(f"сегмент {i} попытка {k + 1}/{attempts}: CE(min)={min(ce):.2f}, "
+                + ("FAIL: " + "; ".join(why) if why else "OK"))
+            if why:
+                Path(p).unlink(missing_ok=True)
+            else:
+                return p  # перегенерация только при провале; среди прошедших выбирать не из чего
+        return None  # 0 из attempts прошли: сегмент выбрасывается (план проверит min_sec)
+
+    return gen
+
+
+def plan_mix(target_sec, gen, dur, budget_sec=1800, max_tracks=12, now=None, min_sec=900,
+             max_drops=3):
     """Час-микс из цельных треков 1.5 (модель отдаёт ~482 с вместо 600 — считаем по факту).
-    Стоп: набрали target, max_tracks, или следующий трек не влезет в бюджет времени шага."""
+    Стоп: набрали target, max_tracks, следующий трек не влезает в бюджет времени шага,
+    или max_drops сегментов подряд выбраковал гейт (None). Уже набранное не трогаем.
+    Итог < min_sec (15 мин) после выбраковки = ошибка шага, а не короткий выпуск."""
     import time
     now = now or time.monotonic
-    start, paths, durs = now(), [], []
-    while sum(durs) < target_sec and len(paths) < max_tracks:
-        p = gen(len(paths))
+    start, paths, durs, i, drops = now(), [], [], 0, 0
+    while sum(durs) < target_sec and len(paths) < max_tracks and drops < max_drops:
+        p = gen(i)
+        i += 1
+        if p is None:
+            drops += 1  # сегмент выбракован: микс дозаполняют другие, порог проверится в конце
+            continue
+        drops = 0
         paths.append(p)
         durs.append(dur(p))
         elapsed = now() - start
         if elapsed + elapsed / len(paths) > budget_sec:
             break
+    if sum(durs) < min_sec:
+        raise RuntimeError(f"микс {int(sum(durs))} с < {min_sec} с (15 мин) после выбраковки "
+                           f"сегментов: {len(paths)} трек(ов) — выпуск не состоялся")
     return paths, durs
 
 
@@ -409,13 +450,24 @@ def main() -> None:
     if os.environ.get("ACE15_ENDPOINT") and duration > ACE15_MAX_SEC:
         # ресёрч 13.10: хиты ниши 1-4 ч с треклистом; склеиваем ЦЕЛЬНЫЕ разные треки (не куски одного)
         ref = os.environ.get("ACE15_REF_AUDIO")
+        n_seg = int(os.environ.get("ACE15_BESTOF") or 0)  # гейт на сегмент: до N seed'ов, max CE среди прошедших
+        mix_budget = int(os.environ.get("ACE15_MIX_BUDGET_SEC") or 7200)
 
-        def gen(i):
-            p = run_dir / f"mix_{i:02d}.mp3"
-            generate_track_v15(prompt, ACE15_MAX_SEC, seed + i, p, ref_audio=ref)
+        def raw(i, k):
+            p = run_dir / f"mix_{i:02d}_{k}.mp3"
+            generate_track_v15(prompt, ACE15_MAX_SEC, seed + i * 100 + k, p, ref_audio=ref)
             return str(p)
 
-        paths, durs = plan_mix(duration, gen, _probe_sec)
+        if n_seg >= 2:
+            from quality_gate import ce_batch, objective
+
+            gen_mix = gated_gen(raw, ce_batch, lambda p: objective(p, genre_name)[0],
+                                attempts=n_seg, log=print)
+        else:
+            def gen_mix(i):
+                return raw(i, 0)
+
+        paths, durs = plan_mix(duration, gen_mix, _probe_sec, budget_sec=mix_budget)
         concat_tracks(paths, out_path)
         chaps = chapters(durs, track_names(len(paths), seed))
         duration = int(sum(durs))
