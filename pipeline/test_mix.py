@@ -152,6 +152,12 @@ def test_title_gets_real_length_label():
     assert pub.title_with_length(t, 7300) == t + " | 2 Hours"
     assert pub.title_with_length(t, 482) == t  # < ~55 мин: без метки (не врём о длине)
     assert pub.title_with_length("Cafe 1 Hour Lofi", 3700) == "Cafe 1 Hour Lofi"  # уже есть
+    # M4 (аудит 17.10): «| 1 Hour» при 56:15 (p-kkEmLGviU, ieY0WGw41dk, b9DA_1-VmP4) = misleading metadata.
+    assert "Hour" not in pub.title_with_length(t, 3375)
+    # ложная длина от LLM в самом заголовке вырезается, верная остаётся
+    assert "Hour" not in pub.title_with_length("Cafe Lofi | 1 Hour", 3375)
+    assert pub.title_with_length("Cafe Lofi | 1 Hour", 3700) == "Cafe Lofi | 1 Hour"
+    assert pub.title_with_length("Cafe Lofi | 2 Hours", 3700) == "Cafe Lofi | 1 Hour"
     long = "x" * 99
     assert len(pub.title_with_length(long, 3700)) <= 100
 

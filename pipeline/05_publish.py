@@ -99,10 +99,15 @@ def full_description(text: str, chapters=None) -> str:
 
 def title_with_length(title: str, duration_sec) -> str:
     """Ресёрч 14.10: лидеры ниши пишут длину в заголовке (Lofi Girl 1:04 ч 811k, Chill Crossing «1 Hour» 150k).
-    Метка только по фактической длине (>=55 мин), без фейковых чисел; уже есть «Hour» — не трогаем."""
-    if not duration_sec or duration_sec < 3300 or re.search(r"\bhours?\b", title, re.I):
+    M4 (аудит 17.10): метка = целые часы ФАКТИЧЕСКОЙ длины (floor), «| 1 Hour» при 56:15 = misleading metadata.
+    Неверная заявка длины из заголовка LLM вырезается; верная остаётся."""
+    h = int((duration_sec or 0) // 3600)
+    claim = re.search(r"(\d+)\s*hours?\b", title, re.I)
+    if claim and int(claim.group(1)) == h:
         return title[:100]
-    h = max(1, int(duration_sec // 3600))
+    title = re.sub(r"\s*\|?\s*\d+\s*hours?\b", "", title, flags=re.I).strip()
+    if h < 1:
+        return title[:100]
     tag = f" | {h} Hour" + ("s" if h > 1 else "")
     return title[:100 - len(tag)].rstrip() + tag
 
