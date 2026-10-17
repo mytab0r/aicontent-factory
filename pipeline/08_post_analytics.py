@@ -133,11 +133,16 @@ def collect(at):
 
 
 def probe() -> int:
-    """Проверка scope реальным вызовом: Analytics API отвечает 200 на запрос канала."""
+    """Проверка scope реальным вызовом: Analytics API отвечает на запрос-сводку канала.
+
+    CTR показов (videoThumbnailImpressionsClickRate) Analytics API v2 НЕ поддерживает
+    (проверено вызовом в CI run 39073550413: 400 The query is not supported; метрика есть
+    только в bulk-отчётах YouTube Reporting API, требующих scope yt-analytics.readonly,
+    которого у токена нет). Поэтому зонд — только по поддерживаемым метрикам."""
     at = access_token()
     q = urllib.parse.urlencode({"ids": "channel==MINE", "startDate": "2026-10-01",
                                 "endDate": dt.date.today().isoformat(),
-                                "metrics": "views,averageViewPercentage,videoThumbnailImpressionsClickRate"})
+                                "metrics": "views,averageViewPercentage"})
     try:
         print("PROBE OK:", api(YTA + q, at).get("rows"))
         return 0
