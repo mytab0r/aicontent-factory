@@ -45,8 +45,9 @@ jobs:
             ref: ""  # phonk v1-v3 одобрены БЕЗ эталона (noref) — ref-трек не подмешивать
     # pc-acf-release: setup-uv падает EACCES (spawn uv, 16.10) — выпуск на проверенном pc-acf
     runs-on: [self-hosted, release]
-    # 16.10 run 38886770624: music 40 мин + аплоад часа >34 мин -> 75 обрезал 05 publish
-    timeout-minutes: 150
+    # 16.10 run 38886770624: music 40 мин + аплоад часа >34 мин -> 75 обрезал 05 publish.
+    # t_187762da: гейт сегментов (ACE15_BESTOF=3) до x3 генераций на сегмент -> worst ~90 мин music.
+    timeout-minutes: 240
     env:
       ROUTER_BASE_URL: https://9router.pxbt.app/v1
       ROUTER_API_KEY: ${{ secrets.ROUTER_API_KEY }}
@@ -63,6 +64,9 @@ jobs:
       # Кэш на раннере; нет файла -> 03_music генерирует без эталона.
       # phonk: пусто (noref-звук, Content ID и A/Bapproval без чужого стиля).
       ACE15_REF_AUDIO: ${{ matrix.ref }}
+      # t_187762da: best-of-N на КАЖДОМ сегменте час-микса (до 3 seed'ов, max CE среди прошедших
+      # quality_gate); 0 прошедших = сегмент выбрасывается, микс < 15 мин = FAIL. Пороги не снижены.
+      ACE15_BESTOF: "3"
     steps:
       - uses: actions/checkout@v4
         with:

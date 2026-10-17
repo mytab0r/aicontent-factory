@@ -35,13 +35,77 @@ def test_mix_fills_target_with_actual_durations():
 def test_mix_stops_on_time_budget_but_keeps_tracks():
     clock = iter([0, 600, 1300])  # старт; после t0 (600+600<=1500); после t1 1300+650>1500 -> стоп
     paths, _ = music.plan_mix(3600, lambda i: f"t{i}", lambda p: 400.0,
-                              budget_sec=1500, now=lambda: next(clock))
+                              budget_sec=1500, min_sec=0, now=lambda: next(clock))
     assert paths == ["t0", "t1"]
 
 
 def test_mix_max_tracks_cap():
-    paths, _ = music.plan_mix(10**6, lambda i: i, lambda p: 1.0, max_tracks=3)
+    paths, _ = music.plan_mix(10**6, lambda i: i, lambda p: 1.0, max_tracks=3, min_sec=0)
     assert len(paths) == 3
+
+
+def test_mix_gated_segment_regenerated_fail_not_in_mix(tmp=None):
+    """t_187762da: каждый сегмент час-микса через quality_gate; FAIL -> новый seed, в микс не попадает."""
+    import tempfile
+    d = Path(tempfile.mkdtemp())
+    made = []
+    def raw(i, k):
+        p = d / f"s{i}_{k}.mp3"
+        p.write_bytes(b"x")
+        made.append(p.name)
+        return str(p)
+    bad = {"s1_0.mp3"}  # сегмент 1, попытка 0 — брак (как 17.10: полоса 20-60 Гц -2.2 дБ)
+    scores = lambda fs: [[3.0] * 3 if Path(f).name in bad else [7.5] * 3 for f in fs]
+    gen = music.gated_gen(raw, scores, lambda p: [], attempts=3, log=lambda *a: None)
+    paths, durs = music.plan_mix(1500, gen, lambda p: 500.0)
+    names = [Path(x).name for x in paths]
+    assert names == ["s0_0.mp3", "s1_1.mp3", "s2_0.mp3"], names
+    assert "s1_0.mp3" not in names and not (d / "s1_0.mp3").exists()  # брак удалён с диска
+    assert made == ["s0_0.mp3", "s1_0.mp3", "s1_1.mp3", "s2_0.mp3"]
+
+
+def test_mix_segment_dropped_after_k_fails_if_mix_long_enough():
+    seen = []
+    def raw(i, k):
+        seen.append((i, k))
+        return f"s{i}_{k}"
+    scores = lambda fs: [[3.0] * 3 if f.startswith("s1_") else [7.5] * 3 for f in fs]
+    gen = music.gated_gen(raw, scores, lambda p: [], attempts=2, log=lambda *a: None)
+    paths, _ = music.plan_mix(1500, gen, lambda p: 500.0, min_sec=900)
+    assert paths == ["s0_0", "s2_0", "s3_0"], paths
+    assert seen.count((1, 0)) == 1 and seen.count((1, 1)) == 1 and (1, 2) not in seen  # ровно K попыток
+
+
+def test_mix_fails_if_under_15_min_after_drops():
+    gen = music.gated_gen(lambda i, k: f"s{i}_{k}", lambda fs: [[3.0] * 3] * len(fs), lambda p: [],
+                          attempts=2, log=lambda *a: None)
+    try:
+        music.plan_mix(3600, gen, lambda p: 500.0, max_tracks=4, min_sec=900)
+        raise SystemExit("должен был упасть: микс < 15 мин")
+    except RuntimeError as e:
+        assert "15" in str(e) or "900" in str(e), e
+
+
+def test_mix_gate_objective_fail_regenerates_and_critic_error_propagates():
+    obj = lambda p: ["полоса 20-60 Гц -2.2 дБ к эталону"] if p == "s0_0" else []
+    gen = music.gated_gen(lambda i, k: f"s{i}_{k}", lambda fs: [[7.9] * 3] * len(fs), obj,
+                          attempts=3, log=lambda *a: None)
+    assert gen(0) == "s0_1"
+    def broken(fs):
+        raise RuntimeError("критик не отработал (0/3)")
+    gen = music.gated_gen(lambda i, k: f"s{i}_{k}", broken, lambda p: [], attempts=3, log=lambda *a: None)
+    try:
+        gen(0)
+        raise SystemExit("ошибка критика должна валить шаг, не выкидывать сегмент")
+    except RuntimeError as e:
+        assert "критик" in str(e)
+
+
+def test_daily_video_sets_bestof():
+    import re
+    wf = (Path(__file__).resolve().parent.parent / ".github/workflows/daily-video.yml").read_text(encoding="utf-8")
+    m = re.search(r'ACE15_BESTOF:\s*"?(\d+)', wf)
+    assert m and int(m.group(1)) >= 2, "ACE15_BESTOF не задан в daily-video: отбор в проде не работает"
 
 
 def test_chapters_start_at_zero_and_format_hours():
