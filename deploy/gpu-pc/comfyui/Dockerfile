@@ -27,6 +27,11 @@ RUN pip install --no-cache-dir torch torchvision torchaudio \
       --index-url https://download.pytorch.org/whl/cu128 \
  && pip install --no-cache-dir -r requirements.txt
 
+# ComfyUI-GGUF: UnetLoaderGGUF для квантованных Wan-моделей (Q4_K_M, ~9.6GB
+# в 12GB VRAM; fp8-стек даёт систематический Y-дрейф на 81 кадрах)
+RUN git clone https://github.com/city96/ComfyUI-GGUF.git /app/custom_nodes/ComfyUI-GGUF \
+ && pip install --no-cache-dir gguf sentencepiece
+
 # модель-файлы кладёт владелец/агент в volume comfy-models (см. README)
 ENV COMFY_MODEL_PATH=/models
 VOLUME /models /app/output /app/input
