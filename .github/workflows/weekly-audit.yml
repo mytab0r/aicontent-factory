@@ -1,0 +1,37 @@
+name: weekly-audit
+# t_bb361290: еженедельный самоаудит согласованности жанр↔мастеринг↔эталон↔пороги.
+# FAIL = рассогласование настроек G1zm0; чинит не воркфлоу, а владелец/оркестратор (аудит только сообщает).
+on:
+  schedule:
+    - cron: "0 6 * * 1" # пн 06:00 UTC, до дневных слотов daily-video
+  workflow_dispatch:
+concurrency:
+  group: weekly-audit
+  cancel-in-progress: false
+jobs:
+  audit:
+    runs-on: [self-hosted, release]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      # тот же кэш/рецепт materialизации эталона, что и в daily-video ('reference audio');
+      # нет файла -> аудиту нечего гейтить, он сам это пометит FAIL
+      - name: reference audio (cache)
+        continue-on-error: true
+        run: |
+          [ -s /tmp/acf-ref/ref1.wav ] && exit 0
+          mkdir -p /tmp/acf-ref && python3 -m venv /tmp/acf-ref/v && /tmp/acf-ref/v/bin/pip install -q -U yt-dlp
+          /tmp/acf-ref/v/bin/yt-dlp -q -f bestaudio -o '/tmp/acf-ref/raw1.%(ext)s' https://youtu.be/CYZeAfaj3pc
+          ffmpeg -loglevel error -y -ss 30 -t 90 -i /tmp/acf-ref/raw1.* -ac 2 -ar 48000 /tmp/acf-ref/ref1.wav
+      - name: config audit (FAIL = рассогласование)
+        working-directory: pipeline
+        run: |
+          set -o pipefail
+          python3 config_audit.py --ref /tmp/acf-ref/ref1.wav 2>&1 | tee audit_log.txt
+      - name: upload audit log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-log
+          path: pipeline/audit_log.txt
+          retention-days: 14
