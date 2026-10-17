@@ -40,4 +40,16 @@ with tempfile.TemporaryDirectory() as td:
                     "-ac", "2", "-c:a", "pcm_f32le", hot], check=True)
     w_hot, m_hot = qg.objective(hot, "phonk")
     assert any("true peak" in w for w in w_hot), (w_hot, m_hot)
+# A13 (17.10): гейт мерил track.mp3, а на YouTube ушёл AAC в mp4 с TP +1.3..+1.9 dBTP (p-kkEmLGviU).
+# --final обязан мерить video.mp4 и ловить пики в финальном файле; одобренные эталоны после AAC 192k проходят.
+from pathlib import Path as _P
+assert qg.target(_P("r"), True) == _P("r/video.mp4") and qg.target(_P("r"), False) == _P("r/track.mp3")
+with tempfile.TemporaryDirectory() as td:
+    v = f"{td}/video.mp4"
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "color=c=black:s=64x64:r=5:d=10",
+                    "-f", "lavfi", "-i", "sine=f=3000:d=10", "-af", "volume=24dB", "-ac", "2",
+                    "-c:v", "libx264", "-c:a", "aac", "-b:a", "192k", "-shortest", v], check=True)
+    w_v, m_v = qg.objective(v, "phonk")
+    assert any("true peak" in w for w in w_v), (w_v, m_v)
+    assert qg.main(["x", v, "phonk", "--final"]) == 1
 print("test_quality_gate OK")
