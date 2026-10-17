@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 pa = importlib.import_module("08_post_analytics")
 
 NOW = dt.datetime(2026, 10, 17, 12, 0, tzinfo=dt.timezone.utc)
+REAL = {"collect": pa.collect}  # сетевые заглушки ниже патчат модуль — возвращаем оригиналы
 
 
 def v(vid, hours_ago, ret, ctr, title="Anime Lofi"):
@@ -64,8 +65,48 @@ def test_report_text():
     vids = [v("a", 50, 30, 2), v("b", 100, 40, 4)]
     txt = pa.report_text(pa.analyse(vids, NOW), ctr_note=None)
     assert "youtu.be/a" in txt and "РАЗБОР" in txt and "30.0%" in txt and "медиана 35.0%" in txt
-    assert "нет видео" in pa.report_text([], ctr_note=None)
-    assert "CTR н/д" in pa.report_text([], ctr_note="CTR н/д: 400")
+    assert "CTR н/д" in pa.report_text(pa.analyse(vids, NOW), ctr_note="CTR н/д: отчёт недоступен")
+
+
+# ---------- reach-отчёт (YouTube Reporting API, решение владельца 17.10) ----------
+
+REACH_CSV = (
+    "time,channel_id,video_id,video_thumbnail_impressions,video_thumbnail_impressions_ctr\n"
+    "2026-10-15,chn,vidA,1000,0.05\n"
+    "2026-10-16,chn,vidA,1200,0.07\n"
+    "2026-10-16,chn,vidB,500,0.02\n"
+)
+
+
+def test_parse_reach_csv_latest_day_wins():
+    got = pa.parse_reach_csv(REACH_CSV)
+    assert got["vidA"] == (1200.0, 0.07)   # строка последнего дня, не сумма/первая
+    assert got["vidB"] == (500.0, 0.02)
+    assert len(got) == 2
+
+
+def test_empty_window_sends_nothing():
+    sent = []
+    pa.access_token, pa.collect = (lambda: "t"), (lambda at: ([], None))
+    pa.tg_send = sent.append
+    assert pa.main() == 0
+    assert sent == []                        # пустое окно = молчим (решение 17.10)
+
+
+def test_reach_failure_keeps_retention_report():
+    sent = []
+    vids = [v("a", 50, 40, None), v("b", 100, 30, None), v("c", 200, 50, None)]
+    pa.collect = REAL["collect"]           # предыдущий тест подменял collect — вернуть
+    pa.access_token = lambda: "t"
+    pa.uploads = lambda at: [dict(x) for x in vids]
+    pa.metric = lambda at, ids, start, name: {"a": 40.0, "b": 30.0, "c": 50.0}
+    pa.ensure_reach_job = lambda at: (_ for _ in ()).throw(RuntimeError("reach down"))
+    pa.tg_send = sent.append
+    assert pa.main() == 0
+    txt = sent[-1]
+    assert "удержание 40.0%" in txt          # сбой reach не валит удержание
+    assert "CTR н/д" in txt
+    assert "reach down" not in txt and "RuntimeError" not in txt  # сырая ошибка не в TG
 
 
 if __name__ == "__main__":

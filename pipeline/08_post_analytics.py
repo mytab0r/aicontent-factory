@@ -2,17 +2,20 @@
 """Шаг 8: пост-аналитика через 48 ч после публикации (t_3017f17a, спец t_b4006a6e п.6).
 
 Раз в сутки (post-analytics.yml): видео, опубликованные 48–72 ч назад (каждое попадает в окно
-ровно один раз), получают удержание (averageViewPercentage) и CTR показов
-(videoThumbnailImpressionsClickRate) из YouTube Analytics API. Медиана канала считается по
+ровно один раз), получают удержание (averageViewPercentage, Analytics API) и CTR показов
+(Reporting API, bulk-отчёт channel_reach_basic_a1: video_thumbnail_impressions_ctr; Analytics API
+v2 CTR не отдаёт — 400, проверено CI 39073550413). Медиана канала считается по
 последним загрузкам того же типа (shorts с shorts, long-form с long-form). Ниже медианы по любой
-метрике = флаг «разбор». Итог одним сообщением в TG-топик отчётов (common.tg_send).
+метрике = флаг «разбор». Пустое окно = молчание. Итог одним сообщением в TG-топик отчётов (common.tg_send).
 
   YOUTUBE_TOKEN_JSON=... python3 08_post_analytics.py           # отчёт
   YOUTUBE_TOKEN_JSON=... python3 08_post_analytics.py --probe   # только проверка scope вызовом API
 
 Только stdlib: токен обновляется через oauth2.googleapis.com/token.
 """
+import csv
 import datetime as dt
+import io
 import json
 import os
 import sys
@@ -26,6 +29,8 @@ WINDOW_H = (48, 72)
 HISTORY = 50  # ponytail: медиана по последним 50 загрузкам (1 страница API); больше — пагинация
 YT = "https://www.googleapis.com/youtube/v3/"
 YTA = "https://youtubeanalytics.googleapis.com/v2/reports?"
+REPTR = "https://youtubereporting.googleapis.com/v1/"
+REACH_TYPE = "channel_reach_basic_a1"  # bulk-отчёт «Охват»: показы превью + CTR
 
 
 # ---------- чистая логика (тест: test_post_analytics.py) ----------
@@ -64,8 +69,6 @@ def _fmt(x):
 
 def report_text(rows, ctr_note) -> str:
     lines = ["📊 G1zm0: пост-аналитика 48 ч"]
-    if not rows:
-        lines.append("За окно 48–72 ч нет видео.")
     for r in rows:
         mark = "🔴 РАЗБОР (" + ", ".join(r["flags"]) + ")" if r["razbor"] else "🟢 ок"
         kind = "short" if is_short(r) else "long"
@@ -116,35 +119,82 @@ def metric(at, ids, start, name) -> dict:
     return {r[0]: float(r[1]) for r in api(YTA + q, at).get("rows") or []}
 
 
+def parse_reach_csv(text) -> dict:
+    """CSV reach-отчёта -> {video_id: (impressions, ctr)}; на видео берём строку последнего дня.
+
+    ponytail: impressions не суммируем по дням (CTR суточный) — для флага «ниже медианы»
+    достаточно среза последнего дня; upgrade — пересчёт CTR из сумм показов/кликов."""
+    rows = csv.reader(io.StringIO(text))
+    header = next(rows, [])
+    idx = {name: i for i, name in enumerate(header)}
+    ivid, iv, ic = idx["video_id"], idx["video_thumbnail_impressions"], idx["video_thumbnail_impressions_ctr"]
+    it = idx.get("time", idx.get("date", 0))
+    out = {}
+    for r in rows:
+        if len(r) <= max(ivid, iv, ic, it) or not r[ivid]:
+            continue
+        cur = out.get(r[ivid])
+        if cur is None or r[it] > cur[1]:
+            out[r[ivid]] = ((float(r[iv]), float(r[ic])), r[it])
+    return {vid: val for vid, (val, _) in out.items()}
+
+
+def ensure_reach_job(at) -> str:
+    """Идемпотентно: существующий job channel_reach_basic_a1 или создание (однократно)."""
+    for j in api(REPTR + "jobs", at).get("jobs") or []:
+        if j.get("reportTypeId") == REACH_TYPE:
+            return j["jobId"]
+    req = urllib.request.Request(REPTR + "jobs", json.dumps({"reportTypeId": REACH_TYPE,
+                                                             "name": "post-analytics-reach"}).encode(),
+                                 headers={"Authorization": f"Bearer {at}", "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.load(r)["jobId"]
+
+
+def reach_ctr(at, job_id) -> dict:
+    """Последний CSV джоба за 7 дней -> {video_id: (impressions, ctr)}. Пусто = ещё не выгружен."""
+    cutoff = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=7)).strftime("%Y-%m-%dT00:00:00Z")
+    reps = api(REPTR + f"jobs/{job_id}/reports?" + urllib.parse.urlencode({"createdAfter": cutoff}), at).get("reports") or []
+    if not reps:
+        return {}
+    latest = max(reps, key=lambda r: r["startTime"])
+    req = urllib.request.Request(latest["downloadUrl"], headers={"Authorization": f"Bearer {at}"})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        return parse_reach_csv(r.read().decode("utf-8", "replace"))
+
+
 def collect(at):
     vids = uploads(at)
     if not vids:
-        return [], None
+        return vids, None
     ids, start = [v["id"] for v in vids], min(v["published"] for v in vids).date().isoformat()
     ret = metric(at, ids, start, "averageViewPercentage")  # без удержания отчёт бессмыслен: падаем
-    ctr_note = None
+    ctr, ctr_note = {}, None
     try:
-        ctr = metric(at, ids, start, "videoThumbnailImpressionsClickRate")
-    except urllib.error.HTTPError as e:  # CTR — не core-метрика, API может её не отдать
-        ctr, ctr_note = {}, f"CTR н/д: {_http_err(e)}"
+        ctr = reach_ctr(at, ensure_reach_job(at))  # сбой reach не валит удержание (решение 17.10)
+        if not ctr:
+            ctr_note = "CTR н/д: reach-отчёт YouTube ещё не сформирован (суточная выгрузка, задержка до 2 дней)"
+    except Exception as e:  # noqa: BLE001 — любая ошибка reach = одна русская строка, без сырого текста
+        print("reach unavailable:", type(e).__name__, e, file=sys.stderr)
+        ctr_note = "CTR н/д: reach-отчёт YouTube недоступен, разберусь и починю"
     for v in vids:
         v["retention"], v["ctr"] = ret.get(v["id"]), ctr.get(v["id"])
     return vids, ctr_note
 
 
 def probe() -> int:
-    """Проверка scope реальным вызовом: Analytics API отвечает на запрос-сводку канала.
+    """Проверка scope реальными вызовами: Analytics API (удержание) + Reporting API (CTR).
 
-    CTR показов (videoThumbnailImpressionsClickRate) Analytics API v2 НЕ поддерживает
-    (проверено вызовом в CI run 39073550413: 400 The query is not supported; метрика есть
-    только в bulk-отчётах YouTube Reporting API, требующих scope yt-analytics.readonly,
-    которого у токена нет). Поэтому зонд — только по поддерживаемым метрикам."""
+    Scope у токена ровно один — yt-analytics.readonly, его хватает на оба API (PROBE OK
+    в CI 39074153011; прежний комментарий о «недостающем scope» был ошибочен). CTR берём
+    из bulk-отчёта channel_reach_basic_a1 (решение владельца 17.10)."""
     at = access_token()
     q = urllib.parse.urlencode({"ids": "channel==MINE", "startDate": "2026-10-01",
                                 "endDate": dt.date.today().isoformat(),
                                 "metrics": "views,averageViewPercentage"})
     try:
-        print("PROBE OK:", api(YTA + q, at).get("rows"))
+        print("PROBE analytics:", api(YTA + q, at).get("rows"))
+        print("PROBE reporting jobs:", [j.get("reportTypeId") for j in api(REPTR + "jobs", at).get("jobs") or []])
         return 0
     except urllib.error.HTTPError as e:
         print("PROBE FAIL:", _http_err(e))
@@ -157,9 +207,12 @@ def main() -> int:
     try:
         vids, ctr_note = collect(access_token())
     except urllib.error.HTTPError as e:
-        tg_send(f"⚠️ G1zm0 пост-аналитика 48 ч не собрана: YouTube API {_http_err(e)}")
+        print("collect fail:", _http_err(e), file=sys.stderr)  # сырая ошибка — в лог CI, не владельцу
+        tg_send("⚠️ G1zm0: пост-аналитика 48 ч не собралась — чиню, детали в логе CI")
         raise
     rows = analyse(vids, dt.datetime.now(dt.timezone.utc))
+    if not rows:
+        return 0  # пустое окно 48–72 ч = молчим (решение владельца 17.10)
     tg_send(report_text(rows, ctr_note))
     return 0
 
