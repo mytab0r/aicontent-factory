@@ -35,11 +35,11 @@ with tempfile.TemporaryDirectory() as td:
     s_same, s_diff = ar.similarity(fa2, fa), ar.similarity(fb, fa)
     print(f"same {s_same:.3f} diff {s_diff:.3f} threshold {ar.THRESHOLD}")
     assert s_same > ar.THRESHOLD > s_diff, (s_same, s_diff)
-    # хранение: base64 int8 не ломает сравнение
+    # хранение (JSON, округление) не ломает сравнение
     assert ar.similarity(fa2, ar.decode(ar.encode(fa))) > ar.THRESHOLD
 
     # окно 14 дней: запись 3 дня назад ловится, 15 дней назад не учитывается
-    state = td / "antirepeat.json"
+    state = td / "antirepeat"  # файл на выпуск: 2 жанра/сутки не конфликтуют при rebase
     ar.record(state, fa, D - dt.timedelta(days=3), video="vidA", genre="anime lofi")
     assert ar.check(fa2, ar.load(state), D), "одинаковый трек за 14 дней должен дать FAIL"
     assert not ar.check(fb, ar.load(state), D), "разный трек должен дать PASS"
@@ -70,7 +70,7 @@ wf = (Path(__file__).parent.parent / ".github/workflows/daily-video.yml").read_t
 names = [l.split("name:", 1)[1].strip() for l in wf.splitlines() if l.strip().startswith("- name:")]
 i = next(k for k, n in enumerate(names) if n.startswith("03c"))
 assert names[i + 1].startswith("03d") and "antirepeat" in wf.split(names[i + 1], 1)[1].split("- name:", 1)[0], names
-assert "git add -f .state/antirepeat.json" in wf
+assert "git add -f .state/antirepeat" in wf
 assert "antirepeat.py --record" in wf
 assert ar.WINDOW_DAYS == 14
 print("test_antirepeat OK")
