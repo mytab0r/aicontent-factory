@@ -182,17 +182,20 @@ def collect(at):
     return vids, ctr_note
 
 
-def probe() -> int:
-    """Проверка scope реальными вызовами: Analytics API (удержание) + Reporting API (CTR).
+def granted_scopes(at) -> str:
+    req = urllib.request.Request("https://oauth2.googleapis.com/tokeninfo?access_token=" + urllib.parse.quote(at))
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.load(r).get("scope", "?")
 
-    Scope у токена ровно один — yt-analytics.readonly, его хватает на оба API (PROBE OK
-    в CI 39074153011; прежний комментарий о «недостающем scope» был ошибочен). CTR берём
-    из bulk-отчёта channel_reach_basic_a1 (решение владельца 17.10)."""
+
+def probe() -> int:
+    """Проверка scope реальными вызовами: Analytics API (удержание) + Reporting API (CTR)."""
     at = access_token()
     q = urllib.parse.urlencode({"ids": "channel==MINE", "startDate": "2026-10-01",
                                 "endDate": dt.date.today().isoformat(),
                                 "metrics": "views,averageViewPercentage"})
     try:
+        print("PROBE granted scopes:", granted_scopes(at))
         print("PROBE analytics:", api(YTA + q, at).get("rows"))
         print("PROBE reporting jobs:", [j.get("reportTypeId") for j in api(REPTR + "jobs", at).get("jobs") or []])
         return 0
