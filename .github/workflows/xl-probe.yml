@@ -194,6 +194,7 @@ jobs:
           docker exec -e PYTHONPATH=/tmp/pylibs ace-step "$PY" train.py fixed \
             --checkpoint-dir /app/checkpoints --model-variant acestep-v15-xl-sft \
             --base-model xl_sft --preprocess --audio-dir /app/output/lora/audio \
+            --dataset-dir /app/output/lora/dataset \
             --tensor-output /app/output/lora/tensors --output-dir /app/output/lora/out \
             --rank 32 --optimizer-type adamw8bit --offload-encoder \
             --batch-size 1 --gradient-accumulation 8 --epochs 3 --plain --yes
