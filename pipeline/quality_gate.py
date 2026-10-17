@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Критик трека перед публикацией (03c). exit 1 = не публиковать, шаги 04-07 не идут.
 
-1) Объективно: динамика (LRA) и баланс 5 полос против одобренного владельцем эталона жанра.
+1) Объективно: динамика (LRA), 8 полос ±2 дБ и баланс мелодия/муть против одобренного владельцем эталона жанра.
    Тишина/LUFS/TP «кашу» не ловят: 16.10 на канал ушло LRA 1.4 при эталоне 10.9.
 2) Модель-критик Meta audiobox-aesthetics, CE (предсказание «понравится ли»), в контейнере ace-step.
    Замеры: рефы ниши CE 7.07-7.91, брак base-модели 2.1-3.6.
@@ -9,11 +9,14 @@
 """
 import json, re, subprocess, sys, tempfile
 
-BANDS = [(20, 150), (150, 1000), (1000, 4000), (4000, 8000), (8000, 16000)]
-# дБ относительно баса, сняты с одобренных эталонов: lofi = ref1 (13.10), phonk = v2 (15.10, LRA 1.5 — так одобрен).
-REF = {"lofi": {"bands": [0.0, -4.2, -10.4, -18.2, -19.7], "min_lra": 5.0},
-       "phonk": {"bands": [0.0, -6.1, -8.8, -13.6, -15.4], "min_lra": 0.0}}
-BAND_TOL = 3.0
+BANDS = [(20, 60), (60, 150), (150, 400), (400, 1000), (1000, 2500), (2500, 5000), (5000, 10000), (10000, 16000)]
+# Абсолютные RMS дБ по полосам (двойные фильтры), сняты с одобренных эталонов целиком:
+# lofi = ref1 (13.10), phonk = v2 gated (15.10, LRA 1.5 — так одобрен). Сравнение — относительно полосы 60-150 (бас).
+# 5 широких полос ±3 дБ пропустили провал мелодии 1-5 кГц и муть 150-400 (p-kkEmLGviU, 17.10) — отсюда 8 полос ±2 и баланс.
+REF = {"lofi": {"bands": [-26.3, -23.0, -29.6, -28.9, -33.2, -39.9, -40.2, -44.1], "min_lra": 5.0},
+       "phonk": {"bands": [-23.1, -22.3, -31.3, -28.3, -30.3, -33.2, -34.2, -38.2], "min_lra": 0.0}}
+BAND_TOL = 2.0
+BAL_TOL = 2.0  # (среднее 1-5 кГц) - (150-400 Гц) не хуже эталона более чем на столько
 MIN_CE = 6.5  # ниже худшего рефа ниши (7.07), сильно выше брака (<=3.6)
 
 
@@ -22,16 +25,31 @@ def ff(f, af):
                           capture_output=True, text=True).stderr
 
 
-def objective(f, genre):
+def rel(b):
+    return [x - b[1] for x in b]
+
+
+def balance(b):
+    return (b[4] + b[5]) / 2 - b[2]
+
+
+def judge(bands, lra, genre):
+    """bands = абсолютные RMS дБ по BANDS. Возвращает список причин FAIL."""
     ref = REF["phonk" if "phonk" in genre else "lofi"]
-    b = [float(re.findall(r"RMS level dB: (-?[\d.]+)", ff(f, f"highpass=f={lo},lowpass=f={hi},"
-         "astats=measure_overall=RMS_level:measure_perchannel=none"))[-1]) for lo, hi in BANDS]
-    bands = [round(x - b[0], 1) for x in b]
-    lra = float(re.findall(r"LRA:\s+([\d.]+)", ff(f, "ebur128"))[-1])
     why = [f"LRA {lra} < {ref['min_lra']}: динамика раздавлена (каша)"] if lra < ref["min_lra"] else []
     why += [f"полоса {lo}-{hi} Гц {x - r:+.1f} дБ к эталону" for (lo, hi), x, r
-            in zip(BANDS, bands, ref["bands"]) if abs(x - r) > BAND_TOL]
-    return why, {"lra": lra, "bands": bands}
+            in zip(BANDS, rel(bands), rel(ref["bands"])) if abs(x - r) > BAND_TOL]
+    d = balance(bands) - balance(ref["bands"])
+    if d < -BAL_TOL:
+        why.append(f"баланс мелодия(1-5 кГц) - муть(150-400 Гц) {d:+.1f} дБ к эталону: лид утоплен")
+    return why
+
+
+def objective(f, genre):
+    b = [float(re.findall(r"RMS level dB: (-?[\d.]+)", ff(f, f"highpass=f={lo},highpass=f={lo},lowpass=f={hi},lowpass=f={hi},"
+         "astats=measure_overall=RMS_level:measure_perchannel=none"))[-1]) for lo, hi in BANDS]
+    lra = float(re.findall(r"LRA:\s+([\d.]+)", ff(f, "ebur128"))[-1])
+    return judge(b, lra, genre), {"lra": lra, "bands": [round(x, 1) for x in b], "balance": round(balance(b), 1)}
 
 
 # как bench/aes.sh (exp/vox-insert, проверено на ПК): пакеты на C: в /app/output/aes/pkgs, torch из образа
