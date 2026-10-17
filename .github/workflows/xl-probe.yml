@@ -77,83 +77,55 @@ jobs:
       # артефакты GitHub упираются в storage quota (пересчёт 6-12 ч): если результаты
       # прошлого прогона целы на раннере (/tmp/xlrun) — скипаем дорогой gen (модель+CE),
       # доставка владельцу: шаг exfil (base64 в лог) -> VPS.
-      - name: skip gen if previous results intact
-        id: salvage
-        run: |
-          if [ -f /tmp/xlrun/sample_A.mp3 ] && [ -f /tmp/xlrun/sample_B.mp3 ] && [ -f /tmp/xlrun/ce_report.json ]; then
-            echo "rc=0" >> "$GITHUB_OUTPUT"; echo "нашёл результаты прошлого прогона — gen скипается"
-          else
-            echo "rc=1" >> "$GITHUB_OUTPUT"; echo "результатов нет — полный прогон"
-          fi
-
-      - name: best-of-8 xl-sft + CE log + blind A/B
-        if: ${{ steps.salvage.outputs.rc != '0' }}
+      # Прод-путь 03_music.main() целиком: ACE15_MODEL/LORA/BESTOF -> ace15_prepare (/v1/init +
+      # /v1/lora/load + /v1/lora/status в лог) -> best-of-8 через quality_gate (objective + CE >= MIN_CE,
+      # max CE среди прошедших, 0 прошли = до 3 раундов) -> music_meta.json. Тот же код включит daily-video.
+      # Слепой A/B: 2 сэмпла XL+LoRA+best-of-8 и 2 сэмпла текущего прода (turbo, без LoRA, 1 кандидат).
+      - name: blind A/B — XL-sft+LoRA best-of-8 (prod path) vs turbo prod
         timeout-minutes: 240
+        env:
+          ACE15_ENDPOINT: http://ace-step:8001
+          GENRE: anime lofi
+          TRACK_DURATION_SEC: "90"
         run: |
           set -e
-          cd pipeline
-          ACE15_ENDPOINT=http://ace-step:8001 /tmp/xlv/bin/python - <<'PY'
-          import importlib.util, json, shutil, sys, time
+          rm -rf /tmp/xlrun runs && mkdir -p /tmp/xlrun
+          docker exec ace-step ls -la /app/output/lora/out/final
+          gen() {  # $1 = имя, далее env прод-варианта
+            local name=$1; shift
+            d=runs/$(date -u +%Y%m%d_%H%M%S)_$name; mkdir -p "$d"
+            echo '{"mood": "cozy lofi"}' > "$d/idea.json"
+            env "$@" /tmp/xlv/bin/python pipeline/03_music.py
+            cp "$d/track.mp3" "/tmp/xlrun/$name.mp3"; cp "$d/music_meta.json" "/tmp/xlrun/$name.json"
+            sleep 1
+          }
+          XL="ACE15_MODEL=acestep-v15-xl-sft ACE15_LORA=/app/output/lora/out/final ACE15_BESTOF=8"
+          gen xl_1 $XL; gen xl_2 $XL
+          curl -sf -X POST "$ACE15_ENDPOINT/v1/lora/unload" -H 'Content-Type: application/json' -d '{}' || true
+          gen turbo_1 ACE15_MODEL=acestep-v15-turbo; gen turbo_2 ACE15_MODEL=acestep-v15-turbo
+          /tmp/xlv/bin/python - <<'PY'
+          import json, random, shutil
           from pathlib import Path
-          sys.path.insert(0, ".")
-          spec = importlib.util.spec_from_file_location("music", "03_music.py")
-          music = importlib.util.module_from_spec(spec); spec.loader.exec_module(music)
-          spec_b = importlib.util.spec_from_file_location("bestof", "bestof.py")
-          bestof = importlib.util.module_from_spec(spec_b); spec_b.loader.exec_module(bestof)
-          from quality_gate import ce_batch
-          out = Path("/tmp/xlrun"); out.mkdir(exist_ok=True)
-          prompt = music.GENRE_PROMPTS["anime lofi"]
-          n = 8
-          cand = [out / f"cand_{i:02d}.mp3" for i in range(n)]
-          def gen(i):
-              # t0_00: сид фиксирован, отличие только сэмпл-шум модели
-              music.generate_track_v15(prompt, 90, 7000 + i, cand[i],
-                                       model="acestep-v15-xl-sft")
-              return str(cand[i])
-          t0 = time.time()
-          bi, bp, ce = bestof.best_of(n, gen, ce_batch)
-          dt_s = round(time.time() - t0)
-          rows = [{"cand": i, "ce": ce[i], "ce_min": min(ce[i])} for i in range(n)]
-          report = {"model": "acestep-v15-xl-sft", "bestof": n, "picked": bi,
-                    "gen_sec_total": dt_s, "sec_per_cand": round(dt_s / n), "ce": rows}
-          (out / "ce_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=1))
-          print(json.dumps(report, ensure_ascii=False, indent=1))
-          # слепой A/B: winner XL-sft (sample_A) против текущего прода turbo (sample_B)
-          shutil.copy(bp, out / "sample_A.mp3")
-          music.generate_track_v15(prompt, 90, 7000 + bi, out / "sample_B.mp3")
-          (out / ".labels.json").write_text(json.dumps(
-              {"sample_A.mp3": "xl-sft best-of-8 winner", "sample_B.mp3": "turbo prod"}))
-          print("blind A/B ready: sample_A/sample_B")
+          out = Path("/tmp/xlrun")
+          names = ["xl_1", "xl_2", "turbo_1", "turbo_2"]
+          random.shuffle(names)
+          rep = {"bestof": {n: json.loads((out / f"{n}.json").read_text())["bestof"] for n in ("xl_1", "xl_2")}}
+          for i, n in enumerate(names):
+              shutil.copy(out / f"{n}.mp3", out / f"versija_{i + 1}.mp3")
+          (out / "ce_report.json").write_text(json.dumps(rep, ensure_ascii=False, indent=1))
+          # маппинг — только в отдельном файле лога с префиксом BLINDMAP (VPS не шлёт его владельцу)
+          print("BLINDMAP " + json.dumps({f"versija_{i + 1}": n for i, n in enumerate(names)}))
+          print(json.dumps(rep, ensure_ascii=False, indent=1))
           PY
 
-      # A/B v4 (t_d53850f6, обновлено t_b4006a6e): 4 сэмпла дня на 4 разных CC BY эталонах.
-      # Генерится каждый прогон независимо от salvage (это уже другая пара для владельца).
-      - name: fetch refs (CC BY pool)
+      # ace-step обязан вернуться в прод-состояние (turbo, без LoRA) — иначе daily-video молча уйдёт на XL
+      - name: restore prod ace-step (turbo, no LoRA)
+        if: ${{ always() }}
         run: |
-          set -e
-          G1ZM0_REF_DIR=/tmp/acf-refs python3 pipeline/fetch_refs.py || true   # 429-ретраи внутри
-          ls /tmp/acf-refs/*.wav | wc -l
-      - name: blind A/B v4 (4 refs)
-        timeout-minutes: 120
-        run: |
-          set -e
-          rm -rf /tmp/xlrun/ab4   # старьё прошлых прогонов не должно уйти владельцу
-          cd pipeline
-          G1ZM0_REF_DIR=/tmp/acf-refs ACE15_ENDPOINT=http://ace-step:8001 \
-          ACE15_MODEL=acestep-v15-xl-sft /tmp/xlv/bin/python g1zm0_ab.py "$(date -u +%F)" /tmp/xlrun/ab4 90
-          rm -f /tmp/xlrun/ab4/upload_day.txt /tmp/xlrun/ab4/report.md  # владельцу файлы не нужны
-          ls -la /tmp/xlrun/ab4/
-
-      - name: upload gate-samples
-        if: ${{ steps.salvage.outputs.rc != '0' }}
-        continue-on-error: true  # quota может быть ещё не пересчитана — не валить прогон
-        uses: actions/upload-artifact@v4
-        with:
-          name: gate-samples
-          path: |
-            /tmp/xlrun/sample_A.mp3
-            /tmp/xlrun/sample_B.mp3
-            /tmp/xlrun/ce_report.json
+          curl -sf -X POST http://ace-step:8001/v1/lora/unload -H 'Content-Type: application/json' -d '{}' || true
+          curl -sf -X POST http://ace-step:8001/v1/init -H 'Content-Type: application/json' \
+            -d '{"model": "acestep-v15-turbo"}' | head -c 400; echo
+          curl -sf http://ace-step:8001/v1/lora/status | head -c 400; echo
 
       # LoRA: только одобренные владельцем треки (A/B v4 clean: calmant, carefree,
       # windswept) + одобренные эталоны CC BY. Обучение в контейнере (train.py,
@@ -217,7 +189,7 @@ jobs:
 
       # Контейнеры ПК без исходящего 443 и artifact quota исчерпана -> файлы уходят base64
       # в лог этого job'а; VPS собирает их (gh run view --job --log) и доставляет владельцу.
-      # Маппинг XL/turbo в лог не пишем: имена sample_A/B, в ce_report только CE-числа.
+      # Маппинг XL/turbo — только строка BLINDMAP (VPS её владельцу не шлёт), в ce_report только CE.
       - name: exfil to log (base64)
         if: ${{ always() }}
         run: |
@@ -225,7 +197,7 @@ jobs:
           /tmp/xlv/bin/python - <<'PY'
           import base64, hashlib, json
           from pathlib import Path
-          files = sorted(Path(".").glob("sample_*.mp3")) + sorted(Path("ab4").glob("ab_*.mp3")) + [Path("ce_report.json")]
+          files = sorted(Path(".").glob("versija_*.mp3")) + [Path("ce_report.json")]
           files = [f for f in files if f.is_file()]
           print("XFMETA " + json.dumps({str(f): hashlib.sha256(f.read_bytes()).hexdigest() for f in files}))
           for f in files:

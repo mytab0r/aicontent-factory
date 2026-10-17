@@ -217,10 +217,30 @@ class _Http:
         return json.loads(out)
 
 
+def ace15_prepare(model: str | None, lora: str | None, api=None) -> dict:
+    """t_b4006a6e: модель в слот 1 (/v1/init) + LoRA (/v1/lora/load). В /release_task поля LoRA
+    НЕТ (молча игнорится) — LoRA живёт на primary-хендлере, поэтому сперва init, потом load.
+    Возврат /v1/lora/status — доказательство в лог; LoRA не встала = ошибка шага."""
+    api = api or _Http(os.environ["ACE15_ENDPOINT"])
+    if model:
+        r = api.post("/v1/init", {"model": model})
+        if r.get("code") != 200 or (r.get("data") or {}).get("loaded_model") != model:
+            raise RuntimeError(f"/v1/init {model}: {str(r)[:300]}")
+    if not lora:
+        return {}
+    import json
+    r = api.post("/v1/lora/load", {"lora_path": lora})
+    st = json.loads(api.get("/v1/lora/status"))["data"]
+    if r.get("code") != 200 or not (st.get("lora_loaded") and st.get("use_lora")):
+        raise RuntimeError(f"LoRA {lora} не подключена: {str(r)[:200]} {st}")
+    print(f"ACE15 ready: model={model} lora={lora} status={st}")
+    return st
+
+
 def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=None,
                        poll_sec: float = 5, timeout_sec: int = 3600, ref_audio=None,
                        bpm: int | None = None, key: str | None = None,
-                       model: str | None = None) -> None:
+                       model: str | None = None) -> dict:
     import json
     import time
     if os.environ.get("ACE15_TASK_TYPE", "text2music") != "text2music" or os.environ.get("ACE15_SRC_AUDIO"):
@@ -235,9 +255,6 @@ def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=
     m = model or os.environ.get("ACE15_MODEL")  # t_b4006a6e: модель на запрос (XL-sft), пусто = слот контейнера
     if m:
         body["model"] = m
-    lora = os.environ.get("ACE15_LORA")  # t_b4006a6e: LoRA на запрос, пусто = без LoRA
-    if lora:
-        body["lora_name_or_path"] = lora
     if ref_audio and Path(ref_audio).is_file():
         # Стиль по эталону (reference_audio): так одобрен звук 13.10.
         tid = api.post_file("/release_task", body, "reference_audio", ref_audio)["data"]["task_id"]
@@ -253,7 +270,12 @@ def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=
         time.sleep(poll_sec)
     if d["status"] != 1:
         raise RuntimeError(f"ACE-Step 1.5 task {tid} failed: {str(d.get('result'))[:300]}")
-    Path(out_path).write_bytes(api.get(json.loads(d["result"])[0]["file"]))
+    item = json.loads(d["result"])[0]
+    # сервер при неизвестной модели молча берёт primary ("not found ... using primary") — ловим
+    if m and item.get("dit_model") and item["dit_model"] != m:
+        raise RuntimeError(f"запрошена {m}, сгенерировала {item['dit_model']}")
+    Path(out_path).write_bytes(api.get(item["file"]))
+    return item
 
 
 def plan_mix(target_sec, gen, dur, budget_sec=1800, max_tracks=12, now=None):
@@ -396,6 +418,9 @@ def main() -> None:
         rot_meta["prompts"].append({k: p[k] for k in ("instrument", "bpm", "key")})
         return f"{base_prompt}, {p['instrument']} melody, {p['key']}, {p['bpm']} BPM", p["bpm"], p["key"]
 
+    if os.environ.get("ACE15_ENDPOINT"):
+        # t_b4006a6e: XL-sft + LoRA один раз до генерации (пусто = прод-слот turbo без LoRA)
+        ace15_prepare(os.environ.get("ACE15_MODEL"), os.environ.get("ACE15_LORA"))
     if os.environ.get("ACE15_ENDPOINT") and duration > ACE15_MAX_SEC:
         # ресёрч 13.10: хиты ниши 1-4 ч с треклистом; склеиваем ЦЕЛЬНЫЕ разные треки (не куски одного)
         def gen(i):
@@ -411,21 +436,26 @@ def main() -> None:
     elif os.environ.get("ACE15_ENDPOINT"):
         duration = min(duration, ACE15_MAX_SEC)
         tp, bpm, key = track_prompt(0)
-        n = int(os.environ.get("ACE15_BESTOF") or 0)  # t_b4006a6e: best-of-N по CE, 0 = как раньше (1 кандидат)
+        n = int(os.environ.get("ACE15_BESTOF") or 0)  # t_b4006a6e: best-of-N через quality_gate, 0 = 1 кандидат
         if n >= 2:
             import bestof
-            from quality_gate import ce_batch
-            cands = [run_dir / f"cand_{i:02d}.mp3" for i in range(n)]
-            bi, bp, ce = bestof.best_of(
-                n, lambda i: (generate_track_v15(tp, duration, seed + i, cands[i],
-                                                 ref_audio=ref, bpm=bpm, key=key) or str(cands[i])),
-                ce_batch)
             import shutil
+            from quality_gate import ce_batch, objective
+
+            def cand(k):
+                # кандидат мастерится как прод — гейт меряет то, что уйдёт на канал
+                c = run_dir / f"cand_{k:02d}.mp3"
+                generate_track_v15(tp, duration, seed + k, c, ref_audio=ref, bpm=bpm, key=key)
+                mastering.master(c, c, genre=genre_name)
+                return str(c)
+
+            bi, bp, rows = bestof.best_of(n, cand, ce_batch, objective=lambda p: objective(p, genre_name)[0])
             shutil.move(bp, out_path)
-            for c in cands:
-                c.unlink(missing_ok=True)  # карточка: кандидаты удаляются сразу после выбора (диск)
-            bestof_meta = {"n": n, "picked": bi, "ce": ce}
-            print(f"best-of-{n}: CE(min)={[min(x) for x in ce]} -> #{bi + 1}")
+            for c in run_dir.glob("cand_*.mp3"):
+                c.unlink()  # карточка: кандидаты удаляются сразу после выбора (диск)
+            bestof_meta = {"n": n, "picked": bi, "model": os.environ.get("ACE15_MODEL"),
+                           "lora": os.environ.get("ACE15_LORA"),
+                           "cands": [{k: r[k] for k in ("cand", "ce", "fail")} for r in rows]}
         else:
             generate_track_v15(tp, duration, seed, out_path, ref_audio=ref, bpm=bpm, key=key)
     else:
@@ -435,7 +465,8 @@ def main() -> None:
             for i, c in enumerate(chunks)
         ]
         concat_tracks(chunk_paths, out_path)
-    mastering.master(out_path, out_path, genre=genre_name)
+    if bestof_meta is None:  # победитель best-of уже отмастерен (повторный loudnorm не нужен)
+        mastering.master(out_path, out_path, genre=genre_name)
     (run_dir / "music_meta.json").write_text(
         json.dumps({"genre": genre_name, "prompt": prompt, "seed": seed, "duration": duration,
                     "chapters": chaps, "ref": rot_meta and rot_meta["ref"], "rotation": rot_meta,
