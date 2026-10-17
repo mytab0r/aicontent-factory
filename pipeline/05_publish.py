@@ -59,6 +59,12 @@ def upload_resumable(request, max_errors=8, sleep=None):
     return response
 
 
+def is_upload_limit(e) -> bool:
+    """YouTube 400 uploadLimitExceeded: дневной лимит загрузок канала (общий для daily-video и A/B)."""
+    from googleapiclient.errors import HttpError
+    return isinstance(e, HttpError) and b"uploadLimitExceeded" in (e.content or b"")
+
+
 def playlist_title(genre: str) -> str:
     return f"{genre.title()} Beats"
 
@@ -136,7 +142,17 @@ def publish(run_dir: Path) -> str:
     media = MediaFileUpload(str(video_path), mimetype="video/mp4", resumable=True, chunksize=1024 * 1024 * 4)
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
 
-    response = upload_resumable(request)
+    try:
+        response = upload_resumable(request)
+    except Exception as e:
+        if not is_upload_limit(e):
+            raise
+        from common import tg_send
+        # транзиентно: выпуск не валим, video.mp4 остаётся в runs/, published.json не пишем (07 shorts пропустит)
+        # ponytail: перезалив в следующий слот не автоматизирован (вне скоупа t_24f3f36c); добавить при повторах
+        tg_send(f"⏸ YouTube uploadLimitExceeded: дневной лимит загрузок исчерпан, слот пропущен. Видео осталось в {video_path}")
+        print(f"skip: uploadLimitExceeded, {video_path} оставлен для следующего слота")
+        return None
 
     video_id = response["id"]
     url = f"https://www.youtube.com/watch?v={video_id}"
