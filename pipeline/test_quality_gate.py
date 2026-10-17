@@ -33,4 +33,11 @@ assert any("2500-5000" in w for w in why), why
 assert qg.judge([-26.3, -23.0, -29.6, -28.9, -33.2, -39.9, -40.2, -44.1], 10.9, "anime lofi") == []
 assert qg.judge([-23.1, -22.3, -31.3, -28.3, -30.3, -33.2, -34.2, -38.2], 1.5, "phonk") == []
 assert len(qg.BANDS) == 8 and qg.BAND_TOL == 2.0
+# true peak (A5): клиппинг ловится, эталоны (ref1 TP -1.6, v2 -2.9) проходят
+with tempfile.TemporaryDirectory() as td:
+    hot = f"{td}/hot.wav"
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=3000:d=10", "-af", "volume=24dB",
+                    "-ac", "2", "-c:a", "pcm_f32le", hot], check=True)
+    w_hot, m_hot = qg.objective(hot, "phonk")
+    assert any("true peak" in w for w in w_hot), (w_hot, m_hot)
 print("test_quality_gate OK")
