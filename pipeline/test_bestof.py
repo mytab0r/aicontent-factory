@@ -98,7 +98,7 @@ except RuntimeError as e:
 # ---- ace15_prepare: init модели + LoRA с проверкой статуса ----
 class _PrepApi:
     def __init__(self, loaded=True): self.calls, self.loaded = [], loaded
-    def post(self, path, body):
+    def post(self, path, body, timeout=600):
         self.calls.append((path, body))
         if path == "/v1/init":
             return {"code": 200, "data": {"loaded_model": body["model"]}}
