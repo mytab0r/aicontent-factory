@@ -81,6 +81,13 @@ jobs:
       # /v1/lora/load + /v1/lora/status в лог) -> best-of-8 через quality_gate (objective + CE >= MIN_CE,
       # max CE среди прошедших, 0 прошли = до 3 раундов) -> music_meta.json. Тот же код включит daily-video.
       # Слепой A/B: 2 сэмпла XL+LoRA+best-of-8 и 2 сэмпла текущего прода (turbo, без LoRA, 1 кандидат).
+      # Прод-путь 03_music.main() целиком: ACE15_MODEL/LORA/BESTOF -> ace15_prepare (/v1/init +
+      # /v1/lora/load + /v1/lora/status в лог) -> best-of-8 через quality_gate (objective + CE >= MIN_CE,
+      # max CE среди прошедших, 0 прошли = до 3 раундов) -> music_meta.json. Тот же код включит daily-video.
+      # Слепой A/B: 2 сэмпла XL+LoRA+best-of-8 и 2 сэмпла текущего прода (turbo, без LoRA, 1 кандидат).
+      # Варианты независимы: падение одного не убивает остальные (частичный A/B > никакого);
+      # stderr+stdout пишутся и в консоль (лог задания), и в /tmp/xlrun/<name>.log на случай
+      # повторного BlobNotFound при аплоаде логов раннером.
       - name: blind A/B — XL-sft+LoRA best-of-8 (prod path) vs turbo prod
         timeout-minutes: 240
         env:
@@ -95,37 +102,49 @@ jobs:
             local name=$1; shift
             d=runs/$(date -u +%Y%m%d_%H%M%S)_$name; mkdir -p "$d"
             echo '{"mood": "cozy lofi"}' > "$d/idea.json"
-            env "$@" /tmp/xlv/bin/python pipeline/03_music.py
-            cp "$d/track.mp3" "/tmp/xlrun/$name.mp3"; cp "$d/music_meta.json" "/tmp/xlrun/$name.json"
+            if env "$@" /tmp/xlv/bin/python pipeline/03_music.py 2>&1 | tee "/tmp/xlrun/$name.log"; then
+              cp "$d/track.mp3" "/tmp/xlrun/$name.mp3"
+              cp "$d/music_meta.json" "/tmp/xlrun/$name.json"
+            else
+              echo "VARIANT-FAIL $name (лог в $name.log)" >&2
+            fi
             sleep 1
           }
           XL="ACE15_MODEL=acestep-v15-xl-sft ACE15_LORA=/app/output/lora/out/final ACE15_BESTOF=8"
           gen xl_1 $XL; gen xl_2 $XL
-          curl -sf -X POST "$ACE15_ENDPOINT/v1/lora/unload" -H 'Content-Type: application/json' -d '{}' || true
+          curl -sf -m 300 -X POST "$ACE15_ENDPOINT/v1/lora/unload" -H 'Content-Type: application/json' -d '{}' || true
           gen turbo_1 ACE15_MODEL=acestep-v15-turbo; gen turbo_2 ACE15_MODEL=acestep-v15-turbo
+          N=$(ls /tmp/xlrun/versija_*.mp3 2>/dev/null | wc -l)
+          ls /tmp/xlrun/*.mp3 | wc -l
+          [ "${N%% *}" -ge 2 ] || { echo "::error::A/B не собран: прошло $N варианта, логи:"; cat /tmp/xlrun/*.log; exit 1; }
           /tmp/xlv/bin/python - <<'PY'
           import json, random, shutil
           from pathlib import Path
           out = Path("/tmp/xlrun")
-          names = ["xl_1", "xl_2", "turbo_1", "turbo_2"]
-          random.shuffle(names)
-          rep = {"bestof": {n: json.loads((out / f"{n}.json").read_text())["bestof"] for n in ("xl_1", "xl_2")}}
-          for i, n in enumerate(names):
+          ok = sorted(p.stem for p in out.glob("*.mp3") if not p.name.startswith("versija"))
+          random.shuffle(ok)
+          rep = {"ok": ok,
+                 "bestof": {n: json.loads((out / f"{n}.json").read_text()).get("bestof")
+                            for n in ok if (out / f"{n}.json").is_file()}}
+          for i, n in enumerate(ok):
               shutil.copy(out / f"{n}.mp3", out / f"versija_{i + 1}.mp3")
           (out / "ce_report.json").write_text(json.dumps(rep, ensure_ascii=False, indent=1))
-          # маппинг — только в отдельном файле лога с префиксом BLINDMAP (VPS не шлёт его владельцу)
-          print("BLINDMAP " + json.dumps({f"versija_{i + 1}": n for i, n in enumerate(names)}))
+          # маппинг — только строка BLINDMAP (VPS шлёт владельцу файлы, не лог)
+          print("BLINDMAP " + json.dumps({f"versija_{i + 1}": n for i, n in enumerate(ok)}))
           print(json.dumps(rep, ensure_ascii=False, indent=1))
           PY
 
-      # ace-step обязан вернуться в прод-состояние (turbo, без LoRA) — иначе daily-video молча уйдёт на XL
+      # ace-step обязан вернуться в прод-состояние (turbo, без LoRA) — иначе daily-video молча уйдёт на XL.
+      # -m на каждый curl: без него шаг висит часами, когда API лёг (прогон 38999275258).
       - name: restore prod ace-step (turbo, no LoRA)
         if: ${{ always() }}
+        timeout-minutes: 15
         run: |
-          curl -sf -X POST http://ace-step:8001/v1/lora/unload -H 'Content-Type: application/json' -d '{}' || true
-          curl -sf -X POST http://ace-step:8001/v1/init -H 'Content-Type: application/json' \
+          curl -sf -m 120 -X POST http://ace-step:8001/v1/lora/unload -H 'Content-Type: application/json' -d '{}' || true
+          curl -sf -m 600 -X POST http://ace-step:8001/v1/init -H 'Content-Type: application/json' \
             -d '{"model": "acestep-v15-turbo"}' | head -c 400; echo
-          curl -sf http://ace-step:8001/v1/lora/status | head -c 400; echo
+          curl -sf -m 60 http://ace-step:8001/v1/lora/status | head -c 400; echo
+          curl -sf -m 60 http://ace-step:8001/v1/models | head -c 400; echo
 
       # LoRA: только одобренные владельцем треки (A/B v4 clean: calmant, carefree,
       # windswept) + одобренные эталоны CC BY. Обучение в контейнере (train.py,
@@ -197,7 +216,7 @@ jobs:
           /tmp/xlv/bin/python - <<'PY'
           import base64, hashlib, json
           from pathlib import Path
-          files = sorted(Path(".").glob("versija_*.mp3")) + [Path("ce_report.json")]
+          files = sorted(Path(".").glob("versija_*.mp3")) + [Path("ce_report.json")] + sorted(Path(".").glob("*.log"))
           files = [f for f in files if f.is_file()]
           print("XFMETA " + json.dumps({str(f): hashlib.sha256(f.read_bytes()).hexdigest() for f in files}))
           for f in files:
