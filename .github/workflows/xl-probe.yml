@@ -179,7 +179,7 @@ jobs:
           echo "dataset: $N approved files"
           [ "$N" -ge 4 ] || { echo "::error::одобренных треков < 4, LoRA не обучаем"; exit 1; }
           # системный python3 контейнера без torch; torch живёт в /opt/venv образа
-          PY=$(docker exec ace-step sh -c 'for p in /opt/venv/bin/python /usr/local/bin/python /usr/bin/python3; do command -v $p >/dev/null 2>&1 && $p -c "import torch" 2>/dev/null && { echo $p; break; }; done')
+          PY=$(docker exec ace-step sh -c 'for p in /opt/venv/bin/python /usr/local/bin/python /usr/bin/python3; do command -v $p >/dev/null 2>&1 || continue; if $p -c "import torch" 2>/tmp/torch_err_$$.log; then echo "$p"; break; else echo "no-torch: $p: $(tail -1 /tmp/torch_err_$$.log 2>/dev/null)" >&2; fi; done')
           echo "train python: ${PY:-NONE}"
           [ -n "$PY" ] || { echo "::error::в образе ace-step нет python с torch"; exit 1; }
           # loguru мог не попасть в venv (собран до этой карточки) — чистый py-пакет, добавим с хоста
