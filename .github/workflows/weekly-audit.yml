@@ -5,6 +5,11 @@ on:
   schedule:
     - cron: "0 6 * * 1" # пн 06:00 UTC, до дневных слотов daily-video
   workflow_dispatch:
+  # временно (до влива): прогон на release-раннере для проверки аудита с ветки,
+  # паттерн как у smoke-release-runner (t_3c5f3862); убрать можно после merge.
+  push:
+    branches: ['audit/g1zm0-config-consistency']
+    paths: ['.github/workflows/weekly-audit.yml']
 concurrency:
   group: weekly-audit
   cancel-in-progress: false
