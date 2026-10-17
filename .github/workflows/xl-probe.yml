@@ -199,7 +199,7 @@ jobs:
             --rank 32 --optimizer-type adamw8bit --offload-encoder \
             --batch-size 1 --gradient-accumulation 8 --epochs 3
           # v1.5 двухфазный: после --preprocess train.py выходит; фаза 2 — обучение на тензорах
-          docker exec -e PYTHONPATH=/tmp/pylibs ace-step "$PY" train.py fixed \
+          printf 'y\n' | docker exec -i -e PYTHONPATH=/tmp/pylibs ace-step "$PY" train.py fixed \
             --checkpoint-dir /app/checkpoints --model-variant acestep-v15-xl-sft \
             --base-model xl_sft --dataset-dir /app/output/lora/tensors \
             --tensor-output /app/output/lora/tensors --output-dir /app/output/lora/out \
