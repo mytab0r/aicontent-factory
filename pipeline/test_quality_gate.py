@@ -22,4 +22,12 @@ with tempfile.TemporaryDirectory() as td:
     w_m, m_m = qg.objective(mastered, "anime lofi")
     assert not any("LRA" in w for w in w_m), f"lofi-мастер сам создаёт кашу: {m_m}"
     assert qg.main(["x", crushed, "anime lofi", "--no-ce"]) == 1
+# регресс 17.10: phonk p-kkEmLGviU ушёл на канал «мутным»; замер скачанного с YouTube (полный трек)
+pk = [0.3, 0.0, -8.3, -6.2, -8.5, -14.1, -12.0, -13.7]
+w = qg.judge("phonk", pk, 1.7, 1.3)
+assert any("баланс" in x for x in w) and any("true peak" in x for x in w), w
+assert any("2500-5000" in x for x in w), w
+# эталоны обязаны проходить свой гейт
+assert qg.judge("anime lofi", qg.REF["lofi"]["bands"], 10.9, -1.6) == []
+assert qg.judge("phonk", qg.REF["phonk"]["bands"], 1.5, -2.9) == []
 print("test_quality_gate OK")
