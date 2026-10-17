@@ -235,6 +235,9 @@ def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=
     m = model or os.environ.get("ACE15_MODEL")  # t_b4006a6e: модель на запрос (XL-sft), пусто = слот контейнера
     if m:
         body["model"] = m
+    lora = os.environ.get("ACE15_LORA")  # t_b4006a6e: LoRA на запрос, пусто = без LoRA
+    if lora:
+        body["lora_name_or_path"] = lora
     if ref_audio and Path(ref_audio).is_file():
         # Стиль по эталону (reference_audio): так одобрен звук 13.10.
         tid = api.post_file("/release_task", body, "reference_audio", ref_audio)["data"]["task_id"]
