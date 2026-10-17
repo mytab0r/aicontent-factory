@@ -185,7 +185,8 @@ def collect(at):
 def granted_scopes(at) -> str:
     req = urllib.request.Request("https://oauth2.googleapis.com/tokeninfo?access_token=" + urllib.parse.quote(at))
     with urllib.request.urlopen(req, timeout=30) as r:
-        return json.load(r).get("scope", "?")
+        # ' . ' вместо точек: URL scope не секрет, но GH-маскер режет его как подстроку секрета
+        return json.load(r).get("scope", "?").replace(".", " ").replace(" googleapis com/auth/", " -> ")
 
 
 def probe() -> int:
