@@ -178,7 +178,7 @@ jobs:
           N=$(docker exec ace-step sh -c 'ls /app/output/lora/audio | wc -l')
           echo "dataset: $N approved files"
           [ "$N" -ge 4 ] || { echo "::error::одобренных треков < 4, LoRA не обучаем"; exit 1; }
-          docker exec ace-step sh -c 'cd /app && python train.py fixed \
+          docker exec ace-step sh -c 'cd /app && python3 train.py fixed \
             --checkpoint-dir /app/checkpoints --model-variant acestep-v15-xl-sft \
             --base-model xl_sft --preprocess --audio-dir /app/output/lora/audio \
             --tensor-output /app/output/lora/tensors --output-dir /app/output/lora/out \
