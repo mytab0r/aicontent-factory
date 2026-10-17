@@ -5,7 +5,9 @@
    Тишина/LUFS/TP «кашу» не ловят: 16.10 на канал ушло LRA 1.4 при эталоне 10.9.
 2) Модель-критик Meta audiobox-aesthetics, CE (предсказание «понравится ли»), в контейнере ace-step.
    Замеры: рефы ниши CE 7.07-7.91, брак base-модели 2.1-3.6.
-Запуск: quality_gate.py [track.mp3 genre] [--no-ce]; без аргументов = последний runs/*/track.mp3.
+Запуск: quality_gate.py [track.mp3 genre] [--no-ce] [--final]; без аргументов = последний runs/*/track.mp3.
+--final (шаг 04b) = тот же объективный гейт по звуку ФИНАЛЬНОГО video.mp4 (AAC после 04 assemble), без CE:
+   17.10 YouTube-копия p-kkEmLGviU дала TP +1.3..+1.9 dBTP — перекодирование добавляет пики, мерить надо то, что уходит.
 """
 import json, re, subprocess, sys, tempfile
 
@@ -22,7 +24,7 @@ MIN_CE = 6.5  # ниже худшего рефа ниши (7.07), сильно �
 
 
 def ff(f, af):
-    return subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", str(f), "-af", af, "-f", "null", "-"],
+    return subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", str(f), "-vn", "-af", af, "-f", "null", "-"],
                           capture_output=True, text=True).stderr
 
 
@@ -95,6 +97,11 @@ def ce_batch(files):
     return [[res[c] for c in clips[3 * i:3 * i + 3]] for i in range(len(files))]
 
 
+def target(d, final):
+    """--final: финальный файл после 04 assemble (то, что заливается), иначе трек после 03."""
+    return d / ("video.mp4" if final else "track.mp3")
+
+
 def main(argv):
     args = [a for a in argv[1:] if not a.startswith("--")]
     if args:
@@ -102,9 +109,9 @@ def main(argv):
     else:
         from common import latest_run_dir
         d = latest_run_dir()
-        f, genre = d / "track.mp3", json.loads((d / "music_meta.json").read_text(encoding="utf-8"))["genre"]
+        f, genre = target(d, "--final" in argv), json.loads((d / "music_meta.json").read_text(encoding="utf-8"))["genre"]
     why, m = objective(f, genre)
-    if "--no-ce" not in argv:
+    if "--no-ce" not in argv and "--final" not in argv:
         try:
             ces = ce_scores(f)
             m["ce"] = [round(c, 2) for c in ces]
