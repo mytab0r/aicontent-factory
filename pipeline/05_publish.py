@@ -9,6 +9,8 @@
 AGENTS.md п.4. selfDeclaredMadeForKids=False (канал не детский).
 """
 import json
+import os
+import re
 import sys
 from pathlib import Path
 
@@ -20,8 +22,42 @@ def _get_youtube_service():
     from google.oauth2.credentials import Credentials
     from googleapiclient.discovery import build
 
+    from google_auth_httplib2 import AuthorizedHttp
+
     creds = Credentials.from_authorized_user_file(str(TOKEN_PATH))
-    return build("youtube", "v3", credentials=creds)
+    return build("youtube", "v3", http=AuthorizedHttp(creds, http=upload_http()))
+
+
+def upload_http(timeout=300):
+    """build_http(), не голый httplib2.Http: он убирает 308 из redirect_codes — без этого
+    resumable upload падает RedirectMissingLocation (14.10). timeout 300 с вместо 60:
+    чанк 4 МБ на медленном аплинке ПК ловил read timeout на 65%."""
+    from googleapiclient.http import build_http
+    http = build_http()
+    http.timeout = timeout
+    return http
+
+
+def upload_resumable(request, max_errors=8, sleep=None):
+    """Resumable upload, переживающий обрывы: после сетевой ошибки следующий next_chunk
+    шлёт status-запрос (Content-Range */size) и продолжает с принятого байта, а не с нуля."""
+    import time
+    sleep = sleep or time.sleep
+    response, errors = None, 0
+    while response is None:
+        try:
+            status, response = request.next_chunk(num_retries=5)
+        except (TimeoutError, ConnectionError, OSError) as e:
+            errors += 1
+            if errors > max_errors:
+                raise
+            print(f"upload: {type(e).__name__}, resume {errors}/{max_errors}")
+            request._in_error_state = True  # googleapiclient: следующий вызов = запрос статуса
+            sleep(min(60, 5 * errors))
+            continue
+        if status:
+            print(f"upload {int(status.progress() * 100)}%")
+    return response
 
 
 def playlist_title(genre: str) -> str:
@@ -44,6 +80,28 @@ def add_to_genre_playlist(youtube, video_id: str, genre: str) -> str:
     return pid
 
 
+HASHTAGS = "#lofi #animelofi #studymusic"
+AI_NOTE = "AI-generated music and visuals (synthetic content)."
+
+
+def full_description(text: str, chapters=None) -> str:
+    """Аудит 4HB26c4yow0: хэштеги + AI-disclosure; треклист-главы (>=3, с 0:00) для часового микса."""
+    extra = [s for s in (AI_NOTE, HASHTAGS) if s not in text]
+    if chapters and len(chapters) >= 3:
+        extra.insert(0, "Tracklist:\n" + "\n".join(chapters))
+    return "\n\n".join([text.rstrip(), *extra])
+
+
+def title_with_length(title: str, duration_sec) -> str:
+    """Ресёрч 14.10: лидеры ниши пишут длину в заголовке (Lofi Girl 1:04 ч 811k, Chill Crossing «1 Hour» 150k).
+    Метка только по фактической длине (>=55 мин), без фейковых чисел; уже есть «Hour» — не трогаем."""
+    if not duration_sec or duration_sec < 3300 or re.search(r"\bhours?\b", title, re.I):
+        return title[:100]
+    h = max(1, int(duration_sec // 3600))
+    tag = f" | {h} Hour" + ("s" if h > 1 else "")
+    return title[:100 - len(tag)].rstrip() + tag
+
+
 def publish(run_dir: Path) -> str:
     from googleapiclient.http import MediaFileUpload
 
@@ -52,16 +110,27 @@ def publish(run_dir: Path) -> str:
     if not video_path.exists():
         raise SystemExit(f"нет video.mp4 в {run_dir} — сначала 04_assemble.py")
 
+    meta_path = run_dir / "music_meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
+    chaps = meta.get("chapters")
+    gated = os.environ.get("G1ZM0_GATE") == "1"
+    desc = full_description(idea["description"], chaps)
+    if meta.get("ref"):  # CC BY эталон -> атрибуция обязательна (refs/LICENSES.md)
+        import g1zm0_rotation as rot
+        desc += "\n\n" + rot.REF_CREDIT(meta["ref"])
     youtube = _get_youtube_service()
     body = {
         "snippet": {
-            "title": idea["title"][:100],
-            "description": idea["description"],
+            "title": title_with_length(idea["title"], meta.get("duration")),
+            "description": desc,
+            "defaultLanguage": "en",
+            "defaultAudioLanguage": "en",
             "tags": idea.get("tags", []),
             "categoryId": "10",  # Music
         },
         "status": {
-            "privacyStatus": "public",
+            # Content ID гейт (g1zm0_gate.py): unlisted, public только после clean + одобрения владельца
+            "privacyStatus": "unlisted" if gated else "public",
             "selfDeclaredMadeForKids": False,
         },
     }
@@ -74,19 +143,25 @@ def publish(run_dir: Path) -> str:
     media = MediaFileUpload(str(video_path), mimetype="video/mp4", resumable=True, chunksize=1024 * 1024 * 4)
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
 
-    response = None
-    while response is None:
-        status, response = request.next_chunk()
-        if status:
-            print(f"upload {int(status.progress() * 100)}%")
+    response = upload_resumable(request)
 
     video_id = response["id"]
-    meta = run_dir / "music_meta.json"
-    if meta.exists():
-        genre = json.loads(meta.read_text(encoding="utf-8"))["genre"]
-        print(f"playlist -> {add_to_genre_playlist(youtube, video_id, genre)} ({genre})")
     url = f"https://www.youtube.com/watch?v={video_id}"
-    print(f"OK: опубликовано {url}")
+    # 07_shorts берёт отсюда ссылку на long-form
+    (run_dir / "published.json").write_text(json.dumps({"url": url, "id": video_id}), encoding="utf-8")
+    cover = run_dir / "cover.png"
+    if cover.exists():
+        try:  # кастомная обложка требует верифицированный канал — не валим выпуск
+            youtube.thumbnails().set(videoId=video_id, media_body=MediaFileUpload(str(cover), mimetype="image/png")).execute()
+        except Exception as e:
+            print(f"thumbnail skip: {type(e).__name__}: {e}")
+    if gated:  # плейлист добавит g1zm0_gate.py при переводе в public
+        import g1zm0_gate
+        g1zm0_gate.record(video_id, meta.get("genre"), meta)
+    elif meta.get("genre"):
+        genre = meta["genre"]
+        print(f"playlist -> {add_to_genre_playlist(youtube, video_id, genre)} ({genre})")
+    print(f"OK: {'загружено unlisted (Content ID гейт)' if gated else 'опубликовано'} {url}")
     return url
 
 

@@ -5,3 +5,4 @@ __pycache__/
 *.pyc
 *.log
 .worktrees/
+refs/*.wav

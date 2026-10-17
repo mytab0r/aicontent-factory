@@ -1,0 +1,126 @@
+name: oneoff mix check (no publish)
+on:
+  push:
+    branches: ["feat/mix-1h"]
+    paths: [".github/workflows/oneoff-mix-check.yml", "pipeline/03_music.py"]
+  workflow_dispatch: {}
+permissions:
+  contents: read
+
+# новый пуш в ветку эксперимента заменяет старый прогон, а не встаёт в очередь
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    # one video per genre per day, each into its own playlist (05_publish.py).
+    # Only owner-approved genres here (A/B rule); add after sample approval.
+    strategy:
+      max-parallel: 1  # single GPU
+      fail-fast: false
+      matrix:
+        genre: ["anime lofi"]
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 75
+    env:
+      ROUTER_BASE_URL: https://9router.pxbt.app/v1
+      ROUTER_API_KEY: ${{ secrets.ROUTER_API_KEY }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      # DECISIONS.md п.5: конкурентный анализ показал — никто не публикует
+      # 45-секундные видео, формат 10-20 мин "сигнатурный" ролик. Решение
+      # было записано, но не применено в workflow — баг, видео от 2 окт
+      # ушло в паблик 45-секундным. Фикс: 15 минут (900с), дробится
+      # chunk_plan() в 03_music.py на куски <=240с под лимит ACE-Step.
+      TRACK_DURATION_SEC: "3600"  # >600 -> час-микс из цельных треков 1.5 + треклист-главы (ресёрч 13.10: хиты ниши 1-4 ч)
+      GENRE: ${{ matrix.genre }}
+      ACE15_ENDPOINT: http://ace-step:8001  # ACE-Step 1.5 REST на ПК (comfynet)
+      # Чужой OST убран 16.10 (юр. риск + Content ID): эталон из CC BY пула refs/LICENSES.md.
+      # Кэш на раннере; нет файла -> 03_music генерирует без эталона.
+      G1ZM0_REF_DIR: /tmp/acf-refs
+      ACE15_REF_AUDIO: /tmp/acf-refs/macleod_clean_soul.wav
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: true  # self-hosted: wipe previous runs/ so disk doesn't grow
+
+      # schedule опаздывает до 18:41 UTC -> второй long-form за сутки (12.10). Ручной dispatch = намеренный.
+      - name: guard (один long-form в сутки)
+        id: guard
+        if: github.event_name == 'schedule'
+        working-directory: pipeline
+        run: python3 watchdog.py --guard
+
+      - uses: astral-sh/setup-uv@v3
+        if: steps.guard.outputs.published != '1'
+
+      - name: install deps
+        if: steps.guard.outputs.published != '1'
+        run: |
+          # apt на self-hosted раннере падал exit 100 (lock/битый dpkg) — ffmpeg уже стоит -> пропуск
+          command -v ffmpeg || { sudo dpkg --configure -a || true; for i in 1 2 3; do sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg && break; sleep 20; done; }
+          command -v ffmpeg
+          uv venv .venv
+          uv pip install --python .venv/bin/python pillow gradio_client
+
+      - name: 01 idea
+        if: steps.guard.outputs.published != '1'
+        working-directory: pipeline
+        run: ../.venv/bin/python 01_idea.py
+
+      - name: 02 cover
+        if: steps.guard.outputs.published != '1'
+        working-directory: pipeline
+        run: ../.venv/bin/python 02_cover.py
+
+      - name: 03b animate cover (Wan2.2 ZeroGPU, сбой -> статика)
+        if: steps.guard.outputs.published != '1'
+        continue-on-error: true
+        timeout-minutes: 15
+        working-directory: pipeline
+        run: ../.venv/bin/python 03b_animate.py
+
+      # 13.10: ace-step остановлен (exit 137, stop вручную/чужим процессом) -> unless-stopped не поднимает; выпуск падал бы на 03 music
+      - name: ACE-Step up (start if stopped, wait health)
+        if: steps.guard.outputs.published != '1'
+        run: |
+          docker start ace-step >/dev/null 2>&1 || true
+          for i in $(seq 1 40); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step 2>/dev/null)" = healthy ] && { echo "ace-step healthy"; exit 0; }
+            sleep 6
+          done
+          echo "::error::ace-step не healthy за 4 мин"; exit 1
+
+      - name: reference audio (cache)
+        if: steps.guard.outputs.published != '1'
+        continue-on-error: true
+        run: python3 pipeline/fetch_refs.py
+
+      - name: 03 music (ACE-Step)
+        if: steps.guard.outputs.published != '1'
+        working-directory: pipeline
+        run: |
+          set -o pipefail
+          curl -s -m 10 "$ACE15_ENDPOINT/health" | head -c 300; echo
+          ../.venv/bin/python 03_music.py 2>&1 | tee /tmp/music.log || { echo "::error::$(tail -c 900 /tmp/music.log | tr '\n' ' ')"; exit 1; }
+
+      - name: 04 assemble (ffmpeg)
+        if: steps.guard.outputs.published != '1'
+        working-directory: pipeline
+        run: ../.venv/bin/python 04_assemble.py
+
+      - name: sample around transition + stats
+        run: |
+          d=$(ls -d runs/*/ | tail -1)
+          cat "$d/music_meta.json"
+          ffprobe -v error -show_entries format=duration -of csv=p=0 "$d/track.mp3"
+          ffprobe -v error -show_entries format=duration -of csv=p=0 "$d/video.mp4"
+          t=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$d/mix_00.mp3")
+          ss=$(python3 -c "print(max(0,float('$t')-30))")
+          mkdir -p out && cp "$d/music_meta.json" out/
+          ffmpeg -loglevel error -y -ss "$ss" -t 60 -i "$d/track.mp3" -codec:a libmp3lame -b:a 192k out/transition_60s.mp3
+          ffmpeg -loglevel error -y -t 60 -i "$d/track.mp3" -codec:a libmp3lame -b:a 192k out/start_60s.mp3
+          ffmpeg -hide_banner -i "$d/track.mp3" -af silencedetect=n=-50dB:d=1,ebur128=peak=true -f null - 2>&1 | grep -E 'silence_|I:|Peak:' | tail -12
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mix-check
+          path: out/

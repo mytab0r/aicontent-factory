@@ -24,8 +24,11 @@ ponytail: HF Space — бесплатный общий ресурс без SLA (
 """
 import os
 import random
+from pathlib import Path
 
 from gradio_client import Client
+
+import mastering
 
 from common import latest_run_dir
 
@@ -41,10 +44,23 @@ SPACE = "ACE-Step/ACE-Step"
 # чем классический lofi hip-hop. ACE-Step берёт любой текстовый
 # жанр-промпт через тот же generate_track() — пайплайн не меняется.
 GENRE_PROMPTS = {
+    # Одобрен владельцем 13.10 (сэмпл ref1). Эталон: ротация CC BY пула (G1ZM0_GATE, g1zm0_rotation).
     "anime lofi": (
-        "anime lofi, soft rhodes piano melody, gentle boom bap drums with "
-        "swing, warm bassline, vinyl noise, tape hiss, A minor, 82 BPM, "
-        "instrumental, no vocals, cozy, nostalgic, study beats, Lofi Girl style"
+        "dreamy lofi chillout instrumental, bright lush synth pads, sparkling bells and plucks, "
+        "soft piano lead melody, warm major seventh chords, gentle laid back beat, deep round bass, "
+        "clean polished studio mix, wide stereo, harmonious, uplifting, no vocals"
+    ),
+    # 16.10 оркестратор (владелец 2 дня без ответа по A/B v1-v3; правило: 0$ и
+    # обратимо — решаю сам): направление chill phonk = v2 (I -13.9 ближе всех
+    # к цели -14, LRA 1.5 самый плотный; все три в гейте). Промпт = точный
+    # v2 из генерации (gen2.py на ПК); "да" владельца 14.10 на направление +
+    # "очень неплохо" на master-звук. Переиграет — замена промпта одним коммитом.
+    "chill phonk": (
+        "chill phonk, wave phonk, late night drive, slow 808 sub bass glide, "
+        "heavy punchy kick, crisp trap hi-hats, memphis cowbell lead melody, "
+        "dreamy detuned synth pads, airy reverb, soft pitched vocal chops, "
+        "sidechain pumping, hypnotic groove, polished modern mix, wide stereo, "
+        "instrumental"
     ),
 }
 # ponytail: 8 жанров из конкурентного анализа (DECISIONS.md п.5) отключены
@@ -132,7 +148,13 @@ def generate_track(prompt: str, duration_sec: int, seed: int | None = None,
                    client_cls=Client) -> str:
     """Вызывает ACE-Step, возвращает путь к сгенерированному mp3 (временный файл gradio)."""
     url, token = ace_endpoint()
-    client = client_cls(url, token=token)
+    try:
+        client = client_cls(url, token=token)
+    except Exception as e:  # ПК выключен/DNS/туннель — не валим выпуск
+        if url == SPACE:
+            raise
+        print(f"ACE {url} недоступен ({type(e).__name__}: {e}); HF Space фолбэк"[:300])
+        client = client_cls(SPACE, token=os.environ.get("HF_TOKEN") or None)
     result = client.predict(
         audio_duration=float(duration_sec),
         prompt=prompt,
@@ -159,6 +181,160 @@ def generate_track(prompt: str, duration_sec: int, seed: int | None = None,
         api_name="/__call__",
     )
     return result[0]
+
+
+# ACE-Step 1.5 (MIT): REST API контейнера на ПК. Один вызов до 600с, LM
+# планирует структуру, тональность/темп фиксируются -> склеек нет.
+ACE15_MAX_SEC = 600
+ACE15_KEYS = ["C major", "F major", "G major", "D major", "A major", "E major"]
+
+
+class _Http:
+    def __init__(self, base):
+        self.base = base.rstrip("/")
+
+    def post(self, path, body, timeout=600):
+        import json
+        import urllib.request
+        r = urllib.request.Request(self.base + path, json.dumps(body).encode(),
+                                   {"Content-Type": "application/json"})
+        # 600 default: после рестарта ace-step первый запрос грузит модели >60 с (13.10)
+        return json.load(urllib.request.urlopen(r, timeout=timeout))
+
+    def get(self, path):
+        import urllib.request
+        return urllib.request.urlopen(self.base + path, timeout=300).read()
+
+    def post_file(self, path, body, field, file_path):
+        import json
+        import subprocess
+        args = []
+        for k, v in body.items():
+            args += ["-F", f"{k}={str(v).lower() if isinstance(v, bool) else v}"]
+        out = subprocess.run(["curl", "-sf", "-X", "POST", self.base + path,
+                              "-F", f"{field}=@{file_path}", *args],
+                             capture_output=True, text=True, timeout=600, check=True).stdout
+        return json.loads(out)
+
+
+def ace15_prepare(model: str | None, lora: str | None, api=None) -> dict:
+    """t_b4006a6e: модель в слот 1 (/v1/init) + LoRA (/v1/lora/load). В /release_task поля LoRA
+    НЕТ (молча игнорится) — LoRA живёт на primary-хендлере, поэтому сперва init, потом load.
+    Возврат /v1/lora/status — доказательство в лог; LoRA не встала = ошибка шага."""
+    api = api or _Http(os.environ["ACE15_ENDPOINT"])
+    if model and os.environ.get("ACE15_SKIP_INIT") != "1":
+        import time
+        for attempt in (1, 2):  # /v1/init грузит веса: после recreate >600с (TimeoutError 39015558344)
+            try:
+                r = api.post("/v1/init", {"model": model}, timeout=1800)
+                break
+            except Exception as e:
+                if attempt == 2:
+                    raise
+                print(f"/v1/init попытка 1 не удалась ({type(e).__name__}), ретрай через 60 с")
+                time.sleep(60)
+        if r.get("code") != 200 or (r.get("data") or {}).get("loaded_model") != model:
+            raise RuntimeError(f"/v1/init {model}: {str(r)[:300]}")
+    if not lora:
+        return {}
+    import json
+    r = api.post("/v1/lora/load", {"lora_path": lora})
+    st = json.loads(api.get("/v1/lora/status"))["data"]
+    if r.get("code") != 200 or not (st.get("lora_loaded") and st.get("use_lora")):
+        raise RuntimeError(f"LoRA {lora} не подключена: {str(r)[:200]} {st}")
+    print(f"ACE15 ready: model={model} lora={lora} status={st}")
+    return st
+
+
+def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=None,
+                       poll_sec: float = 5, timeout_sec: int = 3600, ref_audio=None,
+                       bpm: int | None = None, key: str | None = None,
+                       model: str | None = None) -> dict:
+    import json
+    import time
+    if os.environ.get("ACE15_TASK_TYPE", "text2music") != "text2music" or os.environ.get("ACE15_SRC_AUDIO"):
+        import g1zm0_rotation  # cover/repaint/remix чужой мелодии запрещён (t_d53850f6, Content ID)
+        g1zm0_rotation.enable_cover_mode()
+    api = api or _Http(os.environ["ACE15_ENDPOINT"])
+    body = {"prompt": prompt, "lyrics": "[Instrumental]", "task_type": "text2music",
+            "audio_duration": min(int(duration_sec), ACE15_MAX_SEC),
+            "bpm": bpm or 70 + seed % 21, "key_scale": key or ACE15_KEYS[seed % len(ACE15_KEYS)],
+            "time_signature": "4", "batch_size": 1, "thinking": True,
+            "use_random_seed": False, "seed": seed, "audio_format": "mp3"}
+    m = model or os.environ.get("ACE15_MODEL")  # t_b4006a6e: модель на запрос (XL-sft), пусто = слот контейнера
+    if m:
+        body["model"] = m
+    if ref_audio and Path(ref_audio).is_file():
+        # Стиль по эталону (reference_audio): так одобрен звук 13.10.
+        tid = api.post_file("/release_task", body, "reference_audio", ref_audio)["data"]["task_id"]
+    else:
+        tid = api.post("/release_task", body)["data"]["task_id"]
+    deadline = time.time() + timeout_sec
+    while True:
+        d = api.post("/query_result", {"task_id_list": [tid]})["data"][0]
+        if d["status"] != 0:
+            break
+        if time.time() > deadline:
+            raise RuntimeError(f"ACE-Step 1.5 task {tid} timeout")
+        time.sleep(poll_sec)
+    if d["status"] != 1:
+        raise RuntimeError(f"ACE-Step 1.5 task {tid} failed: {str(d.get('result'))[:300]}")
+    item = json.loads(d["result"])[0]
+    # сервер при неизвестной модели молча берёт primary ("not found ... using primary") — ловим
+    if m and item.get("dit_model") and item["dit_model"] != m:
+        raise RuntimeError(f"запрошена {m}, сгенерировала {item['dit_model']}")
+    Path(out_path).write_bytes(api.get(item["file"]))
+    return item
+
+
+def plan_mix(target_sec, gen, dur, budget_sec=1800, max_tracks=12, now=None):
+    """Час-микс из цельных треков 1.5 (модель отдаёт ~482 с вместо 600 — считаем по факту).
+    Стоп: набрали target, max_tracks, или следующий трек не влезет в бюджет времени шага."""
+    import time
+    now = now or time.monotonic
+    start, paths, durs = now(), [], []
+    while sum(durs) < target_sec and len(paths) < max_tracks:
+        p = gen(len(paths))
+        paths.append(p)
+        durs.append(dur(p))
+        elapsed = now() - start
+        if elapsed + elapsed / len(paths) > budget_sec:
+            break
+    return paths, durs
+
+
+def _ts(sec: float) -> str:
+    s = int(sec)
+    h, m, s = s // 3600, s % 3600 // 60, s % 60
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+def chapters(durs, names) -> list[str]:
+    """Главы YouTube: первая 0:00, далее накопленное время начала каждого трека."""
+    out, t = [], 0.0
+    for d, n in zip(durs, names):
+        out.append(f"{_ts(t)} {n}")
+        t += d
+    return out
+
+
+_ADJ = ["Amber", "Velvet", "Paper", "Neon", "Quiet", "Golden", "Misty", "Starlit", "Sleepy", "Candle",
+        "Silver", "Rosy", "Hazy", "Pastel", "Lantern", "Moonlit"]
+_NOUN = ["Window", "Streetlight", "Rooftop", "Tea", "Rain", "Pages", "Train", "Clouds", "Café", "Notebook",
+         "Petals", "Harbor", "Skyline", "Blanket", "Postcard", "Daydream"]
+
+
+def track_names(n: int, seed: int) -> list[str]:
+    import random
+    pool = [f"{a} {b}" for a in _ADJ for b in _NOUN]
+    return random.Random(seed).sample(pool, n)
+
+
+def _probe_sec(path) -> float:
+    import subprocess
+    return float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                                 "-of", "csv=p=0", str(path)], capture_output=True, text=True,
+                                check=True).stdout)
 
 
 def chunk_plan(total_sec: int, max_chunk_sec: int = 240) -> list[int]:
@@ -189,7 +365,7 @@ def concat_tracks(paths: list[str], out_path) -> None:
         list_path = f.name
     try:
         subprocess.run(
-            ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path, "-c", "copy", str(out_path)],
+            ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path, str(out_path)],  # куски ACE-Step не mp3: -c copy даёт exit 234,
             check=True, capture_output=True,
         )
     finally:
@@ -228,16 +404,82 @@ def main() -> None:
 
     seed = abs(hash(run_dir.name)) % (2**31)
 
-    chunks = chunk_plan(duration)
-    chunk_paths = [
-        generate_track(prompt, duration_sec=c, seed=seed + i)
-        for i, c in enumerate(chunks)
-    ]
-
     out_path = run_dir / "track.mp3"
-    concat_tracks(chunk_paths, out_path)
+    chaps = []
+    bestof_meta = None
+    ref, rot_meta, base_prompt = os.environ.get("ACE15_REF_AUDIO"), None, prompt
+    if os.environ.get("G1ZM0_GATE") == "1":
+        # t_d53850f6: эталон и промпт ротируются по дню; attempt>0 = перегенерация после Content ID claim
+        import datetime as _dt
+        import g1zm0_rotation as rot
+        day = _dt.date.fromisoformat(os.environ.get("G1ZM0_DAY") or _dt.datetime.now(_dt.timezone.utc).date().isoformat())
+        attempt = int(os.environ.get("G1ZM0_ATTEMPT") or 0)
+        ref_name = rot.pick_ref(day, attempt)
+        ref = str(rot.REF_DIR / f"{ref_name}.wav")
+        rot_meta = {"day": day.isoformat(), "attempt": attempt,
+                    "ref": ref_name if Path(ref).is_file() else None, "prompts": []}
+
+    def track_prompt(i):
+        """G1zm0-слот: инструмент/тональность/темп дня; трек i микса = шаг 3 (соседние дни не пересекаются)."""
+        if rot_meta is None:
+            return prompt, None, None
+        p = rot.pick_prompt(day, attempt + 3 * i)
+        rot_meta["prompts"].append({k: p[k] for k in ("instrument", "bpm", "key")})
+        return f"{base_prompt}, {p['instrument']} melody, {p['key']}, {p['bpm']} BPM", p["bpm"], p["key"]
+
+    if os.environ.get("ACE15_ENDPOINT"):
+        # t_b4006a6e: XL-sft + LoRA один раз до генерации (пусто = прод-слот turbo без LoRA)
+        ace15_prepare(os.environ.get("ACE15_MODEL"), os.environ.get("ACE15_LORA"))
+    if os.environ.get("ACE15_ENDPOINT") and duration > ACE15_MAX_SEC:
+        # ресёрч 13.10: хиты ниши 1-4 ч с треклистом; склеиваем ЦЕЛЬНЫЕ разные треки (не куски одного)
+        def gen(i):
+            p = run_dir / f"mix_{i:02d}.mp3"
+            tp, bpm, key = track_prompt(i)
+            generate_track_v15(tp, ACE15_MAX_SEC, seed + i, p, ref_audio=ref, bpm=bpm, key=key)
+            return str(p)
+
+        paths, durs = plan_mix(duration, gen, _probe_sec)
+        concat_tracks(paths, out_path)
+        chaps = chapters(durs, track_names(len(paths), seed))
+        duration = int(sum(durs))
+    elif os.environ.get("ACE15_ENDPOINT"):
+        duration = min(duration, ACE15_MAX_SEC)
+        tp, bpm, key = track_prompt(0)
+        n = int(os.environ.get("ACE15_BESTOF") or 0)  # t_b4006a6e: best-of-N через quality_gate, 0 = 1 кандидат
+        if n >= 2:
+            import bestof
+            import shutil
+            from quality_gate import ce_batch, objective
+
+            def cand(k):
+                # кандидат мастерится как прод — гейт меряет то, что уйдёт на канал
+                c = run_dir / f"cand_{k:02d}.mp3"
+                generate_track_v15(tp, duration, seed + k, c, ref_audio=ref, bpm=bpm, key=key)
+                mastering.master(c, c, genre=genre_name)
+                return str(c)
+
+            bi, bp, rows = bestof.best_of(n, cand, ce_batch, objective=lambda p: objective(p, genre_name)[0])
+            shutil.move(bp, out_path)
+            for c in run_dir.glob("cand_*.mp3"):
+                c.unlink()  # карточка: кандидаты удаляются сразу после выбора (диск)
+            bestof_meta = {"n": n, "picked": bi, "model": os.environ.get("ACE15_MODEL"),
+                           "lora": os.environ.get("ACE15_LORA"),
+                           "cands": [{k: r[k] for k in ("cand", "ce", "fail")} for r in rows]}
+        else:
+            generate_track_v15(tp, duration, seed, out_path, ref_audio=ref, bpm=bpm, key=key)
+    else:
+        chunks = chunk_plan(duration)
+        chunk_paths = [
+            generate_track(prompt, duration_sec=c, seed=seed + i)
+            for i, c in enumerate(chunks)
+        ]
+        concat_tracks(chunk_paths, out_path)
+    if bestof_meta is None:  # победитель best-of уже отмастерен (повторный loudnorm не нужен)
+        mastering.master(out_path, out_path, genre=genre_name)
     (run_dir / "music_meta.json").write_text(
-        json.dumps({"genre": genre_name, "prompt": prompt, "seed": seed, "duration": duration},
+        json.dumps({"genre": genre_name, "prompt": prompt, "seed": seed, "duration": duration,
+                    "chapters": chaps, "ref": rot_meta and rot_meta["ref"], "rotation": rot_meta,
+                    "bestof": bestof_meta},
                    ensure_ascii=False, indent=2),
         encoding="utf-8",
     )

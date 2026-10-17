@@ -29,6 +29,13 @@ approved = set(music.GENRE_PROMPTS)
 candidates = set(getattr(music, "CANDIDATE_GENRE_PROMPTS", {}))
 assert not (approved & candidates), "жанр не может быть одновременно продом и кандидатом"
 
+# 16.10 оркестратор (владелец 2 дня без ответа, 0$ и обратимо): направление
+# chill phonk = v2 (I -13.9 ближе всех к -14, LRA 1.5). Прод = промпт v2 из
+# gen2.py; владелец может переиграть — тогда замена промпта одним коммитом.
+assert "chill phonk" in music.GENRE_PROMPTS, "phonk-слот должен быть в проде"
+assert "late night drive" in music.GENRE_PROMPTS["chill phonk"], "промпт не тот (должен быть v2 из gen2.py)"
+assert "chill phonk" not in candidates, "одобренный жанр остался в кандидатах"
+
 # genre_for_mood детерминирован
 name1, _ = music.genre_for_mood("rainy night study")
 name2, _ = music.genre_for_mood("rainy night study")
@@ -46,3 +53,37 @@ short_chunks = music.chunk_plan(total_sec=60, max_chunk_sec=240)
 assert short_chunks == [60], "короткий трек (сигнатурный ролик) не должен дробиться"
 
 print("OK: прод-ротация = одобренные жанры, chunk_plan() корректен для long-form")
+
+# Владелец 12.10: "шипение и просто мрак". Шум в промпте запрещён, тональности 1.5 только мажор.
+NOISE = ("vinyl", "hiss", "crackle", "tape", "noise", "dusty")
+for name, p in music.GENRE_PROMPTS.items():
+    assert not any(w in p.lower() for w in NOISE), f"шум в прод-промпте {name}"
+assert all("major" in k for k in music.ACE15_KEYS), "минорные тональности в ACE15_KEYS"
+
+
+# Эталон владельца 13.10: ref1 = стиль по reference_audio (K/DA Seraphine),
+# одобрен: "больше всего заходит по басу, лёгкости, звону, чёткости мелодии".
+class _FakeApi:
+    def __init__(self): self.calls = []
+    def post(self, path, body):
+        self.calls.append(("json", path, dict(body)))
+        if path == "/query_result":
+            return {"data": [{"status": 1, "result": '[{"file": "/v1/audio?path=x"}]'}]}
+        return {"data": {"task_id": "t1"}}
+    def post_file(self, path, body, field, file_path):
+        self.calls.append(("file", path, dict(body), field, str(file_path)))
+        return {"data": {"task_id": "t1"}}
+    def get(self, path): return b"mp3"
+
+import tempfile, os as _os
+_d = Path(tempfile.mkdtemp())
+_ref = _d / "ref.wav"; _ref.write_bytes(b"RIFF")
+_api = _FakeApi()
+music.generate_track_v15("p", 600, 7, _d / "o.mp3", api=_api, poll_sec=0, ref_audio=_ref)
+assert _api.calls[0][0] == "file" and _api.calls[0][3] == "reference_audio", _api.calls[0]
+assert _api.calls[0][4] == str(_ref)
+_api = _FakeApi()
+music.generate_track_v15("p", 600, 7, _d / "o.mp3", api=_api, poll_sec=0, ref_audio=_d / "missing.wav")
+assert _api.calls[0][0] == "json", "нет файла эталона -> генерация без него, выпуск не падает"
+assert "lush synth pads" in music.GENRE_PROMPTS["anime lofi"], "прод-промпт = одобренный ref1"
+print("ok ref-style")

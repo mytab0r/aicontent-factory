@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: [self-hosted, pc]
+    runs-on: [self-hosted, release]
     timeout-minutes: 45
     env:
       ROUTER_BASE_URL: https://9router.pxbt.app/v1

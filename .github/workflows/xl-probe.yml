@@ -1,0 +1,236 @@
+name: xl-probe
+# t_b4006a6e: живая проверка XL-sft + best-of-8 CE + LoRA на ПК (RTX 5070, 12GB).
+# Ручной запуск в окне между прод-слотами daily-video (следующий 09:00 UTC):
+#   workflow_dispatch train_lora=true делает всё; false = только XL+best-of-8.
+# Порядок: скачать XL-sft (18.8GB, один раз) -> on-demand swap -> 8 кандидатов XL-sft
+# -> CE всех одним прогоном критика -> winner + blind A/B -> (опция) LoRA на одобренных.
+on:
+  workflow_dispatch:
+    inputs:
+      train_lora:
+        description: "обучить LoRA на одобренных треках+эталонах после best-of-8"
+        type: boolean
+        default: false
+      reuse:
+        description: "взять готовые варианты из /tmp/xlrun прошлого прогона (без генерации)"
+        type: boolean
+        default: true
+concurrency:
+  group: daily-video
+  cancel-in-progress: false
+jobs:
+  run:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: download xl_sft
+        run: |
+          docker exec ace-step sh -c 'test -f /app/checkpoints/acestep-v15-xl-sft/config.json' \
+            && { echo HAVE-XL; exit 0; } || true
+          docker run --rm -v /run/desktop/mnt/host/c/dockerlocal/ace15/checkpoints:/ck \
+            -e HF_TOKEN -e HF_HOME=/tmp/hf python:3.12-slim \
+            sh -c "pip install -q --no-warn-script-location 'huggingface_hub[hf_transfer]' && \
+              python -c \"from huggingface_hub import snapshot_download; snapshot_download('ACE-Step/acestep-v15-xl-sft', local_dir='/ck/acestep-v15-xl-sft', max_workers=4)\""
+          docker exec ace-step sh -c 'test -f /app/checkpoints/acestep-v15-xl-sft/config.json'
+
+      # on-demand swap требует env на контейнере (env нельзя добавить без recreate):
+      # recreate с теми же mounts + новыми env. EOF-скрипт: старые env читаем из inspect.
+      - name: recreate ace-step with on-demand load
+        run: |
+          docker inspect ace-step --format '{{json .Config.Env}}' | grep -q ACESTEP_ON_DEMAND_MODEL_LOAD && { echo already; exit 0; }
+          IMAGE=$(docker inspect ace-step --format '{{.Config.Image}}')
+          docker rm -f ace-step-new 2>/dev/null || true  # хвост прошлого неудачного прогона
+          docker run -d --name ace-step-new --restart unless-stopped \
+            --gpus all \
+            -e ACESTEP_MODE=api -e ACESTEP_LLM_BACKEND=pt \
+            -e ACESTEP_CONFIG_PATH=acestep-v15-turbo \
+            -e ACESTEP_CONFIG_PATH2=acestep-v15-base \
+            -e ACESTEP_LM_MODEL_PATH=acestep-5Hz-lm-1.7B \
+            -e ACESTEP_ON_DEMAND_MODEL_LOAD=true \
+            -e ACESTEP_QUEUE_WORKERS=1 -e ACESTEP_API_WORKERS=1 \
+            -e ACESTEP_API_HOST=0.0.0.0 -e ACESTEP_INIT_SERVICE=true \
+            -v /run/desktop/mnt/host/c/dockerlocal/ace15/checkpoints:/app/checkpoints \
+            -v /run/desktop/mnt/host/c/dockerlocal/ace15/output:/app/output \
+            -v /run/desktop/mnt/host/c/dockerlocal/ace15/hf:/root/.cache/huggingface \
+            "$IMAGE"
+          # сеть comfynet, чтобы ace-step:8001 резолвился с раннеров, как раньше
+          docker network connect comfynet ace-step-new || true
+          # первый старт грузит turbo+base+LM в VRAM (заняло >6 мин на 12GB) — ждём до 18 мин
+          for i in $(seq 1 72); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step-new 2>/dev/null)" = healthy ] && break
+            sleep 15
+          done
+          [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step-new)" = healthy ] || { docker logs --tail 80 ace-step-new 2>&1 | tail -60; exit 1; }
+          docker rm -f ace-step
+          docker rename ace-step-new ace-step
+          echo "ace-step пересоздан: turbo+base слоты, XL-sft по запросу (on-demand)"
+
+      - name: install deps
+        run: |
+          set -e
+          command -v ffmpeg >/dev/null || sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          python3 -m venv /tmp/xlv
+          for i in 1 2 3 4; do  # pypi read-timeout на ПК — ретраи
+            /tmp/xlv/bin/pip -q --retries 5 --timeout 60 install gradio_client numpy && break
+            sleep 20
+          done
+          /tmp/xlv/bin/python -c "import gradio_client, numpy"
+
+      # артефакты GitHub упираются в storage quota (пересчёт 6-12 ч): если результаты
+      # прошлого прогона целы на раннере (/tmp/xlrun) — скипаем дорогой gen (модель+CE),
+      # доставка владельцу: шаг exfil (base64 в лог) -> VPS.
+      # Прод-путь 03_music.main() целиком: ACE15_MODEL/LORA/BESTOF -> ace15_prepare (/v1/init +
+      # /v1/lora/load + /v1/lora/status в лог) -> best-of-8 через quality_gate (objective + CE >= MIN_CE,
+      # max CE среди прошедших, 0 прошли = до 3 раундов) -> music_meta.json. Тот же код включит daily-video.
+      # Слепой A/B: 2 сэмпла XL+LoRA+best-of-8 и 2 сэмпла текущего прода (turbo, без LoRA, 1 кандидат).
+      # Варианты независимы: падение одного не убивает остальные (частичный A/B > никакого);
+      # stderr+stdout пишутся и в консоль (лог задания), и в /tmp/xlrun/<name>.log на случай
+      # повторного BlobNotFound при аплоаде логов раннером.
+      - name: blind A/B — XL-sft+LoRA best-of-8 (prod path) vs turbo prod
+        timeout-minutes: 240
+        env:
+          ACE15_ENDPOINT: http://ace-step:8001
+          GENRE: anime lofi
+          TRACK_DURATION_SEC: "90"
+        run: |
+          set -e
+          set -o pipefail   # if pipe|tee: код python, не tee
+          # reuse: сырые варианты прошлого прогона целы на раннере -> не генерим заново (часы GPU)
+          HAVE=$(find /tmp/xlrun -maxdepth 1 -name '*.mp3' ! -name 'versija_*' 2>/dev/null | wc -l)
+          if [ "${{ inputs.reuse }}" = true ] && [ "$HAVE" -ge 2 ]; then
+            echo "REUSE: $HAVE готовых вариантов в /tmp/xlrun"; SKIP_GEN=1
+          else
+            rm -rf /tmp/xlrun runs && mkdir -p /tmp/xlrun; SKIP_GEN=0
+          fi
+          docker exec ace-step ls -la /app/output/lora/out/final
+          gen() {  # $1 = имя, далее env прод-варианта
+            local name=$1; shift
+            d=runs/$(date -u +%Y%m%d_%H%M%S)_$name; mkdir -p "$d"
+            echo '{"mood": "cozy lofi"}' > "$d/idea.json"
+            if env "$@" timeout -k 30 5400 /tmp/xlv/bin/python pipeline/03_music.py 2>&1 | tee "/tmp/xlrun/$name.log"; then
+              cp "$d/track.mp3" "/tmp/xlrun/$name.mp3"
+              cp "$d/music_meta.json" "/tmp/xlrun/$name.json"
+            else
+              echo "VARIANT-FAIL $name (лог в $name.log)" >&2
+            fi
+            sleep 1
+          }
+          XL="ACE15_MODEL=acestep-v15-xl-sft ACE15_LORA=/app/output/lora/out/final ACE15_BESTOF=8"
+          if [ "$SKIP_GEN" = 0 ]; then
+            gen xl_1 $XL; gen xl_2 $XL
+            curl -sf -m 300 -X POST "$ACE15_ENDPOINT/v1/lora/unload" -H 'Content-Type: application/json' -d '{}' || true
+            gen turbo_1 ACE15_MODEL=acestep-v15-turbo; gen turbo_2 ACE15_MODEL=acestep-v15-turbo
+          fi
+          # считаем сырые варианты (versija_* создаются ниже); find, т.к. ls без совпадений + pipefail = exit
+          N=$(find /tmp/xlrun -maxdepth 1 -name '*.mp3' ! -name 'versija_*' | wc -l)
+          echo "вариантов: $N"
+          [ "$N" -ge 2 ] || { echo "::error::A/B не собран: прошло $N варианта, логи:"; cat /tmp/xlrun/*.log; exit 1; }
+          /tmp/xlv/bin/python - <<'PY'
+          import json, random, shutil
+          from pathlib import Path
+          out = Path("/tmp/xlrun")
+          ok = sorted(p.stem for p in out.glob("*.mp3") if not p.name.startswith("versija"))
+          random.shuffle(ok)
+          rep = {"ok": ok,
+                 "bestof": {n: json.loads((out / f"{n}.json").read_text()).get("bestof")
+                            for n in ok if (out / f"{n}.json").is_file()}}
+          for i, n in enumerate(ok):
+              shutil.copy(out / f"{n}.mp3", out / f"versija_{i + 1}.mp3")
+          (out / "ce_report.json").write_text(json.dumps(rep, ensure_ascii=False, indent=1))
+          # маппинг — только строка BLINDMAP (VPS шлёт владельцу файлы, не лог)
+          print("BLINDMAP " + json.dumps({f"versija_{i + 1}": n for i, n in enumerate(ok)}))
+          print(json.dumps(rep, ensure_ascii=False, indent=1))
+          PY
+
+      # ace-step обязан вернуться в прод-состояние (turbo, без LoRA) — иначе daily-video молча уйдёт на XL.
+      # -m на каждый curl: без него шаг висит часами, когда API лёг (прогон 38999275258).
+      - name: restore prod ace-step (turbo, no LoRA)
+        if: ${{ always() }}
+        timeout-minutes: 15
+        run: |
+          curl -sf -m 120 -X POST http://ace-step:8001/v1/lora/unload -H 'Content-Type: application/json' -d '{}' || true
+          curl -sf -m 600 -X POST http://ace-step:8001/v1/init -H 'Content-Type: application/json' \
+            -d '{"model": "acestep-v15-turbo"}' | head -c 400; echo
+          curl -sf -m 60 http://ace-step:8001/v1/lora/status | head -c 400; echo
+          curl -sf -m 60 http://ace-step:8001/v1/models | head -c 400; echo
+
+      # LoRA: только одобренные владельцем треки (A/B v4 clean: calmant, carefree,
+      # windswept) + одобренные эталоны CC BY. Обучение в контейнере (train.py,
+      # Tight-профиль 12GB: rank32, adamw8bit, offload-encoder). API недоступен
+      # во время обучения (VRAM) — окно между прод-слотами.
+      - name: train lora (approved only)
+        if: ${{ inputs.train_lora }}
+        timeout-minutes: 240
+        run: |
+          set -e
+          docker exec ace-step mkdir -p /app/output/lora/audio
+          # A/B v4 clean (t_6aa41295): файлы в workspace репо t_6aa41295 на этом же раннере
+          for f in ab_2_macleod_calmant ab_1_macleod_carefree ab_3_macleod_windswept; do
+            SRC=$(find /tmp/runner -name "$f.mp3" 2>/dev/null | head -1)
+            [ -n "$SRC" ] && docker cp "$SRC" ace-step:/app/output/lora/audio/ && echo "approved: $f"
+          done
+          # эталоны CC BY (одобрены как источники стиля, refs/LICENSES.md)
+          python3 pipeline/fetch_refs.py || true
+          for w in /tmp/acf-refs/*.wav; do
+            [ -e "$w" ] && docker cp "$w" ace-step:/app/output/lora/audio/
+          done
+          N=$(docker exec ace-step sh -c 'ls /app/output/lora/audio | wc -l')
+          echo "dataset: $N approved files"
+          [ "$N" -ge 4 ] || { echo "::error::одобренных треков < 4, LoRA не обучаем"; exit 1; }
+          # системный python3 контейнера без torch; torch живёт в /opt/venv образа
+          docker inspect ace-step --format 'image={{.Config.Image}} created={{.Created}}' || true
+          docker images --format '{{.Repository}}:{{.Tag}} {{.CreatedSince}}' | grep -i ace || true
+          PY=$(docker exec ace-step sh -c 'for p in /opt/venv/bin/python /usr/local/bin/python /usr/bin/python3 /app/.venv/bin/python; do command -v $p >/dev/null 2>&1 || continue; if $p -c "import torch" 2>/tmp/torch_err_$$.log; then echo "$p"; break; else echo "no-torch: $p: $(tail -1 /tmp/torch_err_$$.log 2>/dev/null)" >&2; fi; done')
+          echo "train python: ${PY:-NONE}"
+          [ -n "$PY" ] || { echo "::error::в образе ace-step нет python с torch"; exit 1; }
+          # loguru мог не попасть в venv (собран до этой карточки) — чистый py-пакет, добавим с хоста
+          docker exec ace-step sh -c "$PY -c 'import loguru'" 2>/dev/null || {
+            python3 -m pip install -q --target /tmp/pylibs loguru
+            docker exec ace-step mkdir -p /tmp/pylibs
+            docker cp /tmp/pylibs/. ace-step:/tmp/pylibs/
+          }
+          docker exec -e PYTHONPATH=/tmp/pylibs ace-step "$PY" -c 'import torch; print("torch", torch.__version__)'
+          docker exec -e PYTHONPATH=/tmp/pylibs ace-step "$PY" train.py fixed \
+            --checkpoint-dir /app/checkpoints --model-variant acestep-v15-xl-sft \
+            --base-model xl_sft --preprocess --audio-dir /app/output/lora/audio \
+            --dataset-dir /app/output/lora/dataset \
+            --tensor-output /app/output/lora/tensors --output-dir /app/output/lora/out \
+            --rank 32 --optimizer-type adamw8bit --offload-encoder \
+            --batch-size 1 --gradient-accumulation 8 --epochs 3
+          # v1.5 двухфазный: после --preprocess train.py выходит; фаза 2 — обучение на тензорах
+          printf 'y\n' | docker exec -i -e PYTHONPATH=/tmp/pylibs ace-step "$PY" train.py fixed \
+            --checkpoint-dir /app/checkpoints --model-variant acestep-v15-xl-sft \
+            --base-model xl_sft --dataset-dir /app/output/lora/tensors \
+            --tensor-output /app/output/lora/tensors --output-dir /app/output/lora/out \
+            --rank 32 --optimizer-type adamw8bit --offload-encoder \
+            --batch-size 1 --gradient-accumulation 8 --epochs 3
+          docker exec ace-step ls -la /app/output/lora/out
+          docker exec ace-step du -sh /app/output/lora/out
+
+      - name: upload lora
+        if: ${{ inputs.train_lora }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: lora-xl-sft
+          path: /tmp/lora/out
+
+      # Контейнеры ПК без исходящего 443 и artifact quota исчерпана -> файлы уходят base64
+      # в лог этого job'а; VPS собирает их (gh run view --job --log) и доставляет владельцу.
+      # Маппинг XL/turbo — только строка BLINDMAP (VPS её владельцу не шлёт), в ce_report только CE.
+      - name: exfil to log (base64)
+        if: ${{ always() }}
+        run: |
+          cd /tmp/xlrun
+          /tmp/xlv/bin/python - <<'PY'
+          import base64, hashlib, json
+          from pathlib import Path
+          files = sorted(Path(".").glob("versija_*.mp3")) + [Path("ce_report.json")] + sorted(Path(".").glob("*.log"))
+          files = [f for f in files if f.is_file()]
+          print("XFMETA " + json.dumps({str(f): hashlib.sha256(f.read_bytes()).hexdigest() for f in files}))
+          for f in files:
+              b = base64.b64encode(f.read_bytes()).decode()
+              for j in range(0, len(b), 60000):
+                  print(f"XF64 {f} {j // 60000:04d} {b[j:j + 60000]}")
+          PY
