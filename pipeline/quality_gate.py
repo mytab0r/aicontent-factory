@@ -16,7 +16,8 @@ BANDS = [(20, 60), (60, 150), (150, 400), (400, 1000), (1000, 2500), (2500, 5000
 REF = {"lofi": {"bands": [-26.3, -23.0, -29.6, -28.9, -33.2, -39.9, -40.2, -44.1], "min_lra": 5.0},
        "phonk": {"bands": [-23.1, -22.3, -31.3, -28.3, -30.3, -33.2, -34.2, -38.2], "min_lra": 0.0}}
 BAND_TOL = 2.0
-BAL_TOL = 2.0  # (среднее 1-5 кГц) - (150-400 Гц) не хуже эталона более чем на столько
+BAL_TOL = 2.0
+MAX_TP = -1.0  # true peak dBTP; 17.10 YouTube-копия p-kkEmLGviU: +1.3..+1.9 = клиппинг  # (среднее 1-5 кГц) - (150-400 Гц) не хуже эталона более чем на столько
 MIN_CE = 6.5  # ниже худшего рефа ниши (7.07), сильно выше брака (<=3.6)
 
 
@@ -48,8 +49,11 @@ def judge(bands, lra, genre):
 def objective(f, genre):
     b = [float(re.findall(r"RMS level dB: (-?[\d.]+)", ff(f, f"highpass=f={lo},highpass=f={lo},lowpass=f={hi},lowpass=f={hi},"
          "astats=measure_overall=RMS_level:measure_perchannel=none"))[-1]) for lo, hi in BANDS]
-    lra = float(re.findall(r"LRA:\s+([\d.]+)", ff(f, "ebur128"))[-1])
-    return judge(b, lra, genre), {"lra": lra, "bands": [round(x, 1) for x in b], "balance": round(balance(b), 1)}
+    e = ff(f, "ebur128=peak=true")
+    lra = float(re.findall(r"LRA:\s+([\d.]+)", e)[-1])
+    tp = float(re.findall(r"Peak:\s+(-?[\d.]+|-inf)", e)[-1].replace("-inf", "-200"))
+    why = judge(b, lra, genre) + ([f"true peak {tp:+.1f} dBTP > {MAX_TP}: клиппинг"] if tp > MAX_TP else [])
+    return why, {"lra": lra, "tp": tp, "bands": [round(x, 1) for x in b], "balance": round(balance(b), 1)}
 
 
 # как bench/aes.sh (exp/vox-insert, проверено на ПК): пакеты на C: в /app/output/aes/pkgs, torch из образа
