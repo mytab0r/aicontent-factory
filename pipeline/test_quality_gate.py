@@ -22,4 +22,15 @@ with tempfile.TemporaryDirectory() as td:
     w_m, m_m = qg.objective(mastered, "anime lofi")
     assert not any("LRA" in w for w in w_m), f"lofi-мастер сам создаёт кашу: {m_m}"
     assert qg.main(["x", crushed, "anime lofi", "--no-ce"]) == 1
+
+# Жалоба владельца 17.10 (phonk p-kkEmLGviU, отрезок 300-420 с с YouTube): мелодия 1-5 кГц на 2-3 дБ тише,
+# 150-400 Гц на 2 дБ громче одобренного v2. Старый гейт (5 полос ±3 дБ) это пропустил — новый обязан отклонить.
+PUB = [-23.8, -23.0, -29.3, -26.8, -32.6, -36.3, -34.2, -35.8]
+why = qg.judge(PUB, 1.0, "phonk")
+assert any("баланс" in w for w in why), why
+assert any("2500-5000" in w for w in why), why
+# эталоны (полный файл, абсолютные RMS дБ по 8 полосам) проходят свой гейт
+assert qg.judge([-26.3, -23.0, -29.6, -28.9, -33.2, -39.9, -40.2, -44.1], 10.9, "anime lofi") == []
+assert qg.judge([-23.1, -22.3, -31.3, -28.3, -30.3, -33.2, -34.2, -38.2], 1.5, "phonk") == []
+assert len(qg.BANDS) == 8 and qg.BAND_TOL == 2.0
 print("test_quality_gate OK")
