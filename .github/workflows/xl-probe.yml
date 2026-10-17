@@ -190,13 +190,15 @@ jobs:
             docker exec ace-step mkdir -p /tmp/pylibs
             docker cp /tmp/pylibs/. ace-step:/tmp/pylibs/
           }
-          docker exec -e PYTHONPATH=/tmp/pylibs ace-step sh -c "$PY -c 'import torch; print(torch.__version__)' && cd /app && $PY train.py fixed \
+          docker exec -e PYTHONPATH=/tmp/pylibs ace-step "$PY" -c 'import torch; print("torch", torch.__version__)'
+          docker exec -e PYTHONPATH=/tmp/pylibs ace-step "$PY" train.py fixed \
             --checkpoint-dir /app/checkpoints --model-variant acestep-v15-xl-sft \
             --base-model xl_sft --preprocess --audio-dir /app/output/lora/audio \
             --tensor-output /app/output/lora/tensors --output-dir /app/output/lora/out \
             --rank 32 --optimizer-type adamw8bit --offload-encoder \
-            --batch-size 1 --gradient-accumulation 8 --epochs 3 --plain --yes'
-          docker exec ace-step sh -c 'ls -la /app/output/lora/out; du -sh /app/output/lora/out'
+            --batch-size 1 --gradient-accumulation 8 --epochs 3 --plain --yes
+          docker exec ace-step ls -la /app/output/lora/out
+          docker exec ace-step du -sh /app/output/lora/out
 
       - name: upload lora
         if: ${{ inputs.train_lora }}
