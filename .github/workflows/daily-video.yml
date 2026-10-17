@@ -115,12 +115,15 @@ jobs:
       - name: ACE-Step up (start if stopped, wait health)
         if: steps.guard.outputs.published != '1'
         run: |
-          docker start ace-step >/dev/null 2>&1 || true
-          for i in $(seq 1 40); do
+          # 17.10: после xl-probe ace-step остался healthy, но очередь висела на XL /v1/init -> 03 music timeout 1ч.
+          # Рестарт сбрасывает зависшие задачи и возвращает дефолтный turbo без LoRA (concurrency group исключает чужой прогон).
+          docker restart ace-step >/dev/null 2>&1 || docker start ace-step >/dev/null 2>&1 || true
+          sleep 10
+          for i in $(seq 1 100); do
             [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step 2>/dev/null)" = healthy ] && { echo "ace-step healthy"; exit 0; }
             sleep 6
           done
-          echo "::error::ace-step не healthy за 4 мин"; exit 1
+          echo "::error::ace-step не healthy за 10 мин"; exit 1
 
       - name: reference audio (cache)
         if: steps.guard.outputs.published != '1' && env.ACE15_REF_AUDIO != ''
