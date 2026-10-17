@@ -193,13 +193,13 @@ class _Http:
     def __init__(self, base):
         self.base = base.rstrip("/")
 
-    def post(self, path, body):
+    def post(self, path, body, timeout=600):
         import json
         import urllib.request
         r = urllib.request.Request(self.base + path, json.dumps(body).encode(),
                                    {"Content-Type": "application/json"})
-        # 600: после рестарта ace-step первый запрос грузит модели >60 с (13.10 TimeoutError)
-        return json.load(urllib.request.urlopen(r, timeout=600))
+        # 600 default: после рестарта ace-step первый запрос грузит модели >60 с (13.10)
+        return json.load(urllib.request.urlopen(r, timeout=timeout))
 
     def get(self, path):
         import urllib.request
@@ -222,8 +222,17 @@ def ace15_prepare(model: str | None, lora: str | None, api=None) -> dict:
     НЕТ (молча игнорится) — LoRA живёт на primary-хендлере, поэтому сперва init, потом load.
     Возврат /v1/lora/status — доказательство в лог; LoRA не встала = ошибка шага."""
     api = api or _Http(os.environ["ACE15_ENDPOINT"])
-    if model:
-        r = api.post("/v1/init", {"model": model})
+    if model and os.environ.get("ACE15_SKIP_INIT") != "1":
+        import time
+        for attempt in (1, 2):  # /v1/init грузит веса: после recreate >600с (TimeoutError 39015558344)
+            try:
+                r = api.post("/v1/init", {"model": model}, timeout=1800)
+                break
+            except Exception as e:
+                if attempt == 2:
+                    raise
+                print(f"/v1/init попытка 1 не удалась ({type(e).__name__}), ретрай через 60 с")
+                time.sleep(60)
         if r.get("code") != 200 or (r.get("data") or {}).get("loaded_model") != model:
             raise RuntimeError(f"/v1/init {model}: {str(r)[:300]}")
     if not lora:

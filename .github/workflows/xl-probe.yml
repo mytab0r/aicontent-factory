@@ -96,13 +96,14 @@ jobs:
           TRACK_DURATION_SEC: "90"
         run: |
           set -e
+          set -o pipefail   # if pipe|tee: код python, не tee
           rm -rf /tmp/xlrun runs && mkdir -p /tmp/xlrun
           docker exec ace-step ls -la /app/output/lora/out/final
           gen() {  # $1 = имя, далее env прод-варианта
             local name=$1; shift
             d=runs/$(date -u +%Y%m%d_%H%M%S)_$name; mkdir -p "$d"
             echo '{"mood": "cozy lofi"}' > "$d/idea.json"
-            if env "$@" /tmp/xlv/bin/python pipeline/03_music.py 2>&1 | tee "/tmp/xlrun/$name.log"; then
+            if env "$@" timeout -k 30 5400 /tmp/xlv/bin/python pipeline/03_music.py 2>&1 | tee "/tmp/xlrun/$name.log"; then
               cp "$d/track.mp3" "/tmp/xlrun/$name.mp3"
               cp "$d/music_meta.json" "/tmp/xlrun/$name.json"
             else
