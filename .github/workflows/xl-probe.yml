@@ -178,17 +178,23 @@ jobs:
           N=$(docker exec ace-step sh -c 'ls /app/output/lora/audio | wc -l')
           echo "dataset: $N approved files"
           [ "$N" -ge 4 ] || { echo "::error::одобренных треков < 4, LoRA не обучаем"; exit 1; }
-          # у контейнера нет egress: loguru ставим на хосте и пробрасываем PYTHONPATH
-          python3 -m pip install -q --target /tmp/pylibs loguru
-          docker exec ace-step mkdir -p /tmp/pylibs
-          docker cp /tmp/pylibs/. ace-step:/tmp/pylibs/
-          docker exec -e PYTHONPATH=/tmp/pylibs ace-step sh -c 'cd /app && python3 train.py fixed \
+          # системный python3 контейнера без torch; torch живёт в /opt/venv образа
+          PY=$(docker exec ace-step sh -c 'for p in /opt/venv/bin/python /usr/local/bin/python /usr/bin/python3; do command -v $p >/dev/null 2>&1 && $p -c "import torch" 2>/dev/null && { echo $p; break; }; done')
+          echo "train python: ${PY:-NONE}"
+          [ -n "$PY" ] || { echo "::error::в образе ace-step нет python с torch"; exit 1; }
+          # loguru мог не попасть в venv (собран до этой карточки) — чистый py-пакет, добавим с хоста
+          docker exec ace-step sh -c "$PY -c 'import loguru'" 2>/dev/null || {
+            python3 -m pip install -q --target /tmp/pylibs loguru
+            docker exec ace-step mkdir -p /tmp/pylibs
+            docker cp /tmp/pylibs/. ace-step:/tmp/pylibs/
+          }
+          docker exec -e PYTHONPATH=/tmp/pylibs ace-step sh -c "$PY -c 'import torch; print(torch.__version__)' && cd /app && $PY train.py fixed \
             --checkpoint-dir /app/checkpoints --model-variant acestep-v15-xl-sft \
             --base-model xl_sft --preprocess --audio-dir /app/output/lora/audio \
             --tensor-output /app/output/lora/tensors --output-dir /app/output/lora/out \
             --rank 32 --optimizer-type adamw8bit --offload-encoder \
             --batch-size 1 --gradient-accumulation 8 --epochs 3 --plain --yes'
-          docker exec ace-step sh -c 'ls -la /app/output/lora/out'
+          docker exec ace-step sh -c 'ls -la /app/output/lora/out; du -sh /app/output/lora/out'
 
       - name: upload lora
         if: ${{ inputs.train_lora }}
