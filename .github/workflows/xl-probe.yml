@@ -197,7 +197,7 @@ jobs:
             --dataset-dir /app/output/lora/dataset \
             --tensor-output /app/output/lora/tensors --output-dir /app/output/lora/out \
             --rank 32 --optimizer-type adamw8bit --offload-encoder \
-            --batch-size 1 --gradient-accumulation 8 --epochs 3 --plain --yes
+            --batch-size 1 --gradient-accumulation 8 --epochs 3
           docker exec ace-step ls -la /app/output/lora/out
           docker exec ace-step du -sh /app/output/lora/out
 
