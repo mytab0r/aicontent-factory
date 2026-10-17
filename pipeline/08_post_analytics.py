@@ -190,7 +190,13 @@ def granted_scopes(at) -> str:
 
 
 def probe() -> int:
-    """Проверка scope реальными вызовами: Analytics API (удержание) + Reporting API (CTR)."""
+    """Проверка scope реальными вызовами: Analytics API — гейт, Reporting API — статус.
+
+    Факт (CI 39078811056): у токена scope youtube, youtube.readonly, youtube.upload —
+    yt-analytics.readonly НЕТ. Analytics v2 работает и с youtube.readonly (PROBE analytics
+    зелёный в каждом прогоне), а Reporting API требует строго yt-analytics.readonly -> 403.
+    До перевыпуска токена CTR в отчёте = «н/д» (мягкая деградация в collect()); чинится
+    только новым consent-токеном с yt-analytics.readonly — вне рамок этой карточки."""
     at = access_token()
     q = urllib.parse.urlencode({"ids": "channel==MINE", "startDate": "2026-10-01",
                                 "endDate": dt.date.today().isoformat(),
@@ -198,11 +204,14 @@ def probe() -> int:
     try:
         print("PROBE granted scopes:", granted_scopes(at))
         print("PROBE analytics:", api(YTA + q, at).get("rows"))
-        print("PROBE reporting jobs:", [j.get("reportTypeId") for j in api(REPTR + "jobs", at).get("jobs") or []])
-        return 0
     except urllib.error.HTTPError as e:
-        print("PROBE FAIL:", _http_err(e))
+        print("PROBE FAIL (analytics):", _http_err(e))
         return 1
+    try:
+        print("PROBE reporting jobs:", [j.get("reportTypeId") for j in api(REPTR + "jobs", at).get("jobs") or []])
+    except urllib.error.HTTPError as e:
+        print("PROBE reporting: недоступен —", _http_err(e), "(нужен scope yt-analytics read only; CTR = н/д)")
+    return 0
 
 
 def main() -> int:
