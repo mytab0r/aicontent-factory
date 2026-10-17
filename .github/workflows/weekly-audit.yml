@@ -32,6 +32,8 @@ jobs:
         working-directory: pipeline
         run: |
           set -o pipefail
+          # 03_music импортирует gradio_client на уровне модуля (в daily-video он в ../.venv)
+          pip install -q gradio_client
           python3 config_audit.py --ref /tmp/acf-ref/ref1.wav 2>&1 | tee audit_log.txt
       - name: upload audit log
         if: always()
