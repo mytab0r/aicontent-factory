@@ -64,10 +64,12 @@ jobs:
         run: |
           rm -rf spike-out && mkdir -p spike-out
           docker rm -f mm3gen >/dev/null 2>&1 || true
+          # minimax-out: /out переживает отмену run'а, gen.py докачивает недостающие треки.
+          docker volume create minimax-out >/dev/null 2>&1 || true
           docker create --gpus all --name mm3gen \
             -e MM3_SOLVER=ab2 -e MM3_AR_CFG_FRAMES=50 -e MM3_NO_ACT_CAST=1 \
             -e MM3_DEPTH_B1=1 -e GGML_CUDA_MMVQ_MAX=4 \
-            -v minimax-weights:/models:ro \
+            -v minimax-weights:/models:ro -v minimax-out:/out \
             minimax-spike:local python3 /work/gen.py
           docker cp deploy/gpu-pc/minimax/gen.py mm3gen:/work/gen.py
           docker cp deploy/gpu-pc/minimax/prompts mm3gen:/work/prompts
