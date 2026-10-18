@@ -49,11 +49,16 @@ def meas(p):
 
 
 rows = []
-for v, lyr in LYR.items():
+if REF and Path(REF).is_file():
+    rows.append({"variant": "ref_clip", "seed": 0, "raw": meas(REF)})
+    print("ref clip", rows[-1]["raw"], flush=True)
+# (вариант, лирика, длительность, seeds): 120 с = как сэмплы; 600 с = как прод-сегмент час-микса
+PLAN = [("prod", LYR["prod"], 120, SEEDS), ("struct", LYR["struct"], 120, SEEDS), ("prod600", LYR["prod"], 600, SEEDS[:2])]
+for v, lyr, dur, seeds in PLAN:
     api = Lyr(os.environ["ACE15_ENDPOINT"], lyr)
-    for s in SEEDS:
+    for s in seeds:
         raw = OUT / f"{v}_s{s}_raw.mp3"
-        item = m03.generate_track_v15(PROMPT, 120, s, raw, api=api, ref_audio=REF)
+        item = m03.generate_track_v15(PROMPT, dur, s, raw, api=api, ref_audio=REF)
         dyn, lin = OUT / f"{v}_s{s}_dyn.mp3", OUT / f"{v}_s{s}_lin.mp3"
         gn = OUT / f"{v}_s{s}_gain.mp3"
         ff(raw, dyn, mastering.LOFI_AF); linear(raw, lin); gain(raw, gn)
@@ -62,6 +67,6 @@ for v, lyr in LYR.items():
         print(json.dumps({k: (x["lra"] if isinstance(x, dict) else x) for k, x in r.items()}), flush=True)
         (OUT / "lra.json").write_text(json.dumps(rows, ensure_ascii=False, indent=1))
 print("variant seed | LRA raw / dyn(LOFI_AF) / lin / gain | fails(dyn) || fails(gain)")
-for r in rows:
+for r in rows[1:] if rows and rows[0]["variant"] == "ref_clip" else rows:
     print(r["variant"], r["seed"], "|", r["raw"]["lra"], r["dyn"]["lra"], r["lin"]["lra"], r["gain"]["lra"], "|",
           "; ".join(r["dyn"]["fail"]) or "PASS", "||", "; ".join(r["gain"]["fail"]) or "PASS")
