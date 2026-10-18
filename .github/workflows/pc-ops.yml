@@ -15,6 +15,15 @@ on:
         description: "owner/repo for add-repo-runner"
         required: false
         type: string
+      cname:
+        description: "container name for container-logs"
+        required: false
+        type: string
+      tail:
+        description: "tail lines for container-logs"
+        default: "200"
+        required: false
+        type: string
       name:
         description: "runner suffix for add-repo-runner (gh-runner-<name>)"
         required: false
@@ -57,6 +66,13 @@ jobs:
           docker exec gh-runner-acf-release sh -c 'f=/tmp/runner/acf-release/.exec-probe; printf "#!/bin/sh\necho EXEC_OK\n" > $f && chmod +x $f && $f && rm -f $f' | grep -qx EXEC_OK || { echo "::error::workdir noexec"; exit 1; }
           for n in comfynet gpu-net; do docker network connect $n gh-runner-acf-release || true; done
           sleep 20; docker logs --tail 15 gh-runner-acf-release
+
+      - name: container-logs
+        if: ${{ inputs.action == 'container-logs' }}
+        run: |
+          set -e
+          T="${{ inputs.tail }}"
+          docker logs --tail "$T" "${{ inputs.cname }}" 2>&1
 
       - name: add-repo-runner
         if: ${{ inputs.action == 'add-repo-runner' }}
