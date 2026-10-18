@@ -249,7 +249,7 @@ def ace15_prepare(model: str | None, lora: str | None, api=None) -> dict:
 
 
 def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=None,
-                       poll_sec: float = 5, timeout_sec: int = 3600, ref_audio=None,
+                       poll_sec: float = 5, timeout_sec: int = 2400, ref_audio=None,
                        model: str | None = None) -> dict:
     import json
     import time
@@ -268,10 +268,12 @@ def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=
     else:
         tid = api.post("/release_task", body)["data"]["task_id"]
     deadline = time.time() + timeout_sec
+    n_poll = 0
     while True:
         d = api.post("/query_result", {"task_id_list": [tid]})["data"][0]
-        if d.get("status") != 0:
-            print(f"  task {tid[:8]}: status={d['status']}", flush=True)
+        n_poll += 1
+        if d.get("status") != 0 or n_poll % 24 == 0:  # 24×5 c = раз в 2 мин видно, что жив и стоит в очереди
+            print(f"  task {tid[:8]} poll#{n_poll}: status={d.get('status')} qpos={d.get('queue_position')}", flush=True)
         if d["status"] != 0:
             break
         if time.time() > deadline:
