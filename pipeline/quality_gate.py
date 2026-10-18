@@ -22,6 +22,9 @@ BAL_TOL = 2.0
 MAX_TP = -1.0  # true peak dBTP; 17.10 YouTube-копия p-kkEmLGviU: +1.3..+1.9 = клиппинг  # (среднее 1-5 кГц) - (150-400 Гц) не хуже эталона более чем на столько
 # A6: внутренняя тишина/обрыв >= 2 с ниже -50 дБ вне хвоста (последние 10 с = штатное затухание: ref1 6.5 с, v2 3.4 с)
 SIL_DB, SIL_MIN, TAIL = -50, 2.0, 10.0
+# A15: интегральная громкость финального звука. YouTube нормализует к ~-14 LUFS: тише -16 = трек проигрывает
+# соседям в ленте, громче -13 = срез нормализацией + пересжатие. Эталоны: ref1 -15.1, v2 -13.9 (проходят).
+MIN_I, MAX_I = -16.0, -13.0
 MIN_CE = 6.5  # ниже худшего рефа ниши (7.07), сильно выше брака (<=3.6)
 
 
@@ -60,16 +63,21 @@ def gaps(f):
     return [(round(a, 1), round(b - a, 1)) for a, b in zip(st, en) if a > 1.0 and b < dur - TAIL]
 
 
+def loud_why(i):
+    return [] if MIN_I <= i <= MAX_I else [f"громкость {i:+.1f} LUFS вне {MIN_I}..{MAX_I}: YouTube-нормализация"]
+
+
 def objective(f, genre):
     b = [float(re.findall(r"RMS level dB: (-?[\d.]+)", ff(f, f"highpass=f={lo},highpass=f={lo},lowpass=f={hi},lowpass=f={hi},"
          "astats=measure_overall=RMS_level:measure_perchannel=none"))[-1]) for lo, hi in BANDS]
     e = ff(f, "ebur128=peak=true")
     lra = float(re.findall(r"LRA:\s+([\d.]+)", e)[-1])
     tp = float(re.findall(r"Peak:\s+(-?[\d.]+|-inf)", e)[-1].replace("-inf", "-200"))
-    why = judge(b, lra, genre) + ([f"true peak {tp:+.1f} dBTP > {MAX_TP}: клиппинг"] if tp > MAX_TP else [])
+    li = float(re.findall(r"I:\s+(-?[\d.]+) LUFS", e)[-1])
+    why = judge(b, lra, genre) + ([f"true peak {tp:+.1f} dBTP > {MAX_TP}: клиппинг"] if tp > MAX_TP else []) + loud_why(li)
     g = gaps(f)
     why += [f"тишина/обрыв {d} с на {a} с (< {SIL_DB} дБ)" for a, d in g]
-    return why, {"lra": lra, "tp": tp, "gaps": g, "bands": [round(x, 1) for x in b], "balance": round(balance(b), 1)}
+    return why, {"lra": lra, "tp": tp, "i": li, "gaps": g, "bands": [round(x, 1) for x in b], "balance": round(balance(b), 1)}
 
 
 # как bench/aes.sh (exp/vox-insert, проверено на ПК): пакеты на C: в /app/output/aes/pkgs, torch из образа

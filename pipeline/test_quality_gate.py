@@ -63,4 +63,13 @@ with tempfile.TemporaryDirectory() as td:
     assert len(g) == 1 and 29.5 < g[0][0] < 30.5 and g[0][1] >= 2.5, g
     assert any("тишина" in w for w in qg.objective(gap, "anime lofi")[0])
     assert qg.gaps(tail) == [], qg.gaps(tail)
+# A15: тихий финал (-30 LUFS) = FAIL; эталоны ref1 -15.1 и v2 -13.9 LUFS проходят; громче -13 = FAIL
+assert qg.loud_why(-15.1) == [] and qg.loud_why(-13.9) == []
+assert qg.loud_why(-12.0) and qg.loud_why(-17.0)
+with tempfile.TemporaryDirectory() as td:
+    q = f"{td}/quiet.wav"
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=440:d=20", "-af", "volume=-20dB",
+                    "-ac", "2", q], check=True)
+    w_q, m_q = qg.objective(q, "anime lofi")
+    assert m_q["i"] < -16 and any("LUFS" in w for w in w_q), (w_q, m_q)
 print("test_quality_gate OK")
