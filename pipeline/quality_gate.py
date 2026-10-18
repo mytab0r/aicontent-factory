@@ -73,9 +73,14 @@ def loud_why(i):
     return [] if MIN_I <= i <= MAX_I else [f"громкость {i:+.1f} LUFS вне {MIN_I}..{MAX_I}: YouTube-нормализация"]
 
 
+def bands(f):
+    """Абсолютные RMS дБ по BANDS (двойные фильтры). Пустая полоса (-inf) = -120."""
+    return [float(re.findall(r"RMS level dB: (-?[\d.]+|-inf)", ff(f, f"highpass=f={lo},highpass=f={lo},lowpass=f={hi},lowpass=f={hi},"
+            "astats=measure_overall=RMS_level:measure_perchannel=none"))[-1].replace("-inf", "-120")) for lo, hi in BANDS]
+
+
 def objective(f, genre):
-    b = [float(re.findall(r"RMS level dB: (-?[\d.]+)", ff(f, f"highpass=f={lo},highpass=f={lo},lowpass=f={hi},lowpass=f={hi},"
-         "astats=measure_overall=RMS_level:measure_perchannel=none"))[-1]) for lo, hi in BANDS]
+    b = bands(f)
     e = ff(f, "ebur128=peak=true")
     lra = float(re.findall(r"LRA:\s+([\d.]+)", e)[-1])
     tp = float(re.findall(r"Peak:\s+(-?[\d.]+|-inf)", e)[-1].replace("-inf", "-200"))

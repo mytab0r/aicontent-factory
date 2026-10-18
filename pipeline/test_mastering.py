@@ -102,3 +102,25 @@ with tempfile.TemporaryDirectory() as td:
     assert -15 <= got["i"] <= -13 and got["tp"] <= -1, got
     assert got["lra"] >= 5, f"lofi-мастер раздавил динамику: {got}"
 print("test_mastering lofi OK")
+
+
+# ---- t_ffa7ff01: адаптивная EQ lofi тянет полосы сегмента к REF['lofi'] (статичная EQ не проходила) ----
+sys.path.insert(0, str(HERE))
+import mastering as M  # noqa: E402
+import quality_gate as qg  # noqa: E402
+
+R = qg.REF["lofi"]["bands"]
+assert M.eq_gains(R, R) == [0.0] * 8  # эталон не трогаем
+g = M.eq_gains([x + (9 if i == 3 else 0) for i, x in enumerate(R)], R)
+assert g[3] == -6.0, g  # клэмп ±6
+assert all(abs(x) <= 6 for x in g), g
+with tempfile.TemporaryDirectory() as td:
+    raw = f"{td}/tilt.wav"  # одобренный ref1 с наклоном как у брака 18.10: мутная середина +5 (seed 101), тёмный верх -5 (seed 202)
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", str(HERE.parent / "refs/ref1_approved_1310.mp3"),
+                    "-af", "equalizer=f=900:t=o:w=2:g=5,equalizer=f=8000:t=o:w=2:g=-5", raw], check=True)
+    assert any("полоса" in w for w in qg.objective(raw, "anime lofi")[0])
+    M.master(raw, f"{td}/o.mp3", genre="anime lofi")
+    why, m = qg.objective(f"{td}/o.mp3", "anime lofi")
+    print(f"adaptive EQ: {m['bands']} LRA={m['lra']} fail={why}")
+    assert not [w for w in why if "полоса" in w or "баланс" in w or "LRA" in w], why
+print("test_mastering adaptive EQ OK")
