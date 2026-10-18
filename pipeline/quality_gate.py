@@ -28,6 +28,9 @@ MIN_I, MAX_I = -16.0, -13.0
 # V2/V3: финальный файл цел — есть видео- и аудиопоток, длительности потоков совпадают и равны треку ±2 %.
 # 13-16.10 на канал ушли 4 ролика P0D (битая заливка) — длительность сверяется до публикации.
 DUR_TOL = 0.02
+# V1: чёрный экран >= 2 с в финальном видео (сбой анимации/кодирования). Порог яркости 0.10 — ночные обложки
+# канала YAVG 41-88 (из 255) проходят с запасом.
+BLACK_MIN = 2.0
 MIN_CE = 6.5  # ниже худшего рефа ниши (7.07), сильно выше брака (<=3.6)
 
 
@@ -145,6 +148,15 @@ def integrity_why(f, expect=None):
     return why
 
 
+def black_why(f):
+    """V1: [причина] на каждый отрезок чёрного кадра >= BLACK_MIN с."""
+    e = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", str(f), "-an", "-vf",
+                        f"blackdetect=d={BLACK_MIN}:pix_th=0.10:pic_th=0.98", "-f", "null", "-"],
+                       capture_output=True, text=True).stderr
+    return [f"чёрный кадр {float(d):.1f} с с {float(a):.1f} с" for a, d in
+            re.findall(r"black_start:([\d.]+) black_end:[\d.]+ black_duration:([\d.]+)", e)]
+
+
 def target(d, final):
     """--final: финальный файл после 04 assemble (то, что заливается), иначе трек после 03."""
     return d / ("video.mp4" if final else "track.mp3")
@@ -163,7 +175,7 @@ def main(argv):
             expect = streams(d / "track.mp3")["format"]
     why, m = objective(f, genre)
     if "--final" in argv:
-        why += integrity_why(f, expect)
+        why += integrity_why(f, expect) + black_why(f)
     if "--no-ce" not in argv and "--final" not in argv:
         try:
             ces = ce_scores(f)
