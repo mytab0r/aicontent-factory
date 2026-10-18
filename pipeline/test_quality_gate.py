@@ -84,4 +84,12 @@ with tempfile.TemporaryDirectory() as td:
     assert any("нет потока" in w for w in qg.integrity_why(nov)), qg.integrity_why(nov)
     assert any("рассинхрон" in w for w in qg.integrity_why(desync)), qg.integrity_why(desync)
     assert any("!= трек" in w for w in qg.integrity_why(ok, 900.0)), qg.integrity_why(ok, 900.0)
+# V1: чёрные кадры >= 2 с в финальном mp4 = FAIL; тёмная ночная сцена (обложки канала YAVG 41-88) проходит.
+with tempfile.TemporaryDirectory() as td:
+    ok, dark, blk = f"{td}/ok.mp4", f"{td}/dark.mp4", f"{td}/blk.mp4"
+    for out, vf in ((ok, "color=c=gray:s=64x64:r=5:d=10"), (dark, "color=c=0x282828:s=64x64:r=5:d=10"),
+                    (blk, "color=c=gray:s=64x64:r=5:d=10,drawbox=c=black:t=fill:enable='between(t,4,7)'")):
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", vf, "-c:v", "libx264", out], check=True)
+    assert qg.black_why(ok) == [] and qg.black_why(dark) == [], (qg.black_why(ok), qg.black_why(dark))
+    assert any("чёрн" in w for w in qg.black_why(blk)), qg.black_why(blk)
 print("test_quality_gate OK")
