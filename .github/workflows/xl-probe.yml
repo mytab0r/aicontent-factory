@@ -133,11 +133,11 @@ jobs:
             # решение 00:30 (t_b4006a6e): turbo-контроль ПЕРВЫМ, затем 1 XL-кандидат с замером
             # времени и nvidia-smi; 1 кандидат XL >600 с на 90 с -> best-of-8 непригоден для
             # час-микса: KILL-вердикт, полные варианты не тратим.
-            nvidia-smi --query-gpu=name,memory.used,memory.total --format=csv > /tmp/xlrun/gpu_before.txt
+            (docker exec ace-step nvidia-smi --query-gpu=name,memory.used,memory.total --format=csv || echo "nvidia-smi n/a") > /tmp/xlrun/gpu_before.txt
             gen turbo_1 ACE15_MODEL=acestep-v15-turbo
             TO=1500 gen xl_solo $XL1
             WALL=$(cat /tmp/xlrun/xl_solo.wall 2>/dev/null || echo 99999)
-            nvidia-smi --query-gpu=name,memory.used,memory.total --format=csv > /tmp/xlrun/gpu_after.txt
+            (docker exec ace-step nvidia-smi --query-gpu=name,memory.used,memory.total --format=csv || echo "nvidia-smi n/a") > /tmp/xlrun/gpu_after.txt
             if [ "${{ inputs.canary_only }}" = true ]; then
               echo "CANARY_ONLY: только turbo_1 + xl_solo, полные варианты скипнуты"
             elif [ "$WALL" -le 600 ]; then
