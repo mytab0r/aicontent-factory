@@ -162,6 +162,33 @@ def test_title_gets_real_length_label():
     assert len(pub.title_with_length(long, 3700)) <= 100
 
 
+def test_mix_segment_mastered_before_gate():
+    """Ревью t_187762da: кандидат сегмента мастерится как прод ДО критика/objective —
+    гейт меряет то, что уйдёт на канал (LOFI_AF меняет 20-60 Гц и LRA = метрики провала 17.10)."""
+    import tempfile
+    d = Path(tempfile.mkdtemp())
+    calls = []
+    orig = music.generate_track_v15, music.mastering.master
+    music.generate_track_v15 = lambda prompt, sec, seed, out, ref_audio=None: (
+        calls.append(("gen", Path(out).name)), Path(out).write_bytes(b"x"))
+    music.mastering.master = lambda s, d_, genre="": calls.append(("master", Path(s).name, genre))
+    try:
+        raw = music.mix_raw(d, "p", 1000, None, "anime lofi")
+        def scores(fs):
+            calls.append(("scores", [Path(f).name for f in fs]))
+            return [[7.5] * 3 for _ in fs]
+        def obj(p):
+            calls.append(("objective", Path(p).name))
+            return []
+        assert Path(music.gated_gen(raw, scores, obj, attempts=2, log=lambda *a: None)(0)).name == "mix_00_0.mp3"
+    finally:
+        music.generate_track_v15, music.mastering.master = orig
+    assert calls == [("gen", "mix_00_0.mp3"), ("master", "mix_00_0.mp3", "anime lofi"),
+                     ("gen", "mix_00_1.mp3"), ("master", "mix_00_1.mp3", "anime lofi"),
+                     ("scores", ["mix_00_0.mp3", "mix_00_1.mp3"]),
+                     ("objective", "mix_00_0.mp3"), ("objective", "mix_00_1.mp3")], calls
+
+
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"):
