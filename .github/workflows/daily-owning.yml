@@ -67,6 +67,7 @@ jobs:
           git pull --rebase -q && git push || true
       - name: upload artifact
         if: steps.guard.outputs.go == '1'
+        continue-on-error: true  # квота artifact storage репо (22:03 18.10) не должна валить выпуск
         uses: actions/upload-artifact@v4
         with:
           name: owning-${{ github.run_id }}
