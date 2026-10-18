@@ -253,7 +253,7 @@ jobs:
           # упавший шаг из steps-контекста джобы: API jobs в момент алерта ещё без conclusion («не определён», 39115022028)
           python3 - <<'PY'
           import json, os, urllib.request
-          from common import failed_step, ROOT
+          from common import failed_step, tg_send, ROOT
           wf = (ROOT / ".github/workflows/daily-video.yml").read_text(encoding="utf-8")
           api = f"{os.environ['GITHUB_API_URL']}/repos/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}/jobs"
           try:
