@@ -326,13 +326,37 @@ def gated_gen(raw, scores, objective, attempts=3, log=print):
     return gen
 
 
+def ace_restart(wait_sec=600):
+    """docker restart ace-step + ожидание healthy (как шаг workflow 'ACE-Step up')."""
+    import subprocess
+    import time
+    subprocess.run(["docker", "restart", "ace-step"], check=True, capture_output=True)
+    end = time.time() + wait_sec
+    while time.time() < end:
+        st = subprocess.run(["docker", "inspect", "-f", "{{.State.Health.Status}}", "ace-step"],
+                            capture_output=True, text=True).stdout.strip()
+        if st == "healthy":
+            return
+        time.sleep(6)
+    raise RuntimeError("ace-step не healthy после рестарта")
+
+
 def mix_raw(run_dir, prompt, seed, ref, genre_name):
     """Кандидат сегмента час-микса, отмастеренный как прод ДО гейта (ревью t_187762da):
     LOFI_AF (highpass 28 + loudnorm LRA=11) меняет полосу 20-60 Гц и LRA — ровно метрики
     провала 17.10, поэтому гейт сегмента обязан мерить мастер, как cand() в best-of."""
     def raw(i, k):
         p = Path(run_dir) / f"mix_{i:02d}_{k}.mp3"
-        generate_track_v15(prompt, MIX_SEG_SEC, seed + i * 100 + k, p, ref_audio=ref)
+        try:
+            generate_track_v15(prompt, MIX_SEG_SEC, seed + i * 100 + k, p, ref_audio=ref)
+        except RuntimeError as e:
+            # t_ffa7ff01: stage=failed = CUDA illegal memory access в LM (лог ace-step 18.10, run 39154188022);
+            # контекст CUDA испорчен -> все следующие задачи падают за секунды. Рестарт + 1 повтор.
+            if "failed" not in str(e):
+                raise
+            print(f"сегмент {i}/{k}: {str(e)[:160]} -> docker restart ace-step, повтор", flush=True)
+            ace_restart()
+            generate_track_v15(prompt, MIX_SEG_SEC, seed + i * 100 + k, p, ref_audio=ref)
         mastering.master(p, p, genre=genre_name)
         return str(p)
     return raw
