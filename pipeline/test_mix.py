@@ -216,6 +216,29 @@ def test_mix_raw_restarts_ace_on_failed_task():
         music.generate_track_v15, music.mastering.master, music.ace_restart = orig
 
 
+def test_edge_match_levels_seam_rms():
+    """t_ffa7ff01: gain-райд выравнивает края сегментов под порог R3 (3 дБ); клэмп ±6 дБ/проход."""
+    import subprocess as sp
+    import tempfile
+    d = Path(tempfile.mkdtemp())
+    fs = []
+    for k, v in enumerate((0.56, 0.28, 0.28)):  # A правый край на ~6 дБ громче B левого, C уже выровнен
+        f = d / f"{k}.mp3"
+        sp.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=30",
+                "-af", f"volume={v}", "-c:a", "libmp3lame", "-b:a", "192k", str(f)], check=True)
+        fs.append(str(f))
+    gains = music.edge_match(fs, log=lambda *x: None)
+    assert len(gains) == 3 and gains[0] == 0.0, gains
+    dl = [abs(music.edge_rms(fs[i], "l") - music.edge_rms(fs[i - 1], "r")) for i in (1, 2)]
+    assert dl[0] <= 3.0 and dl[1] <= 3.0, dl
+    # клэмп: сегмент тише края на 40 дБ -> максимум 3 прохода по 6 дБ, без бесконечного цикла
+    f = d / "deep.mp3"
+    sp.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=30",
+            "-af", "volume=0.0056", "-c:a", "libmp3lame", "-b:a", "192k", str(f)], check=True)
+    g2 = music.edge_match([fs[0], str(f)], log=lambda *x: None)
+    assert g2[1] == 18.0, g2
+
+
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"):
