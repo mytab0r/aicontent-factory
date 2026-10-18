@@ -108,7 +108,9 @@ def test_empty_window_sends_nothing():
 
 def test_reach_failure_keeps_retention_report():
     sent = []
-    vids = [v("a", 50, 40, None), v("b", 100, 30, None), v("c", 200, 50, None)]
+    # main() берёт реальное время: возраст роликов считаем от него, не от NOW (тест-бомба 18.10: "a" выпал из окна 48-72 ч)
+    shift = dt.datetime.now(dt.timezone.utc) - NOW
+    vids = [dict(x, published=x["published"] + shift) for x in (v("a", 50, 40, None), v("b", 100, 30, None), v("c", 200, 50, None))]
     pa.collect = REAL["collect"]           # предыдущий тест подменял collect — вернуть
     pa.access_token = lambda: "t"
     pa.uploads = lambda at: [dict(x) for x in vids]
