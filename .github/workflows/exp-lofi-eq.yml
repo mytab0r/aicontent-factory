@@ -1,0 +1,40 @@
+name: exp lofi EQ (t_fe1fcf66, no publish)
+on:
+  push:
+    branches: ["exp/lofi-eq"]
+    paths: [".github/workflows/exp-lofi-lra.yml", "bench/lofi_eq.py"]
+  workflow_dispatch: {}
+permissions:
+  contents: read
+# НЕ группа daily-video: GitHub держит 1 pending на группу и отменил плановый выпуск 13:00 (run 39129223280).
+# ace-step сам ставит задачи в очередь — параллель с выпуском только замедляет.
+concurrency:
+  group: exp-lofi-eq
+  cancel-in-progress: true
+jobs:
+  lra:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 60
+    env:
+      ACE15_ENDPOINT: http://ace-step:8001
+      ACE15_REF_AUDIO: /tmp/acf-ref/ref1.wav
+    steps:
+      - uses: actions/checkout@v4
+      - name: ACE-Step up
+        run: |
+          docker start ace-step >/dev/null 2>&1 || true
+          for i in $(seq 1 100); do [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step 2>/dev/null)" = healthy ] && exit 0; sleep 6; done; exit 1
+      - name: reference audio (cache)
+        run: |
+          [ -s "$ACE15_REF_AUDIO" ] && exit 0
+          mkdir -p /tmp/acf-ref && python3 -m venv /tmp/acf-ref/v && /tmp/acf-ref/v/bin/pip install -q -U yt-dlp
+          /tmp/acf-ref/v/bin/yt-dlp -q -f bestaudio -o '/tmp/acf-ref/raw1.%(ext)s' https://youtu.be/CYZeAfaj3pc
+          ffmpeg -loglevel error -y -ss 30 -t 90 -i /tmp/acf-ref/raw1.* -ac 2 -ar 48000 "$ACE15_REF_AUDIO"
+      - name: measure
+        run: python3 bench/lofi_eq.py
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true
+        if: always()
+        with:
+          name: lofi-eq
+          path: out/
