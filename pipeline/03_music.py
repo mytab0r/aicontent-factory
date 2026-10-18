@@ -444,6 +444,41 @@ def seam_times(durs, xfade=XFADE) -> list[float]:
     return [sum(durs[:i]) - i * xfade + xfade / 2 for i in range(1, len(durs))]
 
 
+def edge_rms(path, side, sec=5.0) -> float:
+    """RMS дБ края сегмента: side='l' начало, 'r' конец (окно sec, как SEAM_HALF гейта R3)."""
+    import re
+    import subprocess
+    dur = _probe_sec(path)
+    start = max(0.0, dur - sec) if side == "r" else 0.0
+    out = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-ss", str(start), "-t", str(sec), "-i", str(path),
+                          "-af", "astats=measure_overall=RMS_level:measure_perchannel=none", "-f", "null", "-"],
+                         capture_output=True, text=True).stderr
+    return float(re.findall(r"RMS level dB: (-?[\d.]+|-inf)", out)[-1].replace("-inf", "-120"))
+
+
+def edge_match(paths, max_gain=6.0, log=print):
+    """t_ffa7ff01: acrossfade сглаживает кривые, но не громкость материала: сегмент с тихим хвостом
+    и следующий с громким началом давали R3-скачки RMS 4-5 дБ (run 39155227095, 4 стыка из 8).
+    Левый край сегмента i подгоняется константным gain к правому краю i-1, клэмп ±max_gain на проход;
+    3 прохода: gain копится (клэмп на проход, как у adaptive EQ)."""
+    import os
+    import subprocess
+    gains = [0.0]
+    for i in range(1, len(paths)):
+        tot = 0.0
+        for _ in range(3):
+            g = max(-max_gain, min(max_gain, edge_rms(paths[i - 1], "r") - edge_rms(paths[i], "l")))
+            if abs(g) > 0.1:
+                tmp = f"{paths[i]}.g.mp3"
+                subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", paths[i], "-af", f"volume={g:.2f}dB",
+                                "-c:a", "libmp3lame", "-b:a", "192k", tmp], check=True)
+                os.replace(tmp, paths[i])
+                tot += g
+        gains.append(tot)
+        log(f"edge_match {i}: суммарный gain {tot:+.2f} дБ")
+    return gains
+
+
 def concat_tracks(paths: list[str], out_path, xfade: float = XFADE) -> None:
     """Склеивает треки цепочкой acrossfade (tri/tri, xfade с): без разрыва громкости и щелчка на стыке."""
     import shutil
@@ -517,6 +552,7 @@ def main() -> None:
 
         paths, durs = plan_mix(duration, gen_mix, _probe_sec, budget_sec=mix_budget,
                                max_tracks=-(-duration // MIX_SEG_SEC) + 2)
+        edge_match(paths, log=print)
         concat_tracks(paths, out_path)
         chaps = chapters(durs, track_names(len(paths), seed), xfade=XFADE)
         seams = seam_times(durs)
