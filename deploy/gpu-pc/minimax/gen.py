@@ -14,7 +14,7 @@ MODEL = os.environ.get("MM3_MODEL_DIR", "/models")
 OUT = Path("/out")
 PROMPTS = Path(os.environ.get("MM3_PROMPTS", "/work/prompts"))
 TIMEOUT = int(os.environ.get("MM3_TIMEOUT", "480"))
-RVQ = os.environ.get("MM3_RVQ", "rvq_depth_decoder_q8_0.gguf")
+RVQ = os.environ.get("MM3_RVQ", "/models/rvq_depth_decoder_q8_0.gguf")
 
 OUT.mkdir(parents=True, exist_ok=True)
 log = (OUT / "gen_log.jsonl").open("a")
@@ -30,8 +30,8 @@ for sp in specs:
     cmd = [BIN, "--task", "gen", "--family", "minimax_music3",
            "--model", MODEL, "--backend", "cuda", "--metrics",
            "--session-option", f"minimax_music3.rvq_depth_decoder_gguf={RVQ}",
-           "--session-option", "minimax_music3.language_model_gguf=language_model_q4_k.gguf",
-           "--session-option", "minimax_music3.flow_transformer_gguf=transformer_q4_k.gguf",
+           "--session-option", "minimax_music3.language_model_gguf=/models/language_model_q4_k.gguf",
+           "--session-option", "minimax_music3.flow_transformer_gguf=/models/transformer_q4_k.gguf",
            "--text", p["caption"],
            "--request-option", f"lyrics={p['lyrics']}",
            "--request-option", f"duration_sec={p.get('duration_sec', 135)}",
@@ -43,6 +43,8 @@ for sp in specs:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT)
         gen_s = round(time.time() - t0, 1)
         ok = out_wav.exists() and out_wav.stat().st_size > 10000
+        if not ok:
+            print(f"ERR {pid} rc={r.returncode} stdout: {r.stdout[-300:]!r} stderr: {r.stderr[-500:]!r}", flush=True)
         (OUT / f"mm3_{pid}.log").write_text(r.stdout[-4000:] + "\n===STDERR===\n" + r.stderr[-8000:])
         rec = {"id": pid, "type": p["type"], "bpm": p["bpm"], "gen_s": gen_s,
                "ok": bool(ok), "rc": r.returncode}

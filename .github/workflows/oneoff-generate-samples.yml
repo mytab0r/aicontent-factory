@@ -78,6 +78,7 @@ jobs:
           python3 deploy/gpu-pc/minimax/score.py spike-out
 
       - name: mp3 копии MiniMax (wav → mp3 для прослушивания)
+        if: always()
         run: |
           mkdir -p spike-out/tracks
           for f in spike-out/mm3_*.wav; do
@@ -87,15 +88,17 @@ jobs:
           ls -la spike-out/tracks
 
       - name: Upload results
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: minimax-spike-results
           path: |
-            spike-out/minimax_vs_ace_results.md
-            spike-out/minimax_vs_ace_results.csv
+            spike-out/*.md
+            spike-out/*.csv
             spike-out/gen_log.jsonl
             spike-out/ace_gen_log.jsonl
-          if-no-files-found: error
+            spike-out/mm3_*.log
+          if-no-files-found: ignore
 
       - name: Upload tracks (mp3)
         uses: actions/upload-artifact@v4
