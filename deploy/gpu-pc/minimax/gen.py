@@ -14,7 +14,6 @@ MODEL = os.environ.get("MM3_MODEL_DIR", "/models")
 OUT = Path("/out")
 PROMPTS = Path(os.environ.get("MM3_PROMPTS", "/work/prompts"))
 TIMEOUT = int(os.environ.get("MM3_TIMEOUT", "480"))
-RVQ = os.environ.get("MM3_RVQ", "/models/rvq_depth_decoder_q8_0.gguf")
 
 OUT.mkdir(parents=True, exist_ok=True)
 log = (OUT / "gen_log.jsonl").open("a")
@@ -29,9 +28,6 @@ for sp in specs:
         continue
     cmd = [BIN, "--task", "gen", "--family", "minimax_music3",
            "--model", MODEL, "--backend", "cuda", "--metrics",
-           "--session-option", f"minimax_music3.rvq_depth_decoder_gguf={RVQ}",
-           "--session-option", "minimax_music3.language_model_gguf=/models/language_model_q4_k.gguf",
-           "--session-option", "minimax_music3.flow_transformer_gguf=/models/transformer_q4_k.gguf",
            "--text", p["caption"],
            "--request-option", f"lyrics={p['lyrics']}",
            "--request-option", f"duration_sec={p.get('duration_sec', 135)}",
