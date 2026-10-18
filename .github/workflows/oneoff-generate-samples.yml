@@ -41,7 +41,7 @@ jobs:
       - name: Generate MiniMax (10 треков)
         if: always()
         run: |
-          mkdir -p spike-out
+          rm -rf spike-out && mkdir -p spike-out
           docker run --rm --gpus all \
             -e MM3_SOLVER=ab2 -e MM3_AR_CFG_FRAMES=50 -e MM3_NO_ACT_CAST=1 \
             -e MM3_DEPTH_B1=1 -e GGML_CUDA_MMVQ_MAX=4 \
