@@ -58,6 +58,8 @@ raw_plan = os.environ.get("BENCH_PLAN", "")
 if raw_plan:
     vname, vdur, vseeds = raw_plan.split(":")
     PLAN = [(vname, LYR["prod"], int(vdur), [int(x) for x in vseeds.split(",")])]
+else:
+    PLAN = [("prod", LYR["prod"], 120, SEEDS), ("struct", LYR["struct"], 120, SEEDS), ("prod600", LYR["prod"], 600, SEEDS[:2])]
 for v, lyr, dur, seeds in PLAN:
     api = Lyr(os.environ["ACE15_ENDPOINT"], lyr)
     for s in seeds:
