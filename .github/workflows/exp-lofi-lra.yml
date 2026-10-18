@@ -6,9 +6,11 @@ on:
   workflow_dispatch: {}
 permissions:
   contents: read
+# НЕ группа daily-video: GitHub держит 1 pending на группу и отменил плановый выпуск 13:00 (run 39129223280).
+# ace-step сам ставит задачи в очередь — параллель с выпуском только замедляет.
 concurrency:
-  group: daily-video  # один GPU: в очередь с выпусками, не параллельно
-  cancel-in-progress: false
+  group: exp-lofi-lra
+  cancel-in-progress: true
 jobs:
   lra:
     runs-on: [self-hosted, pc]
