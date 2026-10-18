@@ -126,3 +126,14 @@ def latest_run_dir() -> Path:
     if not runs:
         raise SystemExit("нет ни одного запуска в runs/ — сначала выполнить 01_idea.py")
     return runs[-1]
+
+
+def failed_step(steps: dict, jobs: list, workflow_text: str = "") -> str:
+    """Имя упавшего шага для TG-алерта. steps = toJSON(steps) текущей джобы (outcome известен сразу;
+    API jobs в момент алерта ещё без conclusion — run 39115022028 «не определён»). jobs = фолбэк из API.
+    id -> name берётся из текста workflow (в steps-контексте имён нет)."""
+    import re
+    names = {i: n.strip() for n, i in re.findall(r"- name: ([^\n]+)\n\s+id: (\S+)", workflow_text)}
+    bad = [names.get(i, i) for i, s in steps.items() if s.get("outcome") == "failure" and s.get("conclusion") == "failure"]
+    bad = bad or [s["name"] for j in jobs for s in j.get("steps", []) if s.get("conclusion") == "failure"]
+    return ", ".join(bad) or "не определён"
