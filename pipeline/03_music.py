@@ -371,12 +371,12 @@ def _ts(sec: float) -> str:
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
 
 
-def chapters(durs, names) -> list[str]:
-    """Главы YouTube: первая 0:00, далее накопленное время начала каждого трека."""
+def chapters(durs, names, xfade=0.0) -> list[str]:
+    """Главы YouTube: первая 0:00, далее начало каждого трека (каждый стык съедает xfade с)."""
     out, t = [], 0.0
     for d, n in zip(durs, names):
         out.append(f"{_ts(t)} {n}")
-        t += d
+        t += d - xfade
     return out
 
 
@@ -412,26 +412,30 @@ def chunk_plan(total_sec: int, max_chunk_sec: int = 240) -> list[int]:
     return chunks
 
 
-def concat_tracks(paths: list[str], out_path) -> None:
-    """Склеивает несколько mp3 в один файл через ffmpeg concat demuxer."""
+XFADE = 8.0  # t_3f0f7b91: стыки сегментов через acrossfade (как одобренный рецепт микса 14.10), не встык
+
+
+def seam_times(durs, xfade=XFADE) -> list[float]:
+    """Центры кроссфейдов в склейке concat_tracks: их проверяет quality_gate R3 (окно ±5 с, RMS)."""
+    return [sum(durs[:i]) - i * xfade + xfade / 2 for i in range(1, len(durs))]
+
+
+def concat_tracks(paths: list[str], out_path, xfade: float = XFADE) -> None:
+    """Склеивает треки цепочкой acrossfade (tri/tri, xfade с): без разрыва громкости и щелчка на стыке."""
+    import shutil
     import subprocess
-    import tempfile
 
     if len(paths) == 1:
-        import shutil
         shutil.copy(paths[0], out_path)
         return
-    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
-        for p in paths:
-            f.write(f"file '{p}'\n")
-        list_path = f.name
-    try:
-        subprocess.run(
-            ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path, str(out_path)],  # куски ACE-Step не mp3: -c copy даёт exit 234,
-            check=True, capture_output=True,
-        )
-    finally:
-        os.unlink(list_path)
+    ins = [x for p in paths for x in ("-i", str(p))]
+    fc, prev = [], "[0:a]"
+    for i in range(1, len(paths)):
+        out = "[a]" if i == len(paths) - 1 else f"[x{i}]"
+        fc.append(f"{prev}[{i}:a]acrossfade=d={xfade}:c1=tri:c2=tri{out}")
+        prev = out
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", *ins, "-filter_complex", ";".join(fc), "-map", "[a]",
+                    str(out_path)], check=True, capture_output=True)
 
 
 def main() -> None:
@@ -467,7 +471,7 @@ def main() -> None:
     seed = abs(hash(run_dir.name)) % (2**31)
 
     out_path = run_dir / "track.mp3"
-    chaps = []
+    chaps, seams = [], []
     bestof_meta = None
     if os.environ.get("ACE15_ENDPOINT"):
         ace15_prepare(os.environ.get("ACE15_MODEL"), os.environ.get("ACE15_LORA"))
@@ -479,9 +483,9 @@ def main() -> None:
 
         raw = mix_raw(run_dir, prompt, seed, ref, genre_name)
         if n_seg >= 2:
-            from quality_gate import ce_batch, objective
+            from quality_gate import ce_windows_batch, objective
 
-            gen_mix = gated_gen(raw, ce_batch, lambda p: objective(p, genre_name)[0],
+            gen_mix = gated_gen(raw, ce_windows_batch, lambda p: objective(p, genre_name)[0],
                                 attempts=n_seg, log=print)
         else:
             def gen_mix(i):
@@ -490,8 +494,9 @@ def main() -> None:
         paths, durs = plan_mix(duration, gen_mix, _probe_sec, budget_sec=mix_budget,
                                max_tracks=-(-duration // MIX_SEG_SEC) + 2)
         concat_tracks(paths, out_path)
-        chaps = chapters(durs, track_names(len(paths), seed))
-        duration = int(sum(durs))
+        chaps = chapters(durs, track_names(len(paths), seed), xfade=XFADE)
+        seams = seam_times(durs)
+        duration = int(sum(durs) - XFADE * (len(durs) - 1))
     elif os.environ.get("ACE15_ENDPOINT"):
         duration = min(duration, ACE15_MAX_SEC)
         ref = os.environ.get("ACE15_REF_AUDIO")
@@ -499,7 +504,7 @@ def main() -> None:
         if n >= 2:
             import bestof
             import shutil
-            from quality_gate import ce_batch, objective
+            from quality_gate import ce_windows_batch, objective
 
             def cand(k):
                 c = run_dir / f"cand_{k:02d}.mp3"  # мастерится как прод: гейт меряет то, что уйдёт на канал
@@ -507,7 +512,7 @@ def main() -> None:
                 mastering.master(c, c, genre=genre_name)
                 return str(c)
 
-            bi, bp, rows = bestof.best_of(n, cand, ce_batch, objective=lambda p: objective(p, genre_name)[0])
+            bi, bp, rows = bestof.best_of(n, cand, ce_windows_batch, objective=lambda p: objective(p, genre_name)[0])
             shutil.move(bp, out_path)
             for c in run_dir.glob("cand_*.mp3"):
                 c.unlink()  # кандидаты удаляются сразу после выбора (диск)
@@ -529,7 +534,7 @@ def main() -> None:
         mastering.master(out_path, out_path, genre=genre_name)
     (run_dir / "music_meta.json").write_text(
         json.dumps({"genre": genre_name, "prompt": prompt, "seed": seed, "duration": duration,
-                    "chapters": chaps, "bestof": bestof_meta},
+                    "chapters": chaps, "seams": seams, "bestof": bestof_meta},
                    ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
