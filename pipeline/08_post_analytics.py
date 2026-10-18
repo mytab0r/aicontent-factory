@@ -46,14 +46,24 @@ def is_short(v) -> bool:
     return "#shorts" in v["title"].lower()
 
 
-def due(videos, now):
-    lo, hi = (now - dt.timedelta(hours=h) for h in reversed(WINDOW_H))
+def window_h(raw):
+    """'lo,hi' из workflow_dispatch input; пусто (cron) = WINDOW_H."""
+    if not raw or not raw.strip():
+        return WINDOW_H
+    lo, hi = (float(x) for x in raw.split(","))
+    if not 0 <= lo < hi:
+        raise ValueError(f"window_h: нужно 0 <= lo < hi, получено {raw!r}")
+    return lo, hi
+
+
+def due(videos, now, window=WINDOW_H):
+    lo, hi = (now - dt.timedelta(hours=h) for h in reversed(window))
     return [v for v in videos if lo < v["published"] <= hi]
 
 
-def analyse(videos, now):
+def analyse(videos, now, window=WINDOW_H):
     rows = []
-    for v in due(videos, now):
+    for v in due(videos, now, window):
         peers = [p for p in videos if is_short(p) == is_short(v)]
         med = {k: median(p[k] for p in peers) for k in ("retention", "ctr")}
         flags = [name for k, name in (("retention", "удержание"), ("ctr", "CTR"))
@@ -223,7 +233,7 @@ def main() -> int:
         print("collect fail:", _http_err(e), file=sys.stderr)  # сырая ошибка — в лог CI, не владельцу
         tg_send("⚠️ G1zm0: пост-аналитика 48 ч не собралась — чиню, детали в логе CI")
         raise
-    rows = analyse(vids, dt.datetime.now(dt.timezone.utc))
+    rows = analyse(vids, dt.datetime.now(dt.timezone.utc), window_h(os.environ.get("WINDOW_H")))
     if not rows:
         return 0  # пустое окно 48–72 ч = молчим (решение владельца 17.10)
     tg_send(report_text(rows, ctr_note))

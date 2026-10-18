@@ -5,7 +5,12 @@ name: post analytics 48h
 on:
   schedule:
     - cron: "0 12 * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      window_h:
+        description: "окно часов 'lo,hi' (пусто = 48,72; только ручной прогон)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -19,6 +24,7 @@ jobs:
       TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
       TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
       TG_THREAD_ID: ${{ secrets.TG_THREAD_ID }}
+      WINDOW_H: ${{ inputs.window_h }}  # cron: пусто -> 48,72
     steps:
       - uses: actions/checkout@v4
       - name: scope probe (YouTube Analytics API реальным вызовом)

@@ -32,6 +32,19 @@ def test_due_window_48_72h():
     assert [x["id"] for x in pa.due(vids, NOW)] == ["b", "c"]
 
 
+def test_window_h_dispatch_override():
+    assert pa.window_h("") == pa.WINDOW_H and pa.window_h(None) == pa.WINDOW_H
+    assert pa.window_h("0,72") == (0, 72)
+    vids = [v("a", 10, 1, 1), v("b", 50, 1, 1)]
+    assert [x["id"] for x in pa.due(vids, NOW, (0, 72))] == ["a", "b"]
+    for bad in ("72,0", "-1,5"):
+        try:
+            pa.window_h(bad)
+            raise AssertionError(bad)
+        except ValueError:
+            pass
+
+
 def test_flag_below_median_any_metric():
     vids = [v("a", 50, 40, 5), v("b", 100, 30, 4), v("c", 200, 50, 6), v("d", 300, 35, 3)]
     rows = pa.analyse(vids, NOW)
