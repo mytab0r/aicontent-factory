@@ -318,6 +318,18 @@ def gated_gen(raw, scores, objective, attempts=3, log=print):
     return gen
 
 
+def mix_raw(run_dir, prompt, seed, ref, genre_name):
+    """Кандидат сегмента час-микса, отмастеренный как прод ДО гейта (ревью t_187762da):
+    LOFI_AF (highpass 28 + loudnorm LRA=11) меняет полосу 20-60 Гц и LRA — ровно метрики
+    провала 17.10, поэтому гейт сегмента обязан мерить мастер, как cand() в best-of."""
+    def raw(i, k):
+        p = Path(run_dir) / f"mix_{i:02d}_{k}.mp3"
+        generate_track_v15(prompt, ACE15_MAX_SEC, seed + i * 100 + k, p, ref_audio=ref)
+        mastering.master(p, p, genre=genre_name)
+        return str(p)
+    return raw
+
+
 def plan_mix(target_sec, gen, dur, budget_sec=1800, max_tracks=12, now=None, min_sec=900,
              max_drops=3):
     """Час-микс из цельных треков 1.5 (модель отдаёт ~482 с вместо 600 — считаем по факту).
@@ -457,11 +469,7 @@ def main() -> None:
         n_seg = int(os.environ.get("ACE15_BESTOF") or 0)  # гейт на сегмент: до N seed'ов, max CE среди прошедших
         mix_budget = int(os.environ.get("ACE15_MIX_BUDGET_SEC") or 7200)
 
-        def raw(i, k):
-            p = run_dir / f"mix_{i:02d}_{k}.mp3"
-            generate_track_v15(prompt, ACE15_MAX_SEC, seed + i * 100 + k, p, ref_audio=ref)
-            return str(p)
-
+        raw = mix_raw(run_dir, prompt, seed, ref, genre_name)
         if n_seg >= 2:
             from quality_gate import ce_batch, objective
 
@@ -506,6 +514,8 @@ def main() -> None:
             for i, c in enumerate(chunks)
         ]
         concat_tracks(chunk_paths, out_path)
+    # Склейка мастерится повторно сознательно: concat перекодирует и стыкует сегменты, итоговый
+    # loudnorm выравнивает громкость часа; этот файл целиком меряют 03c и 04b (гейт выпуска).
     if bestof_meta is None:  # победитель best-of уже отмастерен
         mastering.master(out_path, out_path, genre=genre_name)
     (run_dir / "music_meta.json").write_text(
