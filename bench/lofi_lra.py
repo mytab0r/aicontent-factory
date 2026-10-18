@@ -3,6 +3,7 @@
 import importlib.util, json, os, re, subprocess, sys
 from pathlib import Path
 sys.path.insert(0, "pipeline")
+import types; sys.modules.setdefault("gradio_client", types.SimpleNamespace(Client=None, handle_file=None))  # v1-путь не нужен
 spec = importlib.util.spec_from_file_location("m03", "pipeline/03_music.py"); m03 = importlib.util.module_from_spec(spec); spec.loader.exec_module(m03)
 import mastering, quality_gate as qg
 
