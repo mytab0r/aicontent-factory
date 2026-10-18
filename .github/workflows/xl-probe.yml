@@ -1,18 +1,14 @@
 name: xl-probe
-# t_b4006a6e: живая проверка XL-sft + best-of-8 CE + LoRA на ПК (RTX 5070, 12GB).
-# Ручной запуск в окне между прод-слотами daily-video (следующий 09:00 UTC):
-#   LoRA обучена прогоном PR #54 (/app/output/lora/out/final на томе ПК); здесь только подключение.
-# Порядок: скачать XL-sft (18.8GB, один раз) -> on-demand swap -> 8 кандидатов XL-sft
-# -> CE всех одним прогоном критика -> winner + blind A/B -> (опция) LoRA на одобренных.
+# t_d92f4c8f: XL-sft убит (t_b4006a6e KILL: 1417 с на кандидат) -> файл переиспользован под turbo LoRA.
+# LoRA на acestep-v15-turbo (одобренные: 3 трека A/B t_6aa41295 + CC BY эталоны refs/LICENSES.md)
+# -> слепой A/B 4 x 90 с: 2 x прод (turbo, best-of-3, без LoRA) vs 2 x turbo+LoRA best-of-3, все через quality_gate.
+# LoRA: /app/output/lora/turbo/final (XL-веса /app/output/lora/out не трогаем).
+# Доставка: base64 в лог (exfil) -> VPS -> TG-топик. Маппинг только в строке BLINDMAP.
 on:
   workflow_dispatch:
     inputs:
-      reuse:
-        description: "взять готовые варианты из /tmp/xlrun прошлого прогона (без генерации)"
-        type: boolean
-        default: true
-      canary_only:
-        description: "turbo-контроль + 1 XL кандидат (замер времени), без полных best-of-8"
+      reuse_lora:
+        description: "не обучать заново, взять /app/output/lora/turbo/final"
         type: boolean
         default: false
 concurrency:
@@ -22,173 +18,142 @@ jobs:
   run:
     runs-on: [self-hosted, pc]
     timeout-minutes: 200
+    env:
+      ACE15_ENDPOINT: http://ace-step:8001
+      GENRE: anime lofi
+      TRACK_DURATION_SEC: "90"
+      ACE15_BESTOF: "3"
+      ACE15_REF_AUDIO: /tmp/acf-ref/ref1.wav  # как прод anime lofi
+      L: /app/output/lora/turbo
     steps:
       - uses: actions/checkout@v4
 
-      - name: download xl_sft
+      - name: GPU window guard (08-12 UTC = выпуски)
         run: |
-          docker exec ace-step sh -c 'test -f /app/checkpoints/acestep-v15-xl-sft/config.json' \
-            && { echo HAVE-XL; exit 0; } || true
-          docker run --rm -v /run/desktop/mnt/host/c/dockerlocal/ace15/checkpoints:/ck \
-            -e HF_TOKEN -e HF_HOME=/tmp/hf python:3.12-slim \
-            sh -c "pip install -q --no-warn-script-location 'huggingface_hub[hf_transfer]' && \
-              python -c \"from huggingface_hub import snapshot_download; snapshot_download('ACE-Step/acestep-v15-xl-sft', local_dir='/ck/acestep-v15-xl-sft', max_workers=4)\""
-          docker exec ace-step sh -c 'test -f /app/checkpoints/acestep-v15-xl-sft/config.json'
+          h=$(date -u +%H); [ "$h" -lt 8 ] || [ "$h" -ge 12 ] || { echo "::error::08-12 UTC GPU за выпусками, сейчас ${h}h"; exit 1; }
 
-      # on-demand swap требует env на контейнере (env нельзя добавить без recreate):
-      # recreate с теми же mounts + новыми env. EOF-скрипт: старые env читаем из inspect.
-      - name: recreate ace-step with on-demand load
+      - name: install deps + ref audio
         run: |
-          docker inspect ace-step --format '{{json .Config.Env}}' | grep -q ACESTEP_ON_DEMAND_MODEL_LOAD && { echo already; exit 0; }
-          IMAGE=$(docker inspect ace-step --format '{{.Config.Image}}')
-          docker rm -f ace-step-new 2>/dev/null || true  # хвост прошлого неудачного прогона
-          docker run -d --name ace-step-new --restart unless-stopped \
-            --gpus all \
-            -e ACESTEP_MODE=api -e ACESTEP_LLM_BACKEND=pt \
-            -e ACESTEP_CONFIG_PATH=acestep-v15-turbo \
-            -e ACESTEP_CONFIG_PATH2=acestep-v15-base \
-            -e ACESTEP_LM_MODEL_PATH=acestep-5Hz-lm-1.7B \
-            -e ACESTEP_ON_DEMAND_MODEL_LOAD=true \
-            -e ACESTEP_QUEUE_WORKERS=1 -e ACESTEP_API_WORKERS=1 \
-            -e ACESTEP_API_HOST=0.0.0.0 -e ACESTEP_INIT_SERVICE=true \
-            -v /run/desktop/mnt/host/c/dockerlocal/ace15/checkpoints:/app/checkpoints \
-            -v /run/desktop/mnt/host/c/dockerlocal/ace15/output:/app/output \
-            -v /run/desktop/mnt/host/c/dockerlocal/ace15/hf:/root/.cache/huggingface \
-            "$IMAGE"
-          # сеть comfynet, чтобы ace-step:8001 резолвился с раннеров, как раньше
-          docker network connect comfynet ace-step-new || true
-          # первый старт грузит turbo+base+LM в VRAM (заняло >6 мин на 12GB) — ждём до 18 мин
-          for i in $(seq 1 72); do
-            [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step-new 2>/dev/null)" = healthy ] && break
-            sleep 15
-          done
-          [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step-new)" = healthy ] || { docker logs --tail 80 ace-step-new 2>&1 | tail -60; exit 1; }
-          docker rm -f ace-step
-          docker rename ace-step-new ace-step
-          echo "ace-step пересоздан: turbo+base слоты, XL-sft по запросу (on-demand)"
-
-      - name: install deps
-        run: |
-          set -e
-          command -v ffmpeg >/dev/null || sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          command -v ffmpeg >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg; }
           python3 -m venv /tmp/xlv
-          for i in 1 2 3 4; do  # pypi read-timeout на ПК — ретраи
-            /tmp/xlv/bin/pip -q --retries 5 --timeout 60 install gradio_client numpy && break
-            sleep 20
-          done
+          for i in 1 2 3 4; do /tmp/xlv/bin/pip -q --retries 5 --timeout 60 install gradio_client numpy && break; sleep 20; done
           /tmp/xlv/bin/python -c "import gradio_client, numpy"
-
-      # артефакты GitHub упираются в storage quota (пересчёт 6-12 ч): если результаты
-      # прошлого прогона целы на раннере (/tmp/xlrun) — скипаем дорогой gen (модель+CE),
-      # доставка владельцу: шаг exfil (base64 в лог) -> VPS.
-      # Прод-путь 03_music.main() целиком: ACE15_MODEL/LORA/BESTOF -> ace15_prepare (прогрев XL on-demand +
-      # /v1/lora/load + /v1/lora/status в лог) -> best-of-8 через quality_gate (objective + CE >= MIN_CE,
-      # max CE среди прошедших, 0 прошли = до 3 раундов) -> music_meta.json. Тот же код включит daily-video.
-      # Слепой A/B: 2 сэмпла XL+LoRA+best-of-8 и 2 сэмпла текущего прода (turbo, без LoRA, 1 кандидат).
-      # Варианты независимы: падение одного не убивает остальные (частичный A/B > никакого);
-      # stderr+stdout пишутся и в консоль (лог задания), и в /tmp/xlrun/<name>.log на случай
-      # повторного BlobNotFound при аплоаде логов раннером.
-      - name: blind A/B — XL-sft+LoRA best-of-8 (prod path) vs turbo prod
-        timeout-minutes: 150
-        env:
-          ACE15_ENDPOINT: http://ace-step:8001
-          GENRE: anime lofi
-          TRACK_DURATION_SEC: "90"
-        run: |
-          set -e
-          set -o pipefail   # if pipe|tee: код python, не tee
-          # reuse: сырые варианты прошлого прогона целы на раннере -> не генерим заново (часы GPU)
-          HAVE=$(find /tmp/xlrun -maxdepth 1 -name '*.mp3' ! -name 'versija_*' 2>/dev/null | wc -l)
-          if [ "${{ inputs.reuse }}" = true ] && [ "$HAVE" -ge 2 ]; then
-            echo "REUSE: $HAVE готовых вариантов в /tmp/xlrun"; SKIP_GEN=1
-          else
-            rm -rf /tmp/xlrun runs && mkdir -p /tmp/xlrun; SKIP_GEN=0
-          fi
-          docker exec ace-step ls -la /app/output/lora/out/final
-          gen() {  # $1 = имя, далее env прод-варианта; TO= секунд timeout (по умолч. 2700)
+          rm -rf /tmp/xlrun runs && mkdir -p /tmp/xlrun
+          # gen <имя> [env...]: прод-путь 03_music.main() (best-of-3 через quality_gate). Падение варианта не валит остальные.
+          cat > /tmp/xlrun/gen.sh <<'SH'
+          gen() {
             local name=$1; shift
-            local to=${TO:-2700}
-            local t0=$SECONDS
             d=runs/$(date -u +%Y%m%d_%H%M%S)_$name; mkdir -p "$d"
             echo '{"mood": "cozy lofi"}' > "$d/idea.json"
-            if env "$@" PYTHONUNBUFFERED=1 timeout -k 30 "$to" /tmp/xlv/bin/python -u pipeline/03_music.py 2>&1 | tee "/tmp/xlrun/$name.log"; then
-              echo "WALL $name: $((SECONDS - t0))s"; echo "$((SECONDS - t0))" > "/tmp/xlrun/$name.wall"
-              cp "$d/track.mp3" "/tmp/xlrun/$name.mp3"
-              cp "$d/music_meta.json" "/tmp/xlrun/$name.json"
+            if env "$@" PYTHONUNBUFFERED=1 timeout -k 30 1500 /tmp/xlv/bin/python -u pipeline/03_music.py 2>&1 | tee "/tmp/xlrun/$name.log"; then
+              cp "$d/track.mp3" "/tmp/xlrun/$name.mp3"; cp "$d/music_meta.json" "/tmp/xlrun/$name.json"
             else
-              echo "VARIANT-FAIL $name (лог в $name.log)" >&2
-              docker logs ace-step --since 50m 2>&1 | tail -60 || true
-              docker inspect ace-step --format "state={{.State.Status}} restarting={{.State.Restarting}} restarts={{.RestartCount}} health={{.State.Health.Status}}" || true
-              # 39095339812: после XL /v1/init воркер-зомби, следующие варианты status=0 навсегда;
-              # единственный известный сброс очереди — рестарт (restore так и делает).
-              echo "restart ace-step после $name (сброс очереди-зомби)"
-              docker restart ace-step >/dev/null
-              for i in $(seq 1 72); do [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step 2>/dev/null)" = healthy ] && break; sleep 15; done
+              echo "VARIANT-FAIL $name" >&2
             fi
             sleep 1
           }
-          XL8="ACE15_MODEL=acestep-v15-xl-sft ACE15_LORA=/app/output/lora/out/final ACE15_BESTOF=8"
-          XL1="ACE15_MODEL=acestep-v15-xl-sft ACE15_LORA=/app/output/lora/out/final ACE15_BESTOF=1"
-          if [ "$SKIP_GEN" = 0 ]; then
-            # решение 00:30 (t_b4006a6e): turbo-контроль ПЕРВЫМ, затем 1 XL-кандидат с замером
-            # времени и nvidia-smi; 1 кандидат XL >600 с на 90 с -> best-of-8 непригоден для
-            # час-микса: KILL-вердикт, полные варианты не тратим.
-            (docker exec ace-step nvidia-smi --query-gpu=name,memory.used,memory.total --format=csv || echo "nvidia-smi n/a") > /tmp/xlrun/gpu_before.txt
-            gen turbo_1 ACE15_MODEL=acestep-v15-turbo
-            TO=1500 gen xl_solo $XL1
-            WALL=$(cat /tmp/xlrun/xl_solo.wall 2>/dev/null || echo 99999)
-            (docker exec ace-step nvidia-smi --query-gpu=name,memory.used,memory.total --format=csv || echo "nvidia-smi n/a") > /tmp/xlrun/gpu_after.txt
-            if [ "${{ inputs.canary_only }}" = true ]; then
-              echo "CANARY_ONLY: только turbo_1 + xl_solo, полные варианты скипнуты"
-            elif [ "$WALL" -le 600 ]; then
-              gen xl_1 $XL8; gen xl_2 $XL8
-              curl -sf -m 300 -X POST "$ACE15_ENDPOINT/v1/lora/unload" -H 'Content-Type: application/json' -d '{}' || true
-              gen turbo_2 ACE15_MODEL=acestep-v15-turbo
-            else
-              echo "KILL-VERDICT: 1 кандидат XL (90 с, best-of-1) занял ${WALL}с > 600 с — best-of-8 XL непригоден для час-микса (решение 00:30); A/B из turbo_1 + xl_solo"
-            fi
-          fi
-          # считаем сырые варианты (versija_* создаются ниже); find, т.к. ls без совпадений + pipefail = exit
-          N=$(find /tmp/xlrun -maxdepth 1 -name '*.mp3' ! -name 'versija_*' | wc -l)
-          echo "вариантов: $N"
-          [ "$N" -ge 2 ] || { echo "::error::A/B не собран: прошло $N варианта, логи:"; cat /tmp/xlrun/*.log; exit 1; }
-          /tmp/xlv/bin/python - <<'PY'
+          SH
+          [ -s "$ACE15_REF_AUDIO" ] && exit 0
+          mkdir -p /tmp/acf-ref && python3 -m venv /tmp/acf-ref/v && /tmp/acf-ref/v/bin/pip install -q -U yt-dlp
+          /tmp/acf-ref/v/bin/yt-dlp -q -f bestaudio -o '/tmp/acf-ref/raw1.%(ext)s' https://youtu.be/CYZeAfaj3pc
+          ffmpeg -loglevel error -y -ss 30 -t 90 -i /tmp/acf-ref/raw1.* -ac 2 -ar 48000 "$ACE15_REF_AUDIO"
+
+      - name: ace-step clean (turbo, no LoRA)
+        run: |
+          docker restart ace-step >/dev/null
+          for i in $(seq 1 72); do [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step)" = healthy ] && break; sleep 10; done
+          [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step)" = healthy ]
+
+      - name: prod arm (turbo, best-of-3, no LoRA)
+        timeout-minutes: 60
+        run: |
+          set -o pipefail; . /tmp/xlrun/gen.sh
+          gen prod_1; gen prod_2
+
+      # Side-Step в образе: двухфазный train.py fixed (preprocess -> выход; затем обучение на тензорах).
+      # adamw8bit без bitsandbytes в образе падает на AdamW (лог 38995574290) — видно в логе.
+      - name: train turbo LoRA (approved only)
+        if: ${{ !inputs.reuse_lora }}
+        timeout-minutes: 90
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          docker exec ace-step sh -c "rm -rf $L && mkdir -p $L/audio"
+          # 3 одобренных A/B v4 (t_6aa41295) — ассеты пре-релиза lora-ds-t_d92f4c8f, sha256 зафиксированы в репо
+          rm -rf /tmp/tlds && mkdir -p /tmp/tlds
+          python3 - <<'PY'
+          import json, os, urllib.request
+          h = {"Authorization": f"Bearer {os.environ['GH_TOKEN']}"}
+          api = f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}"
+          rel = json.load(urllib.request.urlopen(urllib.request.Request(f"{api}/releases/tags/lora-ds-t_d92f4c8f", headers=h)))
+          for a in rel["assets"]:
+              r = urllib.request.Request(a["url"], headers={**h, "Accept": "application/octet-stream"})
+              open(f"/tmp/tlds/{a['name']}", "wb").write(urllib.request.urlopen(r).read())
+          PY
+          (cd /tmp/tlds && sha256sum -c --strict "$GITHUB_WORKSPACE/pipeline/lora_ds.sha256")
+          for f in /tmp/tlds/*.mp3; do docker cp "$f" ace-step:$L/audio/ && echo "approved: $(basename $f)"; done
+          # CC BY эталоны (refs/LICENSES.md) на томе ПК с прогона 38995574290
+          docker exec ace-step sh -c "cp /app/output/lora/audio/macleod_*.wav $L/audio/"
+          N=$(docker exec ace-step sh -c "ls $L/audio | wc -l"); echo "dataset: $N files"
+          [ "$N" -ge 13 ] || { echo "::error::датасет $N < 13 (3 A/B + 10 эталонов)"; exit 1; }
+          PY=/app/.venv/bin/python
+          docker exec ace-step sh -c "$PY -c 'import loguru'" 2>/dev/null || {
+            python3 -m pip install -q --target /tmp/pylibs loguru
+            docker exec ace-step mkdir -p /tmp/pylibs; docker cp /tmp/pylibs/. ace-step:/tmp/pylibs/; }
+          A="--checkpoint-dir /app/checkpoints --model-variant acestep-v15-turbo --base-model turbo \
+            --tensor-output $L/tensors --output-dir $L --rank 32 --optimizer-type adamw8bit --offload-encoder \
+            --batch-size 1 --gradient-accumulation 4 --epochs 20"
+          docker exec -e PYTHONPATH=/tmp/pylibs ace-step $PY train.py fixed $A --preprocess --audio-dir $L/audio --dataset-dir $L/dataset
+          printf 'y\n' | docker exec -i -e PYTHONPATH=/tmp/pylibs ace-step $PY train.py fixed $A --dataset-dir $L/tensors
+          docker exec ace-step ls -la $L/final
+
+      - name: lora arm (turbo + LoRA, best-of-3)
+        timeout-minutes: 70
+        run: |
+          set -o pipefail; . /tmp/xlrun/gen.sh
+          docker restart ace-step >/dev/null  # VRAM после обучения
+          for i in $(seq 1 72); do [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step)" = healthy ] && break; sleep 10; done
+          gen lora_1 ACE15_LORA=$L/final; gen lora_2 ACE15_LORA=$L/final
+
+      - name: blind map
+        run: |
+          N=$(find /tmp/xlrun -maxdepth 1 -name '*.mp3' ! -name 'versija_*' | wc -l); echo "вариантов: $N"
+          [ "$N" -ge 2 ] || { echo "::error::A/B не собран"; cat /tmp/xlrun/*.log; exit 1; }
+          python3 - <<'PY'
           import json, random, shutil
           from pathlib import Path
           out = Path("/tmp/xlrun")
           ok = sorted(p.stem for p in out.glob("*.mp3") if not p.name.startswith("versija"))
           random.shuffle(ok)
-          rep = {"ok": ok,
-                 "bestof": {n: json.loads((out / f"{n}.json").read_text()).get("bestof")
-                            for n in ok if (out / f"{n}.json").is_file()}}
+          rep = {}
           for i, n in enumerate(ok):
-              shutil.copy(out / f"{n}.mp3", out / f"versija_{i + 1}.mp3")
+              v = f"versija_{i + 1}"
+              shutil.copy(out / f"{n}.mp3", out / f"{v}.mp3")
+              b = json.loads((out / f"{n}.json").read_text()).get("bestof") or {}
+              c = b.get("cands", [])
+              rep[v] = {"ce_picked": round(min(c[b["picked"]]["ce"]), 2) if c else None,
+                        "cands": [{"ce_min": round(min(x["ce"]), 2), "fail": x["fail"]} for x in c]}
           (out / "ce_report.json").write_text(json.dumps(rep, ensure_ascii=False, indent=1))
-          # маппинг — только строка BLINDMAP (VPS шлёт владельцу файлы, не лог)
           print("BLINDMAP " + json.dumps({f"versija_{i + 1}": n for i, n in enumerate(ok)}))
           print(json.dumps(rep, ensure_ascii=False, indent=1))
           PY
 
-      # ace-step обязан вернуться в прод-состояние (turbo, без LoRA) — иначе daily-video молча уйдёт на XL.
-      # -m на каждый curl: без него шаг висит часами, когда API лёг (прогон 38999275258).
+      # ace-step обязан вернуться в прод (turbo, без LoRA), иначе daily-video уйдёт с LoRA.
       - name: restore prod ace-step (turbo, no LoRA)
         if: ${{ always() }}
         timeout-minutes: 15
         run: |
           curl -sf -m 120 -X POST http://ace-step:8001/v1/lora/unload -H 'Content-Type: application/json' -d '{}' || true
-          # не /v1/init (XL init висел 3x1 ч, 39017603255): рестарт сбрасывает очередь, primary = turbo
           docker restart ace-step >/dev/null
           for i in $(seq 1 60); do [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step)" = healthy ] && break; sleep 10; done
           curl -sf -m 60 http://ace-step:8001/v1/lora/status | head -c 400; echo
-          curl -sf -m 60 http://ace-step:8001/v1/models | head -c 400; echo
 
-      # Контейнеры ПК без исходящего 443 и artifact quota исчерпана -> файлы уходят base64
-      # в лог этого job'а; VPS собирает их (gh run view --job --log) и доставляет владельцу.
-      # Маппинг XL/turbo — только строка BLINDMAP (VPS её владельцу не шлёт), в ce_report только CE.
+      # Контейнеры ПК без исходящего 443, artifact quota исчерпана -> base64 в лог; VPS собирает и шлёт владельцу.
       - name: exfil to log (base64)
         if: ${{ always() }}
         run: |
-          cd /tmp/xlrun
+          cd /tmp/xlrun 2>/dev/null || exit 0
           python3 - <<'PY'
           import base64, hashlib, json
           from pathlib import Path
