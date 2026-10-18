@@ -189,6 +189,33 @@ def test_mix_segment_mastered_before_gate():
                      ("objective", "mix_00_0.mp3"), ("objective", "mix_00_1.mp3")], calls
 
 
+def test_mix_raw_restarts_ace_on_failed_task():
+    """t_ffa7ff01: stage=failed (CUDA illegal memory access) -> restart ace-step + 1 повтор; иное — наверх."""
+    import tempfile
+    d = Path(tempfile.mkdtemp())
+    calls = []
+    orig = music.generate_track_v15, music.mastering.master, music.ace_restart
+
+    def gen(prompt, sec, seed, out, ref_audio=None):
+        calls.append("gen")
+        if calls.count("gen") == 1:
+            raise RuntimeError("ACE-Step 1.5 task x failed: stage failed")
+        Path(out).write_bytes(b"x")
+    music.generate_track_v15, music.mastering.master = gen, lambda *a, **k: None
+    music.ace_restart = lambda: calls.append("restart")
+    try:
+        assert Path(music.mix_raw(d, "p", 1, None, "anime lofi")(0, 0)).exists()
+        assert calls == ["gen", "restart", "gen"], calls
+        music.generate_track_v15 = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("timeout"))
+        try:
+            music.mix_raw(d, "p", 1, None, "anime lofi")(1, 0)
+            raise AssertionError("timeout должен уйти наверх")
+        except RuntimeError as e:
+            assert "timeout" in str(e)
+    finally:
+        music.generate_track_v15, music.mastering.master, music.ace_restart = orig
+
+
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"):
