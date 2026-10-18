@@ -66,6 +66,18 @@ def test_llm_title_without_genre_word_fixed_for_guard():
         == "Neon Highway Phonk Beats to Drift to"
 
 
+def test_off_season_markers_stripped():
+    """M5: 17.10 в заголовках 🎃 ×5; с 1.11 метка Halloween устарела. Регресс: p-kkEmLGviU-подобный title в ноябре."""
+    t = "Autumn Café Window 🎃 Halloween Lofi Beats to Relax and Drift"
+    nov = idea.strip_off_season(t, date(2026, 11, 1))
+    assert "🎃" not in nov and "halloween" not in nov.lower() and "Lofi" in nov, nov
+    assert idea.strip_off_season(t, date(2026, 10, 17)) == t
+    assert "🎄" not in idea.strip_off_season("Snow Café 🎄 Lofi", date(2027, 1, 10))
+    with tempfile.TemporaryDirectory() as d:
+        p = idea.build_prompt("anime lofi", date(2026, 11, 2), Path(d))
+    assert "🎃" not in p and "halloween" not in p.lower(), "пример формулы не должен тянуть 🎃 вне сезона"
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

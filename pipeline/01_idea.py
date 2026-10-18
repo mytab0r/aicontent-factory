@@ -2,6 +2,7 @@
 """Шаг 1: через 9router (LLM) сгенерировать идею трека + метаданные YouTube."""
 import json
 import os
+import re
 import sys
 from datetime import date
 from pathlib import Path
@@ -54,7 +55,7 @@ def season_hint(today: date) -> str:
 # Заголовочная формула по жанру: guard жанра (watchdog.GENRE_IN_TITLE) матчит
 # слово жанра в заголовке выпуска — формула обязана его туда принести.
 TITLE_FORMULAS = {
-    "anime lofi": "\"[Сезонная сцена] + emoji + [use-case] Music to Study/\n    Relax/Sleep/Focus to\" — например \"Pumpkin Café on a Rainy Night 🎃 Lofi Beats to\n    Study and Relax to\". Сцена конкретная, не общее \"Anime Nights\". Без фейковых чисел длительности.",
+    "anime lofi": "\"[Сезонная сцена] + emoji + [use-case] Music to Study/\n    Relax/Sleep/Focus to\" — например \"Rainy Night Café ☕ Lofi Beats to\n    Study and Relax to\". Сцена конкретная, не общее \"Anime Nights\". Без фейковых чисел длительности.",
     "chill phonk": "\"[Сезонная сцена] + emoji + Phonk Beats to [use-case]\" — например\n    \"Neon Highway at Midnight 🌃 Phonk Beats to Drift and Focus to\". Слово Phonk обязательно\n    в заголовке. Сцена конкретная (ночная дорога/неон/город), без \"Lofi\". Без фейковых чисел длительности.",
 }
 
@@ -90,6 +91,19 @@ def fallback_idea(mood: str, state_dir: Path | None = None) -> dict:
         "tags": GENRE_TAGS.get(mood, TAGS),
         "fallback": True,
     }
+
+
+# M5 (аудит 18.10): сезонная метка вне сезона (🎃/Halloween в ноябре) = устаревший, шаблонный вид.
+# Маркер -> месяцы, когда он уместен; вне их маркер вырезается из title детерминированно (после LLM).
+SEASON_MARKERS = {"🎃": {9, 10}, "halloween": {10}, "spooky": {10}, "🎄": {11, 12}, "christmas": {11, 12},
+                  "xmas": {11, 12}, "🌸": {3, 4, 5}, "sakura": {3, 4, 5}}
+
+
+def strip_off_season(title: str, today: date) -> str:
+    for mark, months in SEASON_MARKERS.items():
+        if today.month not in months:
+            title = re.sub(re.escape(mark) + r"\s*", "", title, flags=re.I)
+    return re.sub(r"\s{2,}", " ", title).strip()
 
 
 def ensure_genre_word(title: str, mood: str) -> str:
@@ -156,7 +170,7 @@ def main() -> None:
     else:
         # Пост-проверка слова жанра (t_93ee3737): guard дублей матчит маркер жанра
         # в заголовке; если LLM его пропустил — детерминированно дописываем.
-        fixed = ensure_genre_word(idea.get("title", ""), mood)
+        fixed = ensure_genre_word(strip_off_season(idea.get("title", ""), date.today()), mood)
         if fixed != idea.get("title"):
             print(f"title без слова жанра ({mood}); исправлено: {fixed!r}"[:300])
             idea["title"] = fixed
