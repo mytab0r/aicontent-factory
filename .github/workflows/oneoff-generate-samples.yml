@@ -36,6 +36,7 @@ jobs:
             # CLI ищет компоненты по дефолтному имени q4_0; GGUF сам описывает квант
             [ -e language_model_q4_0.gguf ] || ln -s language_model_q4_k.gguf language_model_q4_0.gguf
             [ -e transformer_q4_0.gguf ] || ln -s transformer_q4_k.gguf transformer_q4_0.gguf
+            [ -e rvq_depth_decoder_bf16.gguf ] || ln -s rvq_depth_decoder_q8_0.gguf rvq_depth_decoder_bf16.gguf
             test -s language_model_q4_k.gguf || { echo "::error::LM gguf не скачан"; exit 1; }
             ls -la /w'
 

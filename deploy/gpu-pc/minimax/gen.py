@@ -16,6 +16,16 @@ PROMPTS = Path(os.environ.get("MM3_PROMPTS", "/work/prompts"))
 TIMEOUT = int(os.environ.get("MM3_TIMEOUT", "480"))
 
 OUT.mkdir(parents=True, exist_ok=True)
+
+# Preflight: базовая загрузка assets.cpp требует эти дефолтные имена (symlink'и делает weights-шаг).
+REQ = ["language_model_q4_0.gguf", "rvq_depth_decoder_bf16.gguf", "transformer_q4_0.gguf",
+       "condition_encoder.gguf", "vocoder.gguf", "config/language_model.json",
+       "tokenizer/tokenizer.json", "tokenizer/tokenizer_config.json"]
+missing = [f for f in REQ if not (Path(MODEL) / f).exists()]
+if missing:
+    print("FAIL preflight, нет файлов:", ", ".join(missing), flush=True)
+    sys.exit(2)
+
 log = (OUT / "gen_log.jsonl").open("a")
 
 specs = sorted(PROMPTS.glob("*.json"))
