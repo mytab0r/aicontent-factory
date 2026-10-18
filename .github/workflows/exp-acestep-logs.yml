@@ -1,0 +1,23 @@
+name: exp ace-step logs (t_ffa7ff01, read-only)
+on:
+  push:
+    branches: ["exp/acestep-logs"]
+permissions:
+  contents: read
+concurrency:
+  group: exp-acestep-logs
+jobs:
+  logs:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 10
+    steps:
+      - name: ace-step logs around stage=failed (18.10 18:00-18:10 UTC)
+        run: |
+          docker inspect -f 'restarts={{.RestartCount}} started={{.State.StartedAt}} oom={{.State.OOMKilled}} log={{.HostConfig.LogConfig.Type}}' ace-step
+          docker logs --since 2026-10-18T17:50:00Z --until 2026-10-18T18:10:00Z ace-step > l.txt 2>&1 || true
+          wc -l l.txt
+          grep -n -iE 'c4e38b20|4080cf2b|c1a777be|error|fail|traceback|exception|out of memory|cuda|killed' l.txt | head -150
+          echo ---- context of first failure ----
+          n=$(grep -n -iE 'c4e38b20' l.txt | head -1 | cut -d: -f1); [ -n "$n" ] && sed -n "$((n>40?n-40:1)),$((n+80))p" l.txt
+          echo ---- run 39146596352 window ----
+          docker logs --since 2026-10-18T16:52:00Z --until 2026-10-18T17:52:00Z ace-step 2>&1 | grep -iE 'error|fail|traceback|exception|memory' | sort | uniq -c | sort -rn | head -40
