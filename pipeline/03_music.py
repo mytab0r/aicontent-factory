@@ -24,6 +24,7 @@ ponytail: HF Space — бесплатный общий ресурс без SLA (
 """
 import os
 import random
+import urllib.error
 from pathlib import Path
 
 from gradio_client import Client
@@ -211,7 +212,7 @@ class _Http:
         args = []
         for k, v in body.items():
             args += ["-F", f"{k}={str(v).lower() if isinstance(v, bool) else v}"]
-        out = subprocess.run(["curl", "-sf", "-X", "POST", self.base + path,
+        out = subprocess.run(["curl", "-sf", "-m", "120", "-X", "POST", self.base + path,
                               "-F", f"{field}=@{file_path}", *args],
                              capture_output=True, text=True, timeout=600, check=True).stdout
         return json.loads(out)
@@ -234,8 +235,8 @@ def ace15_prepare(model: str | None, lora: str | None, api=None) -> dict:
         with tempfile.TemporaryDirectory() as td:
             try:
                 generate_track_v15("warmup", 10, 0, Path(td) / "w.mp3", api=api, model=model)
-            except RuntimeError as e:
-                print(f"on-demand swap не сработал ({e}); /v1/init 900 с")
+            except (RuntimeError, urllib.error.URLError) as e:
+                print(f"on-demand swap не сработал ({type(e).__name__}: {e}); /v1/init 900 с", flush=True)
                 r = api.post("/v1/init", {"model": model}, timeout=900)
                 if r.get("code") != 200 or (r.get("data") or {}).get("loaded_model") != model:
                     raise RuntimeError(f"/v1/init {model}: {str(r)[:300]}") from e
@@ -243,7 +244,7 @@ def ace15_prepare(model: str | None, lora: str | None, api=None) -> dict:
     st = json.loads(api.get("/v1/lora/status"))["data"]
     if r.get("code") != 200 or not (st.get("lora_loaded") and st.get("use_lora")):
         raise RuntimeError(f"LoRA {lora} не подключена: {str(r)[:200]} {st}")
-    print(f"ACE15 ready: model={model} lora={lora} status={st}")
+    print(f"ACE15 ready: model={model} lora={lora} status={st}", flush=True)
     return st
 
 
@@ -269,6 +270,8 @@ def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=
     deadline = time.time() + timeout_sec
     while True:
         d = api.post("/query_result", {"task_id_list": [tid]})["data"][0]
+        if d.get("status") != 0:
+            print(f"  task {tid[:8]}: status={d['status']}", flush=True)
         if d["status"] != 0:
             break
         if time.time() > deadline:

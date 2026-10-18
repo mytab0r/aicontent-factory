@@ -105,12 +105,13 @@ jobs:
             local name=$1; shift
             d=runs/$(date -u +%Y%m%d_%H%M%S)_$name; mkdir -p "$d"
             echo '{"mood": "cozy lofi"}' > "$d/idea.json"
-            if env "$@" timeout -k 30 2700 /tmp/xlv/bin/python pipeline/03_music.py 2>&1 | tee "/tmp/xlrun/$name.log"; then
+            if env "$@" PYTHONUNBUFFERED=1 timeout -k 30 2700 /tmp/xlv/bin/python -u pipeline/03_music.py 2>&1 | tee "/tmp/xlrun/$name.log"; then
               cp "$d/track.mp3" "/tmp/xlrun/$name.mp3"
               cp "$d/music_meta.json" "/tmp/xlrun/$name.json"
             else
               echo "VARIANT-FAIL $name (лог в $name.log)" >&2
-              docker logs ace-step --since 40m 2>&1 | grep -aE "On-demand|on demand|using primary|not found|Loading model|API Server" | tail -30 || true
+              docker logs ace-step --since 50m 2>&1 | tail -60 || true
+              docker inspect ace-step --format "state={{.State.Status}} restarting={{.State.Restarting}} restarts={{.RestartCount}} health={{.State.Health.Status}}" || true
             fi
             sleep 1
           }
