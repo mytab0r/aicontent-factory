@@ -9,6 +9,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
+permissions:
+  contents: read
+  actions: read
+
 jobs:
   spike:
     runs-on: [self-hosted, pc]
@@ -40,6 +44,15 @@ jobs:
             test -s language_model_q4_k.gguf || { echo "::error::LM gguf не скачан"; exit 1; }
             ls -la /w'
 
+      # GPU одна: спайк не трогает ace-step, пока идёт/ждёт выпуск (18.10 docker stop убил lofi 09:00)
+      - name: Release guard (daily-video не идёт)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          n=$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/workflows/daily-video.yml/runs?per_page=10" | python3 -c "import json,sys; print(sum(r['status'] in ('in_progress','queued','waiting','pending') for r in json.load(sys.stdin)['workflow_runs']))")
+          h=$(date -u +%H)
+          if [ "$n" != "0" ]; then echo "::error::daily-video активен ($n) — спайк не останавливает ace-step"; exit 1; fi
+          case "$h" in 08|09|10|12|13|14|16|17|18) echo "::error::окно выпуска ($h UTC) — перезапуск позже"; exit 1;; esac
       - name: ACE-Step down (освободить VRAM)
         run: docker stop ace-step
 
