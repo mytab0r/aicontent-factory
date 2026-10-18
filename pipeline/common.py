@@ -100,13 +100,17 @@ def tg_send(text: str) -> bool:
     data = {"chat_id": chat, "text": text[:4000], "disable_web_page_preview": "true"}
     if os.environ.get("TG_THREAD_ID"):
         data["message_thread_id"] = os.environ["TG_THREAD_ID"]
-    try:
-        urllib.request.urlopen(f"https://api.telegram.org/bot{token}/sendMessage",
-                               data=urllib.parse.urlencode(data).encode(), timeout=20)
-        return True
-    except Exception as e:  # не светим токен из URL
-        print(f"TG fail: {type(e).__name__}")
-        return False
+    import time
+    for attempt in range(1, 4):  # сетевой сбой (RemoteDisconnected/URLError/5xx) — 3 попытки
+        try:
+            urllib.request.urlopen(f"https://api.telegram.org/bot{token}/sendMessage",
+                                   data=urllib.parse.urlencode(data).encode(), timeout=20)
+            return True
+        except Exception as e:  # не светим токен из URL
+            print(f"TG fail ({attempt}/3): {type(e).__name__}")
+            if attempt < 3:
+                time.sleep(5 * attempt)
+    return False
 
 
 def new_run_dir() -> Path:
