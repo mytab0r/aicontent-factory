@@ -38,17 +38,22 @@ jobs:
       - name: ACE-Step down (освободить VRAM)
         run: docker stop ace-step
 
+      # DooD: bind-mount $PWD уходит на хост, где работы раннера нет — файлы только через docker cp.
       - name: Generate MiniMax (10 треков)
         if: always()
         run: |
           rm -rf spike-out && mkdir -p spike-out
-          docker run --rm --gpus all \
+          docker rm -f mm3gen >/dev/null 2>&1 || true
+          docker create --gpus all --name mm3gen \
             -e MM3_SOLVER=ab2 -e MM3_AR_CFG_FRAMES=50 -e MM3_NO_ACT_CAST=1 \
             -e MM3_DEPTH_B1=1 -e GGML_CUDA_MMVQ_MAX=4 \
             -v minimax-weights:/models:ro \
-            -v "$PWD/deploy/gpu-pc/minimax:/work:ro" \
-            -v "$PWD/spike-out:/out" \
             minimax-spike:local python3 /work/gen.py
+          docker cp deploy/gpu-pc/minimax/gen.py mm3gen:/work/gen.py
+          docker cp deploy/gpu-pc/minimax/prompts mm3gen:/work/prompts
+          docker start -a mm3gen
+          docker cp mm3gen:/out/. spike-out/
+          docker rm mm3gen
           cat spike-out/gen_log.jsonl
 
       - name: ACE-Step up (всегда, даже при падении генерации)
