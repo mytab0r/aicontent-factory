@@ -128,13 +128,16 @@ def owning_idea() -> None:
     import owning_channel as oc
     plan = oc.next_plan(STATE_DIR)
     prompt, err = oc.idea_prompt(plan), None
-    for model in MODELS:
+    # glm первым: 18.10 из 9router валидный JSON скрипта дал только он (gemini 429, cx 400, combo битый JSON)
+    for model in ["glm/glm-5.3-flash", *MODELS]:
         try:
-            resp = router_post("/chat/completions", {"model": model, "stream": False, "max_tokens": 1500,
+            # 4000: reasoning-модели тратят бюджет до ответа (при 1500 content пустой); json_object чинит битый JSON combo
+            resp = router_post("/chat/completions", {"model": model, "stream": False, "max_tokens": 4000,
+                                                     "response_format": {"type": "json_object"},
                                                      "messages": [{"role": "user", "content": prompt}]})
             idea = oc.validate_script(oc.parse_json(resp["choices"][0]["message"]["content"]))
             break
-        except (RuntimeError, ValueError, KeyError, IndexError) as e:  # JSONDecodeError ⊂ ValueError
+        except (RuntimeError, ValueError, KeyError, IndexError, AttributeError) as e:  # content=None → AttributeError
             print(f"model {model}: {e}"[:300])
             err = e
     else:
