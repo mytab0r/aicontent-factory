@@ -53,7 +53,11 @@ if REF and Path(REF).is_file():
     rows.append({"variant": "ref_clip", "seed": 0, "raw": meas(REF)})
     print("ref clip", rows[-1]["raw"], flush=True)
 # (вариант, лирика, длительность, seeds): 120 с = как сэмплы; 600 с = как прод-сегмент час-микса
-PLAN = [("prod", LYR["prod"], 120, SEEDS), ("struct", LYR["struct"], 120, SEEDS), ("prod600", LYR["prod"], 600, SEEDS[:2])]
+# BENCH_PLAN="prod600:600:22,33,44" — точечный догон без повторных генераций
+raw_plan = os.environ.get("BENCH_PLAN", "")
+if raw_plan:
+    vname, vdur, vseeds = raw_plan.split(":")
+    PLAN = [(vname, LYR["prod"], int(vdur), [int(x) for x in vseeds.split(",")])]
 for v, lyr, dur, seeds in PLAN:
     api = Lyr(os.environ["ACE15_ENDPOINT"], lyr)
     for s in seeds:
