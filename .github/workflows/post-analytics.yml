@@ -6,8 +6,6 @@ on:
   schedule:
     - cron: "0 12 * * *"
   workflow_dispatch: {}
-  push:  # первый прогон на ветке PR = реальная проверка scope + первый отчёт
-    branches: ["aicontent-factory/t_3017f17a-post-analytics"]
 
 permissions:
   contents: read
