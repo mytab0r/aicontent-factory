@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Hub-and-spoke (t_705386b0): один idea.json (хаб = скрипт Short) -> тексты/картинка для 5 площадок.
 
-  python spokes.py [run_dir]   -> <run>/spokes/{spokes.json,pin.png,x.txt,tg.txt,blog.md}
+  python spokes.py [run_dir]   -> <run>/spokes/{spokes.json,pin.png,x.txt,tg.txt,blog.md,blog_pin.md}
 
 Роли: Short = охват, Pinterest = поиск (вечнозелёный, ведёт в блог), X = охват/обсуждение,
 блог = поиск (SEO) + конверсия, TG-канал = удержание + конверсия. CTA и метка источника у каждой своя:
@@ -82,8 +82,12 @@ def append_stats(path: Path, rows, date: str) -> dict:
     return agg
 
 
+PIN_LANDING = "p"  # статья-копия для трафика с пинов: CTA с start=pin_<ниша> (статика без аналитики, utm не читается)
+
+
 def _blog_url(slug: str, platform: str) -> str:
-    return f"{BLOG_BASE}{slug}/?" + urlencode({"utm_source": PLATFORMS[platform], "utm_medium": "social",
+    path = f"{slug}/{PIN_LANDING}/" if platform == "pin" else f"{slug}/"
+    return f"{BLOG_BASE}{path}?" + urlencode({"utm_source": PLATFORMS[platform], "utm_medium": "social",
                                                 "utm_campaign": "s1"})
 
 
@@ -108,14 +112,20 @@ def build_spokes(idea: dict, niche: str, slug: str) -> dict:
     if len(meta) < 50:
         meta = _cut(f"{meta} {' '.join(says)}", 160)
     body = "\n\n".join(f"## {b.get('label', '').title() or 'Step'}\n\n{b['say']}" for b in beats)
-    blog = (f'---\ntitle: "{title}"\ndescription: "{meta}"\nslug: {slug}\ntags: {json.dumps(idea.get("tags", []))}\n---\n\n'
-            f"# {title}\n\n{hook}\n\n{body}\n\n---\n\n**[{CTA}]({funnel_url(niche, 'blog')})**\n"
-            + (f"\n*{DISCLAIMER}*\n" if DISCLAIMER else ""))
+
+    def blog_md(platform: str, front: str = "") -> str:
+        return (f'---\ntitle: "{title}"\ndescription: "{meta}"\nslug: {slug}\ntags: {json.dumps(idea.get("tags", []))}\n'
+                f"{front}---\n\n# {title}\n\n{hook}\n\n{body}\n\n---\n\n**[{CTA}]({funnel_url(niche, platform)})**\n"
+                + (f"\n*{DISCLAIMER}*\n" if DISCLAIMER else ""))
+    blog = blog_md("blog")
+    # лендинг пина: та же статья, CTA start=pin_*, вне индекса и sitemap (дубль), canonical на основную
+    pin_landing = blog_md("pin", f"permalink: /{slug}/{PIN_LANDING}/\nsitemap: false\nnoindex: true\n"
+                                 f"canonical_url: {BLOG_BASE}{slug}/\n")
     return {
         "short": {"role": "охват", "pinned_comment": f"{CTA}: {funnel_url(niche, 'yt')}"},
         "pinterest": {"role": "поиск", "title": _cut(title, 100),
                       "description": _cut(f"{hook} {' '.join(says[:3])} {tags}", 500),
-                      "link": _blog_url(slug, "pin")},
+                      "link": _blog_url(slug, "pin"), "landing_markdown": pin_landing},
         "x": {"role": "охват", "thread": thread},
         "blog": {"role": "поиск+конверсия", "slug": slug, "markdown": blog},
         "tg": {"role": "удержание+конверсия", "text": tg, "parse_mode": "HTML"},
@@ -168,6 +178,7 @@ def write_all(run_dir: Path) -> Path:
     (out / "x.txt").write_text("\n\n---\n\n".join(s["x"]["thread"]), encoding="utf-8")
     (out / "tg.txt").write_text(s["tg"]["text"], encoding="utf-8")
     (out / "blog.md").write_text(s["blog"]["markdown"], encoding="utf-8")
+    (out / "blog_pin.md").write_text(s["pinterest"]["landing_markdown"], encoding="utf-8")
     print(f"spokes -> {out}")
     return out
 
