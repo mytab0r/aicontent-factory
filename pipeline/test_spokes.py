@@ -81,6 +81,25 @@ def test_stats_csv_append():
     assert next(r for r in got if r["platform"] == "x")["kill"] == "1"
 
 
+def test_pin_origin_ends_in_pin_deeplink():
+    """Пин -> лендинг статьи -> бот: переход с Pinterest должен прийти в бота как start=pin_<ниша>,
+    иначе строка pin в stats_sources = 0 навсегда и KILL убьёт Pinterest на первом трафике (ревью run 1014)."""
+    s = sp.build_spokes(IDEA, "tarot", slug="tower-card-love")
+    link = urlparse(s["pinterest"]["link"])
+    landing = s["pinterest"]["landing_markdown"]
+    permalink = re.search(r"^permalink: (\S+)$", landing, re.M).group(1)
+    assert link.path.endswith(permalink), (link.path, permalink)  # ссылка пина = страница лендинга
+    starts = re.findall(r"start=([A-Za-z0-9_-]+)", landing)
+    assert starts == ["pin_tarot"] and sp.source_platform(starts[0]) == "pin", starts
+    assert "start=pin_" not in s["blog"]["markdown"], "основная статья остаётся blog_*"
+    assert re.search(r"^sitemap: false$", landing, re.M) and "canonical_url:" in landing, "дубль вне индекса"
+    agg = sp.by_platform([(starts[0], 50, 2), ("yt_tarot", 50, 1)])
+    assert agg["pin"]["starts"] == 50 and "pin" not in sp.kill_list(agg)
+    # канал без бота: лендинг ведёт UTM pinterest
+    o = sp.build_spokes(dict(IDEA, hook="h"), "owning", "s")["pinterest"]["landing_markdown"]
+    assert "utm_source=pinterest" in o and "t.me" not in o
+
+
 def test_no_hook_no_duplicate():
     idea = {k: v for k, v in IDEA.items() if k != "hook"}
     s = sp.build_spokes(idea, "tarot", "x")
@@ -141,7 +160,7 @@ def test_write_all():
         run = Path(td)
         (run / "idea.json").write_text(json.dumps(dict(IDEA, channel="tarot")), encoding="utf-8")
         out = sp.write_all(run)
-        for f in ("spokes.json", "pin.png", "x.txt", "tg.txt", "blog.md"):
+        for f in ("spokes.json", "pin.png", "x.txt", "tg.txt", "blog.md", "blog_pin.md"):
             assert (out / f).exists() and (out / f).stat().st_size > 0, f
 
 
@@ -152,6 +171,7 @@ if __name__ == "__main__":
     test_by_platform_and_kill_rule()
     test_stats_csv_append()
     test_cta_matches_channel()
+    test_pin_origin_ends_in_pin_deeplink()
     test_no_hook_no_duplicate()
     test_spokes_text_limits_and_cta()
     test_spokes_vary_with_content()
