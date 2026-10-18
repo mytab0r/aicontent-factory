@@ -6,7 +6,7 @@
 2) Модель-критик Meta audiobox-aesthetics, CE (предсказание «понравится ли»), в контейнере ace-step.
    Замеры: рефы ниши CE 7.07-7.91, брак base-модели 2.1-3.6.
 Запуск: quality_gate.py [track.mp3 genre] [--no-ce] [--final]; без аргументов = последний runs/*/track.mp3.
---final (шаг 04b) = тот же объективный гейт по звуку ФИНАЛЬНОГО video.mp4 (AAC после 04 assemble), без CE:
+--final (шаг 04b) = целостность mp4 (V2/V3: потоки, длительность, синхрон) + тот же объективный гейт по звуку ФИНАЛЬНОГО video.mp4 (AAC после 04 assemble), без CE:
    17.10 YouTube-копия p-kkEmLGviU дала TP +1.3..+1.9 dBTP — перекодирование добавляет пики, мерить надо то, что уходит.
 """
 import json, re, subprocess, sys, tempfile
@@ -25,6 +25,9 @@ SIL_DB, SIL_MIN, TAIL = -50, 2.0, 10.0
 # A15: интегральная громкость финального звука. YouTube нормализует к ~-14 LUFS: тише -16 = трек проигрывает
 # соседям в ленте, громче -13 = срез нормализацией + пересжатие. Эталоны: ref1 -15.1, v2 -13.9 (проходят).
 MIN_I, MAX_I = -16.0, -13.0
+# V2/V3: финальный файл цел — есть видео- и аудиопоток, длительности потоков совпадают и равны треку ±2 %.
+# 13-16.10 на канал ушли 4 ролика P0D (битая заливка) — длительность сверяется до публикации.
+DUR_TOL = 0.02
 MIN_CE = 6.5  # ниже худшего рефа ниши (7.07), сильно выше брака (<=3.6)
 
 
@@ -119,6 +122,29 @@ def ce_batch(files):
     return [[res[c] for c in clips[3 * i:3 * i + 3]] for i in range(len(files))]
 
 
+def streams(f):
+    """{codec_type: duration} + format duration из ffprobe."""
+    j = json.loads(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,duration:format=duration",
+                                   "-of", "json", str(f)], capture_output=True, text=True).stdout or "{}")
+    d = {s.get("codec_type"): float(s.get("duration") or 0) for s in j.get("streams", [])}
+    d["format"] = float(j.get("format", {}).get("duration") or 0)
+    return d
+
+
+def integrity_why(f, expect=None):
+    """V2/V3: битый/пустой файл, нет потока, рассинхрон звук/видео, длительность != треку."""
+    d = streams(f)
+    if "video" not in d or "audio" not in d:
+        return [f"нет потока: {sorted(k for k in d if k != 'format')} (нужны video+audio)"]
+    v, a = d["video"] or d["format"], d["audio"] or d["format"]
+    why = [] if v > 1 and a > 1 else [f"длительность 0/битый файл: видео {v:.1f} с, звук {a:.1f} с"]
+    if abs(v - a) > DUR_TOL * max(v, a):
+        why.append(f"рассинхрон: видео {v:.1f} с, звук {a:.1f} с")
+    if expect and abs(d["format"] - expect) > DUR_TOL * expect:
+        why.append(f"длительность {d['format']:.1f} с != трек {expect:.1f} с ±{DUR_TOL:.0%}")
+    return why
+
+
 def target(d, final):
     """--final: финальный файл после 04 assemble (то, что заливается), иначе трек после 03."""
     return d / ("video.mp4" if final else "track.mp3")
@@ -126,13 +152,18 @@ def target(d, final):
 
 def main(argv):
     args = [a for a in argv[1:] if not a.startswith("--")]
+    expect = None
     if args:
         f, genre = args[0], args[1]
     else:
         from common import latest_run_dir
         d = latest_run_dir()
         f, genre = target(d, "--final" in argv), json.loads((d / "music_meta.json").read_text(encoding="utf-8"))["genre"]
+        if (d / "track.mp3").exists():
+            expect = streams(d / "track.mp3")["format"]
     why, m = objective(f, genre)
+    if "--final" in argv:
+        why += integrity_why(f, expect)
     if "--no-ce" not in argv and "--final" not in argv:
         try:
             ces = ce_scores(f)

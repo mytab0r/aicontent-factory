@@ -72,4 +72,16 @@ with tempfile.TemporaryDirectory() as td:
                     "-ac", "2", q], check=True)
     w_q, m_q = qg.objective(q, "anime lofi")
     assert m_q["i"] < -16 and any("LUFS" in w for w in w_q), (w_q, m_q)
+# V2/V3: 13-16.10 четыре ролика P0D. Целый mp4 проходит; без видео, рассинхрон, длина != треку = FAIL.
+with tempfile.TemporaryDirectory() as td:
+    def mk(out, vd, ad, vid=True):
+        cmd = ["ffmpeg", "-loglevel", "error", "-y"] + (["-f", "lavfi", "-i", f"color=c=gray:s=64x64:r=5:d={vd}"] if vid else [])
+        cmd += ["-f", "lavfi", "-i", f"sine=f=440:d={ad}", "-ac", "2"] + (["-c:v", "libx264"] if vid else []) + ["-c:a", "aac", out]
+        subprocess.run(cmd, check=True)
+    ok, nov, desync = f"{td}/ok.mp4", f"{td}/nov.mp4", f"{td}/ds.mp4"
+    mk(ok, 10, 10); mk(nov, 0, 10, vid=False); mk(desync, 3, 10)
+    assert qg.integrity_why(ok, 10.0) == [], qg.integrity_why(ok, 10.0)
+    assert any("нет потока" in w for w in qg.integrity_why(nov)), qg.integrity_why(nov)
+    assert any("рассинхрон" in w for w in qg.integrity_why(desync)), qg.integrity_why(desync)
+    assert any("!= трек" in w for w in qg.integrity_why(ok, 900.0)), qg.integrity_why(ok, 900.0)
 print("test_quality_gate OK")
