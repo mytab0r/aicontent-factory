@@ -176,7 +176,7 @@ def collect(at):
             ctr_note = "CTR н/д: reach-отчёт YouTube ещё не сформирован (суточная выгрузка, задержка до 2 дней)"
     except Exception as e:  # noqa: BLE001 — любая ошибка reach = одна русская строка, без сырого текста
         print("reach unavailable:", type(e).__name__, e, file=sys.stderr)
-        ctr_note = "CTR н/д: reach-отчёт YouTube недоступен, разберусь и починю"
+        ctr_note = "CTR н/д: нет доступа к reach-отчёту до перевыпуска токена YouTube"
     for v in vids:
         v["retention"], v["ctr"] = ret.get(v["id"]), ctr.get(v["id"])
     return vids, ctr_note
