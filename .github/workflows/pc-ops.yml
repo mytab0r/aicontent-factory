@@ -30,7 +30,7 @@ on:
 
 jobs:
   ops:
-    runs-on: [self-hosted, pc]
+    runs-on: [self-hosted, release]
     timeout-minutes: 600
     steps:
       - uses: actions/checkout@v4
