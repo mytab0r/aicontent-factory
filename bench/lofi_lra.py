@@ -36,6 +36,13 @@ def linear(src, dst):
                  f"measured_TP={j['input_tp']}:measured_thresh={j['input_thresh']}:offset={j['target_offset']}")
 
 
+def gain(src, dst):
+    """Чистое усиление до -14 LUFS + лимитер -3 dB (без loudnorm): LRA не трогается, кроме пиков."""
+    e = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", str(src), "-af", "highpass=f=28,ebur128", "-f", "null", "-"], capture_output=True, text=True).stderr
+    i = float(re.findall(r"I:\s+(-?[\d.]+) LUFS", e)[-1])
+    ff(src, dst, f"highpass=f=28,volume={-14 - i:.2f}dB,alimiter=limit=0.708:attack=5:release=50:level=disabled")
+
+
 def meas(p):
     why, m = qg.objective(p, "anime lofi")
     return {"i": m["i"], "lra": m["lra"], "tp": m["tp"], "bands": m["bands"], "fail": why}
@@ -48,11 +55,13 @@ for v, lyr in LYR.items():
         raw = OUT / f"{v}_s{s}_raw.mp3"
         item = m03.generate_track_v15(PROMPT, 120, s, raw, api=api, ref_audio=REF)
         dyn, lin = OUT / f"{v}_s{s}_dyn.mp3", OUT / f"{v}_s{s}_lin.mp3"
-        ff(raw, dyn, mastering.LOFI_AF); linear(raw, lin)
-        r = {"variant": v, "seed": s, "bpm": item.get("bpm"), "raw": meas(raw), "dyn": meas(dyn), "lin": meas(lin)}
+        gn = OUT / f"{v}_s{s}_gain.mp3"
+        ff(raw, dyn, mastering.LOFI_AF); linear(raw, lin); gain(raw, gn)
+        r = {"variant": v, "seed": s, "bpm": item.get("bpm"), "raw": meas(raw), "dyn": meas(dyn), "lin": meas(lin), "gain": meas(gn)}
         rows.append(r)
         print(json.dumps({k: (x["lra"] if isinstance(x, dict) else x) for k, x in r.items()}), flush=True)
         (OUT / "lra.json").write_text(json.dumps(rows, ensure_ascii=False, indent=1))
-print("variant seed | LRA raw / dyn(LOFI_AF) / lin | fails(lin)")
+print("variant seed | LRA raw / dyn(LOFI_AF) / lin / gain | fails(dyn) || fails(gain)")
 for r in rows:
-    print(r["variant"], r["seed"], "|", r["raw"]["lra"], r["dyn"]["lra"], r["lin"]["lra"], "|", "; ".join(r["lin"]["fail"]) or "PASS")
+    print(r["variant"], r["seed"], "|", r["raw"]["lra"], r["dyn"]["lra"], r["lin"]["lra"], r["gain"]["lra"], "|",
+          "; ".join(r["dyn"]["fail"]) or "PASS", "||", "; ".join(r["gain"]["fail"]) or "PASS")
