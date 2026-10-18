@@ -20,6 +20,8 @@ REF = {"lofi": {"bands": [-26.3, -23.0, -29.6, -28.9, -33.2, -39.9, -40.2, -44.1
 BAND_TOL = 2.0
 BAL_TOL = 2.0
 MAX_TP = -1.0  # true peak dBTP; 17.10 YouTube-копия p-kkEmLGviU: +1.3..+1.9 = клиппинг  # (среднее 1-5 кГц) - (150-400 Гц) не хуже эталона более чем на столько
+# A6: внутренняя тишина/обрыв >= 2 с ниже -50 дБ вне хвоста (последние 10 с = штатное затухание: ref1 6.5 с, v2 3.4 с)
+SIL_DB, SIL_MIN, TAIL = -50, 2.0, 10.0
 MIN_CE = 6.5  # ниже худшего рефа ниши (7.07), сильно выше брака (<=3.6)
 
 
@@ -48,6 +50,16 @@ def judge(bands, lra, genre):
     return why
 
 
+def gaps(f):
+    """A6: [(start, dur)] тишины внутри трека; хвост-затухание и первая секунда не считаются."""
+    e = ff(f, f"silencedetect=noise={SIL_DB}dB:d={SIL_MIN}")
+    h, m, x = re.findall(r"Duration: (\d+):(\d+):([\d.]+)", e)[0]
+    dur = int(h) * 3600 + int(m) * 60 + float(x)
+    st = [float(x) for x in re.findall(r"silence_start: (-?[\d.]+)", e)]
+    en = [float(x) for x in re.findall(r"silence_end: ([\d.]+)", e)] + [dur] * len(st)
+    return [(round(a, 1), round(b - a, 1)) for a, b in zip(st, en) if a > 1.0 and b < dur - TAIL]
+
+
 def objective(f, genre):
     b = [float(re.findall(r"RMS level dB: (-?[\d.]+)", ff(f, f"highpass=f={lo},highpass=f={lo},lowpass=f={hi},lowpass=f={hi},"
          "astats=measure_overall=RMS_level:measure_perchannel=none"))[-1]) for lo, hi in BANDS]
@@ -55,7 +67,9 @@ def objective(f, genre):
     lra = float(re.findall(r"LRA:\s+([\d.]+)", e)[-1])
     tp = float(re.findall(r"Peak:\s+(-?[\d.]+|-inf)", e)[-1].replace("-inf", "-200"))
     why = judge(b, lra, genre) + ([f"true peak {tp:+.1f} dBTP > {MAX_TP}: клиппинг"] if tp > MAX_TP else [])
-    return why, {"lra": lra, "tp": tp, "bands": [round(x, 1) for x in b], "balance": round(balance(b), 1)}
+    g = gaps(f)
+    why += [f"тишина/обрыв {d} с на {a} с (< {SIL_DB} дБ)" for a, d in g]
+    return why, {"lra": lra, "tp": tp, "gaps": g, "bands": [round(x, 1) for x in b], "balance": round(balance(b), 1)}
 
 
 # как bench/aes.sh (exp/vox-insert, проверено на ПК): пакеты на C: в /app/output/aes/pkgs, torch из образа

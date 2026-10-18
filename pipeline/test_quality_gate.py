@@ -52,4 +52,15 @@ with tempfile.TemporaryDirectory() as td:
     w_v, m_v = qg.objective(v, "phonk")
     assert any("true peak" in w for w in w_v), (w_v, m_v)
     assert qg.main(["x", v, "phonk", "--final"]) == 1
+# A6: обрыв 3 с посреди трека = FAIL; штатное затухание в хвосте (ref1: тишина 6.5 с в последние 10 с) проходит
+with tempfile.TemporaryDirectory() as td:
+    gap, tail = f"{td}/gap.wav", f"{td}/tail.wav"
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=60",
+                    "-af", "volume='if(between(t,30,33),0,1)':eval=frame", "-ac", "2", gap], check=True)
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=60",
+                    "-af", "volume='if(gt(t,53.5),0,1)':eval=frame", "-ac", "2", tail], check=True)
+    g = qg.gaps(gap)
+    assert len(g) == 1 and 29.5 < g[0][0] < 30.5 and g[0][1] >= 2.5, g
+    assert any("тишина" in w for w in qg.objective(gap, "anime lofi")[0])
+    assert qg.gaps(tail) == [], qg.gaps(tail)
 print("test_quality_gate OK")
