@@ -30,8 +30,40 @@ def measure(path: str) -> dict:
 LOFI_AF = "highpass=f=28,loudnorm=I=-14:TP=-2:LRA=11"
 
 
+EQ_MAX_DB = 6.0
+EQ_PASSES = 2
+
+
+def eq_gains(measured, ref, cap=EQ_MAX_DB):
+    """t_ffa7ff01: дБ на полосу = (эталон - замер) относительно баса 60-150, минус среднее, в ±cap.
+    Среднее вычитается: общую громкость ведёт loudnorm, EQ правит только тон."""
+    d = [(r - ref[1]) - (m - measured[1]) for m, r in zip(measured, ref)]
+    mean = sum(d) / len(d)
+    return [max(-cap, min(cap, x - mean)) for x in d]
+
+
+def eq_af(gains):
+    """equalizer на полосу гейта: центр = геом. среднее, ширина = log2(hi/lo) октав."""
+    import math
+    from quality_gate import BANDS
+    return ",".join(f"equalizer=f={math.sqrt(lo * hi):.0f}:t=o:w={math.log2(hi / lo):.2f}:g={g:.2f}"
+                    for (lo, hi), g in zip(BANDS, gains))
+
+
 def master(src: str, dst: str, genre: str = "chill phonk") -> dict:
     phonk = "phonk" in genre
+    if not phonk:
+        # t_ffa7ff01: сегменты 180 с тянут в разные стороны (seed 101 мутная середина, 202 тёмный верх) —
+        # статичная EQ гейт полос не проходит (exp/lofi-eq). Мерим полосы каждого файла и тянем к REF['lofi'].
+        from quality_gate import REF, bands
+        s = src
+        for _ in range(EQ_PASSES):
+            af = f"highpass=f=28,{eq_af(eq_gains(bands(s), REF['lofi']['bands']))},loudnorm=I=-14:TP=-2:LRA=11"
+            tmp = f"{dst}.tmp.mp3"
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(s), "-af", af,
+                            "-c:a", "libmp3lame", "-b:a", "192k", tmp], check=True)
+            os.replace(tmp, dst)
+            s = dst
     af = LOFI_AF if not phonk else ("highpass=f=28,bass=g=3:f=55,equalizer=f=300:t=q:w=1.2:g=-2,"
           "treble=g=2:f=10000,"
           "acompressor=threshold=-18dB:ratio=2.5:attack=20:release=250:makeup=2,"
@@ -49,7 +81,8 @@ def master(src: str, dst: str, genre: str = "chill phonk") -> dict:
                         "-c:a", "libmp3lame", "-b:a", "192k", tmp], check=True)
         os.replace(tmp, d)
 
-    run(src, dst)
+    if phonk:
+        run(src, dst)
     m = measure(dst)
     # ponytail: экстремальная динамика (длинные паузы) ломает LRA одним проходом —
     # повторные полные проходы сходятся (LRA 15.6->6.5->2.5); 3 прохода, дальше гейт.
