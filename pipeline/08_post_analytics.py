@@ -236,7 +236,9 @@ def main() -> int:
     rows = analyse(vids, dt.datetime.now(dt.timezone.utc), window_h(os.environ.get("WINDOW_H")))
     if not rows:
         return 0  # пустое окно 48–72 ч = молчим (решение владельца 17.10)
-    tg_send(report_text(rows, ctr_note))
+    if not tg_send(report_text(rows, ctr_note)):
+        print("report NOT delivered to TG", file=sys.stderr)
+        return 1  # недоставленный отчёт = красный job, а не молчаливая потеря
     return 0
 
 

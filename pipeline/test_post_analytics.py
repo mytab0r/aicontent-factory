@@ -114,12 +114,42 @@ def test_reach_failure_keeps_retention_report():
     pa.uploads = lambda at: [dict(x) for x in vids]
     pa.metric = lambda at, ids, start, name: {"a": 40.0, "b": 30.0, "c": 50.0}
     pa.ensure_reach_job = lambda at: (_ for _ in ()).throw(RuntimeError("reach down"))
-    pa.tg_send = sent.append
+    pa.tg_send = lambda t: sent.append(t) or True
     assert pa.main() == 0
     txt = sent[-1]
     assert "удержание 40.0%" in txt          # сбой reach не валит удержание
     assert "CTR н/д" in txt
     assert "reach down" not in txt and "RuntimeError" not in txt  # сырая ошибка не в TG
+
+
+def test_undelivered_report_exits_nonzero():
+    pa.tg_send = lambda t: False             # TG так и не принял отчёт после повторов
+    assert pa.main() == 1                    # job красный, отчёт не теряется молча
+
+
+def test_tg_send_retries_then_fails():
+    import os
+    import time
+    import urllib.request
+    import common
+    calls, fail_first = [], [99]
+
+    def fake_urlopen(*a, **k):
+        calls.append(1)
+        if len(calls) <= fail_first[0]:
+            raise ConnectionResetError("RemoteDisconnected")
+
+    saved = (urllib.request.urlopen, time.sleep)
+    os.environ.update(TG_BOT_TOKEN="x", TG_CHAT_ID="1")
+    urllib.request.urlopen, time.sleep = fake_urlopen, (lambda s: None)
+    try:
+        assert common.tg_send("hi") is False and len(calls) == 3   # 3 попытки, потом False
+        calls.clear(); fail_first[0] = 1
+        assert common.tg_send("hi") is True and len(calls) == 2    # сбой, затем успех
+    finally:
+        urllib.request.urlopen, time.sleep = saved
+        for k in ("TG_BOT_TOKEN", "TG_CHAT_ID"):
+            os.environ.pop(k, None)
 
 
 if __name__ == "__main__":
