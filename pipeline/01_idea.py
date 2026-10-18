@@ -122,8 +122,33 @@ def ensure_genre_word(title: str, mood: str) -> str:
     return f"{keep} {suffix.strip()}" if keep else suffix.strip()
 
 
+def owning_idea() -> None:
+    """S1 ch1 «Economics of Owning»: скрипт Short через 9router; невалидный ответ = следующая модель.
+    ponytail: без шаблонного фолбэка (inauthentic content) — нет валидного скрипта, нет выпуска."""
+    import owning_channel as oc
+    plan = oc.next_plan(STATE_DIR)
+    prompt, err = oc.idea_prompt(plan), None
+    for model in MODELS:
+        try:
+            resp = router_post("/chat/completions", {"model": model, "stream": False, "max_tokens": 1500,
+                                                     "messages": [{"role": "user", "content": prompt}]})
+            idea = oc.validate_script(oc.parse_json(resp["choices"][0]["message"]["content"]))
+            break
+        except (RuntimeError, ValueError, KeyError, IndexError) as e:  # JSONDecodeError ⊂ ValueError
+            print(f"model {model}: {e}"[:300])
+            err = e
+    else:
+        raise SystemExit(f"нет валидного скрипта: {err}")
+    idea.update(channel="owning", topic=plan["topic"], plan=plan)
+    out = new_run_dir() / "idea.json"
+    out.write_text(json.dumps(idea, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"idea -> {out}\n{json.dumps(idea, ensure_ascii=False, indent=2)}")
+
+
 def main() -> None:
     channel = os.environ.get("CHANNEL", "lofi")
+    if channel == "owning":
+        return owning_idea()
     if channel == "dd":
         # D&D ambience канал-эксперимент (DECISIONS.md п.8): своя ротация сцен
         # и своя заголовочная формула, состояние отдельно от lofi-ротации.

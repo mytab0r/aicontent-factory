@@ -112,6 +112,21 @@ def title_with_length(title: str, duration_sec) -> str:
     return title[:100 - len(tag)].rstrip() + tag
 
 
+def build_body(idea: dict, meta: dict) -> dict:
+    if idea.get("channel") == "owning":  # S1 ch1 «Economics of Owning»: нарративный Short, Education
+        import owning_channel
+        title, desc, cat = idea["title"][:100], owning_channel.short_description(idea), "27"
+    else:
+        title = title_with_length(idea["title"], meta.get("duration"))
+        desc, cat = full_description(idea["description"], meta.get("chapters")), "10"  # Music
+    return {
+        "snippet": {"title": title, "description": desc, "defaultLanguage": "en", "defaultAudioLanguage": "en",
+                    "tags": idea.get("tags", []), "categoryId": cat},
+        # containsSyntheticMedia: пометка синтетического контента (AGENTS.md п.4)
+        "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False, "containsSyntheticMedia": True},
+    }
+
+
 def publish(run_dir: Path) -> str:
     from googleapiclient.http import MediaFileUpload
 
@@ -122,27 +137,8 @@ def publish(run_dir: Path) -> str:
 
     meta_path = run_dir / "music_meta.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
-    chaps = meta.get("chapters")
     youtube = _get_youtube_service()
-    body = {
-        "snippet": {
-            "title": title_with_length(idea["title"], meta.get("duration")),
-            "description": full_description(idea["description"], chaps),
-            "defaultLanguage": "en",
-            "defaultAudioLanguage": "en",
-            "tags": idea.get("tags", []),
-            "categoryId": "10",  # Music
-        },
-        "status": {
-            "privacyStatus": "public",
-            "selfDeclaredMadeForKids": False,
-        },
-    }
-    # YouTube API v3 (на момент реализации) помечает синтетический контент
-    # через containsSyntheticMedia в status — если поле недоступно на этом
-    # аккаунте/API-версии, запрос всё равно пройдёт без него (visual-пометка
-    # в самом видео уже вшита в 04_assemble.py, см. docs/DECISIONS.md).
-    body["status"]["containsSyntheticMedia"] = True
+    body = build_body(idea, meta)
 
     media = MediaFileUpload(str(video_path), mimetype="video/mp4", resumable=True, chunksize=1024 * 1024 * 4)
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
