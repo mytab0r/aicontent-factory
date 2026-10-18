@@ -5,8 +5,8 @@
    Тишина/LUFS/TP «кашу» не ловят: 16.10 на канал ушло LRA 1.4 при эталоне 10.9.
 2) Модель-критик Meta audiobox-aesthetics, CE (предсказание «понравится ли»), в контейнере ace-step.
    Замеры: рефы ниши CE 7.07-7.91, брак base-модели 2.1-3.6.
-Запуск: quality_gate.py [track.mp3 genre] [--no-ce] [--final]; без аргументов = последний runs/*/track.mp3.
---final (шаг 04b) = целостность mp4 (V2/V3: потоки, длительность, синхрон) + тот же объективный гейт по звуку ФИНАЛЬНОГО video.mp4 (AAC после 04 assemble), без CE:
+Запуск: quality_gate.py [track.mp3 genre] [--no-ce] [--final] [--seams=t1,t2]; без аргументов = последний runs/*/track.mp3.
+--final (шаг 04b) = целостность mp4 (V2/V3: потоки, длительность, синхрон) + тот же объективный гейт и CE по окнам/стыкам ФИНАЛЬНОГО video.mp4 (AAC после 04 assemble):
    17.10 YouTube-копия p-kkEmLGviU дала TP +1.3..+1.9 dBTP — перекодирование добавляет пики, мерить надо то, что уходит.
 """
 import json, re, subprocess, sys, tempfile
@@ -99,30 +99,139 @@ p=initialize_predictor(); fs=sorted("in/"+f for f in os.listdir("in"))
 for f,s in zip(fs,p.forward([{"path":f} for f in fs])): print(f+chr(9)+json.dumps(s))'"""
 
 
+# t_3f0f7b91 (жалоба 18.10 на p-kkEmLGviU: «первые секунды классные, потом непонятные звуки»): CE мерился по 3
+# отрывкам (10/50/90 %) = 90 с из 3374 с; сегменты 600 с разваливались к концу, стыки без кроссфейда.
+# Теперь: R1 CE по КАЖДОМУ окну 30 с; R2 дрейф median(CE после 60 с) ниже CE первых 60 с > 0.5;
+# R3 окно ±5 с у каждого стыка проходит R1, RMS слева/справа отличается <= 3 дБ. Пороги не снижать.
+WIN, DRIFT_HEAD, DRIFT_MAX, SEAM_HALF, SEAM_RMS_MAX = 30.0, 60.0, 0.5, 5.0, 3.0
+
+
+def windows(dur, win=WIN):
+    """Окна (start, length) подряд от 0; остаток < win = последнее окно, выровненное по концу."""
+    if dur <= win:
+        return [(0.0, dur)]
+    w = [(i * win, win) for i in range(int(dur // win))]
+    return w + ([(dur - win, win)] if dur - w[-1][0] - win > 1e-6 else [])
+
+
+def ce_why(wins):
+    """wins = [(start, CE)]. R1 любое окно < MIN_CE, R2 дрейф хвоста от первых 60 с > DRIFT_MAX."""
+    if not wins:
+        return ["R5 критик не вернул ни одного окна"]
+    bad = [(s, c) for s, c in wins if c < MIN_CE]
+    why = [f"R1 CE < {MIN_CE} в {len(bad)}/{len(wins)} окнах по {WIN:.0f} с, min {min(c for _, c in wins):.2f}: "
+           + ", ".join(f"{s:.0f}с={c:.2f}" for s, c in bad[:10])] if bad else []
+    head = [c for s, c in wins if s < DRIFT_HEAD]
+    tail = sorted(c for s, c in wins if s >= DRIFT_HEAD)
+    if head and tail:
+        h, t = sum(head) / len(head), (tail[(len(tail) - 1) // 2] + tail[len(tail) // 2]) / 2
+        if h - t > DRIFT_MAX + 1e-9:
+            why.append(f"R2 дрейф: median CE после {DRIFT_HEAD:.0f} с {t:.2f} ниже первых {DRIFT_HEAD:.0f} с {h:.2f} "
+                       f"на {h - t:.2f} > {DRIFT_MAX}")
+    return why
+
+
+def seam_why(seams):
+    """R3: стык = окно ±SEAM_HALF проходит R1 и RMS слева/справа отличается не больше SEAM_RMS_MAX дБ."""
+    why = []
+    for x in seams:
+        if x["ce"] < MIN_CE:
+            why.append(f"R3 стык {x['t']:.1f} с: CE {x['ce']:.2f} < {MIN_CE}")
+        if abs(x["rms_l"] - x["rms_r"]) > SEAM_RMS_MAX + 1e-9:
+            why.append(f"R3 стык {x['t']:.1f} с: RMS {x['rms_l']:.1f} -> {x['rms_r']:.1f} дБ, разрыв > {SEAM_RMS_MAX}")
+    return why
+
+
+def duration(f):
+    return float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(f)],
+                                capture_output=True, text=True).stdout)
+
+
+def cut(f, start, length, out):
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-ss", str(max(0.0, start)), "-t", str(length), "-i", str(f),
+                    "-vn", "-c:a", "pcm_s16le", str(out)], check=True)
+    return str(out)
+
+
+def rms_db(f, start, dur):
+    e = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-ss", str(max(0.0, start)), "-t", str(dur), "-i", str(f),
+                        "-vn", "-af", "astats=measure_overall=RMS_level:measure_perchannel=none", "-f", "null", "-"],
+                       capture_output=True, text=True).stderr
+    return float((re.findall(r"RMS level dB: (-?[\d.]+|-inf)", e) or ["-200"])[-1].replace("-inf", "-200"))
+
+
+def critic_clips(paths):
+    """Реальный критик: CE для каждого wav ОДНИМ прогоном audiobox в контейнере ace-step (модель грузится 1 раз)."""
+    td = tempfile.mkdtemp()
+    names = []
+    for i, p in enumerate(paths):  # имя сортируется = порядок paths (AES читает sorted listdir)
+        names.append(f"c{i:05d}.wav")
+        subprocess.run(["cp", str(p), f"{td}/{names[-1]}"], check=True)
+    subprocess.run(["docker", "exec", "ace-step", "sh", "-c", "rm -rf /app/output/qg && mkdir -p /app/output/qg"], check=True)
+    subprocess.run(["docker", "cp", f"{td}/.", "ace-step:/app/output/qg/in"], check=True)
+    out = subprocess.run(["docker", "exec", "ace-step", "sh", "-c", AES], capture_output=True, text=True, timeout=3000)
+    res = {l.split("\t")[0]: json.loads(l.split("\t")[1])["CE"] for l in out.stdout.splitlines() if "\t" in l}
+    want = ["in/" + n for n in names]
+    if sorted(res) != sorted(want):
+        raise RuntimeError(f"критик не отработал ({len(res)}/{len(want)}): {out.stdout[-300:]} {out.stderr[-600:]}")
+    return [res[n] for n in want]
+
+
+def _critic(paths, critic):
+    ce = (critic or critic_clips)(paths)  # critic_clips ищется в момент вызова (тесты подменяют)
+    if len(ce) != len(paths):
+        raise RuntimeError(f"критик вернул {len(ce)}/{len(paths)} оценок")
+    return [float(c) for c in ce]
+
+
+def window_report(f, seams=(), critic=None):
+    """CE по всем окнам WIN + окну ±SEAM_HALF и RMS по сторонам каждого стыка. Сбой критика = исключение."""
+    dur, td = duration(f), tempfile.mkdtemp()
+    ws = windows(dur)
+    clips = [cut(f, s, l, f"{td}/w{i:05d}.wav") for i, (s, l) in enumerate(ws)]
+    clips += [cut(f, t - SEAM_HALF, 2 * SEAM_HALF, f"{td}/s{i:05d}.wav") for i, t in enumerate(seams)]
+    ce = _critic(clips, critic)
+    return {"wins": [(s, round(c, 3)) for (s, _), c in zip(ws, ce)],
+            "seams": [{"t": t, "ce": round(c, 3), "rms_l": round(rms_db(f, t - SEAM_HALF, min(SEAM_HALF, t)), 2),
+                       "rms_r": round(rms_db(f, t, SEAM_HALF), 2)} for t, c in zip(seams, ce[len(ws):])]}
+
+
+def full_ce_why(f, seams=(), critic=None):
+    """R1-R3 по всему треку. R5: сбой критика не исключение, а причина FAIL (вслепую не публикуем)."""
+    try:
+        rep = window_report(f, list(seams), critic)
+    except Exception as e:
+        return [f"R5 сбой критика: {str(e)[:400]}"], {}
+    return ce_why(rep["wins"]) + seam_why(rep["seams"]), rep
+
+
+def ce_windows_batch(files, critic=None):
+    """Гейт сегмента час-микса (gated_gen/best-of): CE КАЖДОГО окна WIN каждого файла одним прогоном критика.
+    Возврат [[ce окна, ...], ...] в порядке files; min() = R1 сегмента. Ошибка критика = исключение."""
+    td, clips, n = tempfile.mkdtemp(), [], []
+    for fi, f in enumerate(files):
+        ws = windows(duration(f))
+        clips += [cut(f, s, l, f"{td}/f{fi:03d}w{i:04d}.wav") for i, (s, l) in enumerate(ws)]
+        n.append(len(ws))
+    ce, out = _critic(clips, critic), []
+    for k in n:
+        out, ce = out + [ce[:k]], ce[k:]
+    return out
+
+
 def ce_scores(f):
     return ce_batch([f])[0]
 
 
-def ce_batch(files):
-    """t_b4006a6e: CE для списка треков ОДНИМ прогоном критика (модель грузится 1 раз).
-    3 отрывка по 30 с (10/50/90 %) на трек. Возврат [[c,c,c], ...] в порядке files. Ошибка критика = FAIL."""
-    td = tempfile.mkdtemp()
-    subprocess.run(["docker", "exec", "ace-step", "sh", "-c", "rm -rf /app/output/qg && mkdir -p /app/output/qg/in"], check=True)
-    clips = []
+def ce_batch(files, critic=None):
+    """t_b4006a6e (best-of сегментов): CE 3 отрывков по 30 с (10/50/90 %) на трек одним прогоном критика.
+    Возврат [[c,c,c], ...] в порядке files. Ошибка критика = исключение (FAIL)."""
+    td, clips = tempfile.mkdtemp(), []
     for fi, f in enumerate(files):
-        dur = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(f)],
-                                   capture_output=True, text=True).stdout)
-        for i, frac in enumerate((0.1, 0.5, 0.9)):
-            p = f"{td}/t{fi:03d}c{i}.wav"  # имя сортируется = порядок files (AES читает sorted listdir)
-            subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-ss", str(max(0.0, dur * frac - 15)), "-t", "30",
-                            "-i", str(f), p], check=True)
-            subprocess.run(["docker", "cp", p, "ace-step:/app/output/qg/in/"], check=True)
-            clips.append(f"in/t{fi:03d}c{i}.wav")
-    out = subprocess.run(["docker", "exec", "ace-step", "sh", "-c", AES], capture_output=True, text=True, timeout=1500)
-    res = {l.split("\t")[0]: json.loads(l.split("\t")[1])["CE"] for l in out.stdout.splitlines() if "\t" in l}
-    if sorted(res) != sorted(clips):
-        raise RuntimeError(f"критик не отработал ({len(res)}/{len(clips)}): {out.stdout[-300:]} {out.stderr[-600:]}")
-    return [[res[c] for c in clips[3 * i:3 * i + 3]] for i in range(len(files))]
+        dur = duration(f)
+        clips += [cut(f, dur * frac - 15, 30, f"{td}/t{fi:03d}c{i}.wav") for i, frac in enumerate((0.1, 0.5, 0.9))]
+    ce = _critic(clips, critic)
+    return [ce[3 * i:3 * i + 3] for i in range(len(files))]
 
 
 def streams(f):
@@ -164,26 +273,28 @@ def target(d, final):
 
 def main(argv):
     args = [a for a in argv[1:] if not a.startswith("--")]
-    expect = None
+    expect, seams = None, []
     if args:
         f, genre = args[0], args[1]
     else:
         from common import latest_run_dir
         d = latest_run_dir()
-        f, genre = target(d, "--final" in argv), json.loads((d / "music_meta.json").read_text(encoding="utf-8"))["genre"]
+        meta = json.loads((d / "music_meta.json").read_text(encoding="utf-8"))
+        f, genre, seams = target(d, "--final" in argv), meta["genre"], meta.get("seams") or []
         if (d / "track.mp3").exists():
             expect = streams(d / "track.mp3")["format"]
+    for a in argv:
+        if a.startswith("--seams="):
+            seams = [float(x) for x in a[8:].split(",") if x]
     why, m = objective(f, genre)
     if "--final" in argv:
         why += integrity_why(f, expect) + black_why(f)
-    if "--no-ce" not in argv and "--final" not in argv:
-        try:
-            ces = ce_scores(f)
-            m["ce"] = [round(c, 2) for c in ces]
-            if min(ces) < MIN_CE:
-                why.append(f"критик audiobox: CE {min(ces):.2f} < {MIN_CE} (рефы ниши 7.1-7.9)")
-        except Exception as e:  # критик недоступен -> не публикуем вслепую
-            why.append(str(e)[:400])
+    if "--no-ce" not in argv:  # R4: окна CE/дрейф/стыки и на финальном mp4 (04b) — мерим то, что заливается
+        w, rep = full_ce_why(f, seams)
+        why += w
+        if rep:
+            ce = [c for _, c in rep["wins"]]
+            m.update(ce_min=min(ce), ce_windows=rep["wins"], seams=rep["seams"])
     print(json.dumps({"track": str(f), "genre": genre, **m, "fail": why}, ensure_ascii=False))
     for w in why:
         print(f"::error::quality gate: {w}")

@@ -92,4 +92,13 @@ with tempfile.TemporaryDirectory() as td:
         subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", vf, "-c:v", "libx264", out], check=True)
     assert qg.black_why(ok) == [] and qg.black_why(dark) == [], (qg.black_why(ok), qg.black_why(dark))
     assert any("чёрн" in w for w in qg.black_why(blk)), qg.black_why(blk)
+# t_3f0f7b91: гейт сегмента (gated_gen/best-of) берёт CE КАЖДОГО окна 30 с, а не 3 отрывка: 100 с = 4 окна
+with tempfile.TemporaryDirectory() as td:
+    a, b = f"{td}/a.wav", f"{td}/b.wav"
+    for out, d in ((a, 100), (b, 45)):
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", f"sine=f=220:d={d}", "-ac", "2", out], check=True)
+    seen = []
+    res = qg.ce_windows_batch([a, b], critic=lambda ps: seen.extend(ps) or [7.0 + i / 100 for i in range(len(ps))])
+    assert [len(x) for x in res] == [4, 2] and len(seen) == 6, (res, seen)
+    assert res[1] == [7.04, 7.05], res
 print("test_quality_gate OK")
