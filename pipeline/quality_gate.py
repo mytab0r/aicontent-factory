@@ -121,8 +121,11 @@ def ce_why(wins):
     bad = [(s, c) for s, c in wins if c < MIN_CE]
     why = [f"R1 CE < {MIN_CE} в {len(bad)}/{len(wins)} окнах по {WIN:.0f} с, min {min(c for _, c in wins):.2f}: "
            + ", ".join(f"{s:.0f}с={c:.2f}" for s, c in bad[:10])] if bad else []
-    head = [c for s, c in wins if s < DRIFT_HEAD]
-    tail = sorted(c for s, c in wins if s >= DRIFT_HEAD)
+    # R2 только по сетке WIN: окно остатка, выровненное по концу, дублирует хвост и удваивает его вес
+    # (ref1 120 с: окна 90 и 90.024 = одно и то же, дрейф 0.63 вместо 0.43). R1 видит все окна.
+    grid = [(s, c) for s, c in wins if abs(s / WIN - round(s / WIN)) < 1e-6]
+    head = [c for s, c in grid if s < DRIFT_HEAD]
+    tail = sorted(c for s, c in grid if s >= DRIFT_HEAD)
     if head and tail:
         h, t = sum(head) / len(head), (tail[(len(tail) - 1) // 2] + tail[len(tail) // 2]) / 2
         if h - t > DRIFT_MAX + 1e-9:
