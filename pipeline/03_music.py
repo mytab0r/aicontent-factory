@@ -187,6 +187,9 @@ def generate_track(prompt: str, duration_sec: int, seed: int | None = None,
 # ACE-Step 1.5 (MIT): REST API контейнера на ПК. Один вызов до 600с, LM
 # планирует структуру, тональность/темп фиксируются -> склеек нет.
 ACE15_MAX_SEC = 600
+# t_fe1fcf66: 600 с генерация ACE-Step даёт raw LRA 2.3-4.7 LU (плоско), 120 с — 6-9 LU (эталон 5.1).
+# Поэтому час-микс собирается из коротких сегментов.
+MIX_SEG_SEC = int(os.environ.get("ACE15_MIX_SEG_SEC") or 180)
 ACE15_KEYS = ["C major", "F major", "G major", "D major", "A major", "E major"]
 
 
@@ -329,7 +332,7 @@ def mix_raw(run_dir, prompt, seed, ref, genre_name):
     провала 17.10, поэтому гейт сегмента обязан мерить мастер, как cand() в best-of."""
     def raw(i, k):
         p = Path(run_dir) / f"mix_{i:02d}_{k}.mp3"
-        generate_track_v15(prompt, ACE15_MAX_SEC, seed + i * 100 + k, p, ref_audio=ref)
+        generate_track_v15(prompt, MIX_SEG_SEC, seed + i * 100 + k, p, ref_audio=ref)
         mastering.master(p, p, genre=genre_name)
         return str(p)
     return raw
@@ -484,7 +487,8 @@ def main() -> None:
             def gen_mix(i):
                 return raw(i, 0)
 
-        paths, durs = plan_mix(duration, gen_mix, _probe_sec, budget_sec=mix_budget)
+        paths, durs = plan_mix(duration, gen_mix, _probe_sec, budget_sec=mix_budget,
+                               max_tracks=-(-duration // MIX_SEG_SEC) + 2)
         concat_tracks(paths, out_path)
         chaps = chapters(durs, track_names(len(paths), seed))
         duration = int(sum(durs))
