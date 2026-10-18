@@ -46,6 +46,7 @@ jobs:
 
       # GPU одна: спайк не трогает ace-step, пока идёт/ждёт выпуск (18.10 docker stop убил lofi 09:00)
       - name: Release guard (daily-video не идёт)
+        id: guard
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -58,7 +59,8 @@ jobs:
 
       # DooD: bind-mount $PWD уходит на хост, где работы раннера нет — файлы только через docker cp.
       - name: Generate MiniMax (10 треков)
-        if: always()
+        # guard FAIL = GPU не трогаем (18.10 10:02: always() запустил MiniMax рядом с phonk)
+        if: always() && steps.guard.outcome == 'success'
         run: |
           rm -rf spike-out && mkdir -p spike-out
           docker rm -f mm3gen >/dev/null 2>&1 || true
