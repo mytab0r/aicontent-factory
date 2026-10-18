@@ -53,6 +53,10 @@ jobs:
         if: steps.guard.outputs.go == '1'
         working-directory: pipeline
         run: ../.venv/bin/python owning_channel.py render
+      - name: spokes (Pinterest/X/блог/TG из того же скрипта, t_705386b0)
+        if: steps.guard.outputs.go == '1'
+        working-directory: pipeline
+        run: ../.venv/bin/python spokes.py
       - name: 05 publish (только после sample gate)
         if: steps.guard.outputs.go == '1' && env.PUBLISH == '1'
         working-directory: pipeline
@@ -73,6 +77,7 @@ jobs:
           path: |
             runs/*/video.mp4
             runs/*/idea.json
+            runs/*/spokes/*
           retention-days: 14
       - name: cleanup token
         if: always()
