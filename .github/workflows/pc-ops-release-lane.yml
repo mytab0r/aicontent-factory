@@ -1,0 +1,49 @@
+name: pc-ops-release-lane
+# Same as pc-ops add-repo-runner but runs on the release runner lane (labels:
+# self-hosted, Linux, X64, release). Temporary: pc lane is blocked by a long
+# oneoff spike. Remove this file after gh-runner-hermes is registered.
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: "owner/repo for add-repo-runner"
+        required: true
+        type: string
+      name:
+        description: "runner suffix for add-repo-runner (gh-runner-<name>)"
+        required: true
+        type: string
+      token:
+        description: "registration token (single-use) for add-repo-runner"
+        required: true
+        type: string
+      labels:
+        description: "extra labels for add-repo-runner"
+        required: false
+        type: string
+
+jobs:
+  ops:
+    runs-on: [self-hosted, release]
+    timeout-minutes: 30
+    steps:
+      - name: add-repo-runner
+        run: |
+          set -e
+          R="${{ inputs.name }}"
+          test -n "$R" || { echo "::error::name required"; exit 1; }
+          docker rm -f "gh-runner-$R" 2>/dev/null || true
+          # config lives in this volume; without purge the old identity/labels get reused
+          docker volume rm -f "gh-runner-$R-data" 2>/dev/null || true
+          docker run -d --name "gh-runner-$R" --restart unless-stopped --cpus 4 --memory 4g \
+            -e REPO_URL="https://github.com/${{ inputs.repo }}" -e RUNNER_SCOPE=repo \
+            -e RUNNER_NAME="pc-gh-runner-$R" -e LABELS="${{ inputs.labels }}" \
+            -e RUNNER_TOKEN="${{ inputs.token }}" \
+            -e RUNNER_WORKDIR="/tmp/runner/$R" -e CONFIGURED_ACTIONS_RUNNER_FILES_DIR="/runner/data" \
+            -e DISABLE_AUTOMATIC_DEREGISTRATION=true \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "gh-runner-$R-data:/runner/data" \
+            -v "gh-runner-$R-work:/tmp/runner/$R" \
+            myoung34/github-runner:ubuntu-noble
+          docker exec "gh-runner-$R" sh -c 'f=/tmp/runner/.exec-probe; printf "#!/bin/sh\necho EXEC_OK\n" > $f && chmod +x $f && $f && rm -f $f' | grep -qx EXEC_OK || { echo "::error::workdir noexec"; exit 1; }
+          sleep 20; docker logs --tail 15 "gh-runner-$R"
