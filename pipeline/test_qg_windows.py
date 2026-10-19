@@ -142,8 +142,8 @@ def test_seam_why_boundaries():
 
 
 def test_music_helpers():
-    assert music.XFADE == 8.0
-    assert music.seam_times([100, 100, 100]) == [96.0, 188.0]
+    assert music.XFADE == 16.0  # t_ffa7ff01: шире кроссфейд — плавнее RMS-переход R3
+    assert music.seam_times([100, 100, 100]) == [92.0, 176.0]
     assert music.chapters([100, 100], ['A', 'B'], xfade=8) == ['0:00 A', '1:32 B']
     assert music.chapters([482.0, 482.0], ['A', 'B'])[1] == '8:02 B'
 
@@ -185,10 +185,10 @@ def test_seams(d):
     music.concat_tracks([str(loud), str(quiet)], str(joined))
     assert abs(dur_of(joined) - (60 + 60 - music.XFADE)) <= 0.3
     ts = music.seam_times([60.0, 60.0])
-    assert len(ts) == 1 and abs(ts[0] - 56.0) < 1e-9
+    assert len(ts) == 1 and abs(ts[0] - (60.0 - music.XFADE / 2)) < 1e-9
     fake = zcr_critic(good=7.6, bad=4.0)
     why, rep = qg.full_ce_why(str(joined), seams=ts, critic=fake)
-    assert len(rep['seams']) == 1 and abs(rep['seams'][0]['t'] - 56.0) < 1e-9
+    assert len(rep['seams']) == 1 and abs(rep['seams'][0]['t'] - (60.0 - music.XFADE / 2)) < 1e-9
     assert abs(rep['seams'][0]['rms_l'] - rep['seams'][0]['rms_r']) > qg.SEAM_RMS_MAX
     assert any('R3' in r for r in why)
     same = d / 'seam_same.wav'
