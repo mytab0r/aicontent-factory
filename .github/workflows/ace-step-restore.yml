@@ -16,7 +16,11 @@ jobs:
         timeout-minutes: 280
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: sh deploy/gpu-pc/ensure_ace_step.sh
+        run: |
+          printf '%s' "$HF_TOKEN" > /work/hermes-codex/.relay-token
+          chmod 600 /work/hermes-codex/.relay-token
+          trap 'rm -f /work/hermes-codex/.relay-token' EXIT
+          sh deploy/gpu-pc/ensure_ace_step.sh
       - name: verify from runner (comfynet)
         run: |
           getent hosts ace-step

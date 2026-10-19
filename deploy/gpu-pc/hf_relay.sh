@@ -25,6 +25,14 @@ while read -r dg size; do
   # PC resume download from HF if partial exists
   have=$(stat -c %s "$f" 2>/dev/null || echo 0)
   if [ "$have" -lt "$size" ]; then
+    # wait for blob to appear on HF (VPS uploads it), then resume-download
+    waited=0
+    while ! curl -fsSI -H "Authorization: Bearer $HF_TOKEN" "https://huggingface.co/datasets/$REPO/resolve/main/$fn" >/dev/null 2>&1; do
+      [ "$have" -gt 0 ] && [ -n "$HF_TOKEN" ] || true
+      sleep 30; waited=$((waited+30))
+      [ "$waited" -ge 10800 ] && { echo "::error::blob $fn never appeared on HF"; exit 1; }
+      echo "waiting for $fn on HF (${waited}s)"
+    done
     if [ "$have" -gt 0 ]; then
       curl -fsSL -C - -H "Authorization: Bearer $HF_TOKEN" "https://huggingface.co/datasets/$REPO/resolve/main/$fn" >> "$f" || true
     else
