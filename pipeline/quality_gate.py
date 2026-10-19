@@ -44,6 +44,11 @@ MONO_LOSS = 3.0
 # Энергия ниже 20 Гц (двойной lowpass) относительно всего трека. Замер 19.10: ref1 -33.6, ref2 -35.5, ref3 -35.1,
 # phonk v1 -27.2, v2 -31.6, v3 -25.6 (худший одобренный); брак ref1 + синус 8 Гц 0.1 = -8.4, ref1 + DC 0.05 = -10.6.
 SUB_MAX = -20.0
+# A18: скачок громкости между сегментами часового микса — зритель крутит громкость. Медиана short-term LUFS (3 с)
+# по блокам JUMP_BLOCK с (без первых 3 с и хвоста 10 с), скачок между соседними блоками > JUMP_MAX = FAIL.
+# Замер 19.10: одобренные миксы ref-style6 15 мин 1.5, ref-style4 MIX 0.8, MIX 85-95-105 1.0, voice-in-transitions 0.2.
+# Блок 30 с непригоден: ref1 внутри 2-мин трека прыгает на 8.8 (штатная динамика), 60 с сглаживает её.
+JUMP_BLOCK, JUMP_MAX = 60.0, 4.0
 MIN_CE = 6.5  # ниже худшего рефа ниши (7.07), сильно выше брака (<=3.6)
 
 
@@ -332,6 +337,16 @@ def sub_why(f):
     return [f"инфразвук/DC: энергия < 20 Гц {sub:+.1f} дБ к треку > {SUB_MAX} (съедает громкость)"] if sub > SUB_MAX else []
 
 
+def loudjump_why(f):
+    """A18: [причина] на каждый скачок медианы short-term LUFS между соседними блоками JUMP_BLOCK с > JUMP_MAX."""
+    st = [float(x) for x in re.findall(r"S:\s*(-?[\d.]+)", ff(f, "ebur128=framelog=info"))][:-1]  # шаг 0.1 с
+    st, n = st[30:max(30, len(st) - int(TAIL * 10))], int(JUMP_BLOCK * 10)
+    med = lambda a: sorted(a)[len(a) // 2]
+    blk = [med(st[i:i + n]) for i in range(0, len(st) - n + 1, n)]
+    return [f"скачок громкости {abs(b - a):.1f} LU между блоками {i * JUMP_BLOCK + 3:.0f} и {(i + 1) * JUMP_BLOCK + 3:.0f} с "
+            f"(> {JUMP_MAX})" for i, (a, b) in enumerate(zip(blk, blk[1:])) if abs(b - a) > JUMP_MAX]
+
+
 def target(d, final):
     """--final: финальный файл после 04 assemble (то, что заливается), иначе трек после 03."""
     return d / ("video.mp4" if final else "track.mp3")
@@ -355,6 +370,7 @@ def main(argv):
     why, m = objective(f, genre)
     why += stereo_why(f)  # A9
     why += sub_why(f)  # A17
+    why += loudjump_why(f)  # A18
     why += end_why(f)  # A16: только целый трек/финальный mp4, не сегменты best-of (их хвосты режет склейка)
     if "--final" in argv:
         why += integrity_why(f, expect) + black_why(f)
