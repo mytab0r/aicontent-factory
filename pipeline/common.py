@@ -100,13 +100,17 @@ def tg_send(text: str) -> bool:
     data = {"chat_id": chat, "text": text[:4000], "disable_web_page_preview": "true"}
     if os.environ.get("TG_THREAD_ID"):
         data["message_thread_id"] = os.environ["TG_THREAD_ID"]
-    try:
-        urllib.request.urlopen(f"https://api.telegram.org/bot{token}/sendMessage",
-                               data=urllib.parse.urlencode(data).encode(), timeout=20)
-        return True
-    except Exception as e:  # не светим токен из URL
-        print(f"TG fail: {type(e).__name__}")
-        return False
+    import time
+    for attempt in range(1, 4):  # сетевой сбой (RemoteDisconnected/URLError/5xx) — 3 попытки
+        try:
+            urllib.request.urlopen(f"https://api.telegram.org/bot{token}/sendMessage",
+                                   data=urllib.parse.urlencode(data).encode(), timeout=20)
+            return True
+        except Exception as e:  # не светим токен из URL
+            print(f"TG fail ({attempt}/3): {type(e).__name__}")
+            if attempt < 3:
+                time.sleep(5 * attempt)
+    return False
 
 
 def new_run_dir() -> Path:
@@ -122,3 +126,14 @@ def latest_run_dir() -> Path:
     if not runs:
         raise SystemExit("нет ни одного запуска в runs/ — сначала выполнить 01_idea.py")
     return runs[-1]
+
+
+def failed_step(steps: dict, jobs: list, workflow_text: str = "") -> str:
+    """Имя упавшего шага для TG-алерта. steps = toJSON(steps) текущей джобы (outcome известен сразу;
+    API jobs в момент алерта ещё без conclusion — run 39115022028 «не определён»). jobs = фолбэк из API.
+    id -> name берётся из текста workflow (в steps-контексте имён нет)."""
+    import re
+    names = {i: n.strip() for n, i in re.findall(r"- name: ([^\n]+)\n\s+id: (\S+)", workflow_text)}
+    bad = [names.get(i, i) for i, s in steps.items() if s.get("outcome") == "failure" and s.get("conclusion") == "failure"]
+    bad = bad or [s["name"] for j in jobs for s in j.get("steps", []) if s.get("conclusion") == "failure"]
+    return ", ".join(bad) or "не определён"

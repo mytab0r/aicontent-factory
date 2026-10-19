@@ -45,8 +45,9 @@ jobs:
             ref: ""  # phonk v1-v3 одобрены БЕЗ эталона (noref) — ref-трек не подмешивать
     # pc-acf-release: setup-uv падает EACCES (spawn uv, 16.10) — выпуск на проверенном pc-acf
     runs-on: [self-hosted, release]
-    # 16.10 run 38886770624: music 40 мин + аплоад часа >34 мин -> 75 обрезал 05 publish
-    timeout-minutes: 150
+    # 16.10 run 38886770624: music 40 мин + аплоад часа >34 мин -> 75 обрезал 05 publish.
+    # t_187762da: гейт сегментов (ACE15_BESTOF=3) до x3 генераций на сегмент -> worst ~90 мин music.
+    timeout-minutes: 240
     env:
       ROUTER_BASE_URL: https://9router.pxbt.app/v1
       ROUTER_API_KEY: ${{ secrets.ROUTER_API_KEY }}
@@ -63,6 +64,9 @@ jobs:
       # Кэш на раннере; нет файла -> 03_music генерирует без эталона.
       # phonk: пусто (noref-звук, Content ID и A/Bapproval без чужого стиля).
       ACE15_REF_AUDIO: ${{ matrix.ref }}
+      # t_187762da: best-of-N на КАЖДОМ сегменте час-микса (до 3 seed'ов, max CE среди прошедших
+      # quality_gate); 0 прошедших = сегмент выбрасывается, микс < 15 мин = FAIL. Пороги не снижены.
+      ACE15_BESTOF: "3"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -86,25 +90,29 @@ jobs:
         if: steps.guard.outputs.published != '1'
 
       - name: install deps
+        id: deps
         if: steps.guard.outputs.published != '1'
         run: |
           # apt на self-hosted раннере падал exit 100 (lock/битый dpkg) — ffmpeg уже стоит -> пропуск
           command -v ffmpeg || { sudo dpkg --configure -a || true; for i in 1 2 3; do sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg && break; sleep 20; done; }
           command -v ffmpeg
           uv venv .venv
-          uv pip install --python .venv/bin/python pillow gradio_client
+          uv pip install --python .venv/bin/python pillow gradio_client numpy
 
       - name: 01 idea
+        id: idea
         if: steps.guard.outputs.published != '1'
         working-directory: pipeline
         run: ../.venv/bin/python 01_idea.py
 
       - name: 02 cover
+        id: cover
         if: steps.guard.outputs.published != '1'
         working-directory: pipeline
         run: ../.venv/bin/python 02_cover.py
 
       - name: 03b animate cover (Wan2.2 ZeroGPU, сбой -> статика)
+        id: animate
         if: steps.guard.outputs.published != '1'
         continue-on-error: true
         timeout-minutes: 15
@@ -113,6 +121,7 @@ jobs:
 
       # 13.10: ace-step остановлен (exit 137, stop вручную/чужим процессом) -> unless-stopped не поднимает; выпуск падал бы на 03 music
       - name: ACE-Step up (start if stopped, wait health)
+        id: ace
         if: steps.guard.outputs.published != '1'
         run: |
           # 17.10: после xl-probe ace-step остался healthy, но очередь висела на XL /v1/init -> 03 music timeout 1ч.
@@ -126,6 +135,7 @@ jobs:
           echo "::error::ace-step не healthy за 10 мин"; exit 1
 
       - name: reference audio (cache)
+        id: ref
         if: steps.guard.outputs.published != '1' && env.ACE15_REF_AUDIO != ''
         continue-on-error: true
         run: |
@@ -135,6 +145,7 @@ jobs:
           ffmpeg -loglevel error -y -ss 30 -t 90 -i /tmp/acf-ref/raw1.* -ac 2 -ar 48000 "$ACE15_REF_AUDIO"
 
       - name: 03 music (ACE-Step)
+        id: music
         if: steps.guard.outputs.published != '1'
         working-directory: pipeline
         run: ../.venv/bin/python 03_music.py
@@ -142,11 +153,21 @@ jobs:
       # 16.10: на канал ушла «каша» (LRA 1.4), проверялись только тишина/LUFS. Критик: эталон жанра + audiobox CE.
       # FAIL = выпуск не публикуется (TG alert ниже); следующий слот жанра генерирует заново.
       - name: 03c quality gate (критик, FAIL = не публиковать)
+        id: qg
         if: steps.guard.outputs.published != '1'
         working-directory: pipeline
         run: python3 quality_gate.py
 
+      # t_e39908b1 (спец t_b4006a6e п.3): chroma-схожесть с треками, опубликованными за 14 дней (.state/antirepeat).
+      # FAIL -> регенерация трека (03 music + 03c) внутри шага; повтор и после неё -> exit 1, не публиковать.
+      - name: 03d anti-repeat (chroma vs 14 дней, FAIL = регенерация)
+        id: antirepeat
+        if: steps.guard.outputs.published != '1'
+        working-directory: pipeline
+        run: ../.venv/bin/python antirepeat.py
+
       - name: 04 assemble (ffmpeg)
+        id: assemble
         if: steps.guard.outputs.published != '1'
         working-directory: pipeline
         run: ../.venv/bin/python 04_assemble.py
@@ -154,11 +175,13 @@ jobs:
       # A13 (17.10): YouTube-копия p-kkEmLGviU TP +1.3..+1.9 dBTP при чистом track.mp3 — AAC добавляет пики.
       # Гейт по звуку финального video.mp4 (то, что заливается). FAIL = не публиковать.
       - name: 04b quality gate final (звук video.mp4, FAIL = не публиковать)
+        id: qgfinal
         if: steps.guard.outputs.published != '1'
         working-directory: pipeline
         run: python3 quality_gate.py --final
 
       - name: 05 publish (skips if no YouTube token secret)
+        id: publish
         if: steps.guard.outputs.published != '1'
         working-directory: pipeline
         env:
@@ -176,7 +199,15 @@ jobs:
             echo "skip: секрет YOUTUBE_TOKEN_JSON не задан, публикация отложена"
           fi
 
+      - name: 05b anti-repeat record (отпечаток опубликованного трека в .state)
+        id: arrecord
+        if: steps.guard.outputs.published != '1'
+        continue-on-error: true  # видео уже на канале; потеря отпечатка не валит выпуск
+        working-directory: pipeline
+        run: ../.venv/bin/python antirepeat.py --record
+
       - name: 07 shorts (2 x 9:16 из long-form, ссылка на него)
+        id: shorts
         if: steps.guard.outputs.published != '1'
         working-directory: pipeline
         run: |
@@ -188,6 +219,7 @@ jobs:
           fi
 
       - name: TG report (ролик + шортсы)
+        id: report
         if: steps.guard.outputs.published != '1'
         working-directory: pipeline
         env:
@@ -197,11 +229,14 @@ jobs:
         run: python3 watchdog.py --report || true
 
       - name: commit mood rotation state
+        id: commit
         if: steps.guard.outputs.published != '1'
         run: |
           git config user.name "aicontent-factory-bot"
           git config user.email "actions@users.noreply.github.com"
           git add -f .state/*_idx.txt 2>/dev/null || true  # mood + scene + fallback ротации
+          git add -f .state/titles.json 2>/dev/null || true  # M1: заголовки 14 дней против дублей сцен
+          git add -f .state/antirepeat 2>/dev/null || true  # отпечатки анти-повтора (t_e39908b1), удаления старше 14 дней тоже
           git diff --cached --quiet || git commit -m "chore: advance mood rotation [skip ci]"
           git pull --rebase -q || true
           git push
@@ -214,17 +249,19 @@ jobs:
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           TG_THREAD_ID: ${{ secrets.TG_THREAD_ID }}
           GH_TOKEN: ${{ github.token }}
+          STEPS_JSON: ${{ toJSON(steps) }}
         run: |
-          # называем упавший шаг фактом из API, а не догадкой о причине
+          # упавший шаг из steps-контекста джобы: API jobs в момент алерта ещё без conclusion («не определён», 39115022028)
           python3 - <<'PY'
           import json, os, urllib.request
-          from common import tg_send
+          from common import failed_step, tg_send, ROOT
+          wf = (ROOT / ".github/workflows/daily-video.yml").read_text(encoding="utf-8")
           api = f"{os.environ['GITHUB_API_URL']}/repos/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}/jobs"
           try:
               jobs = json.load(urllib.request.urlopen(urllib.request.Request(api, headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"]}), timeout=30))["jobs"]
-              failed = ", ".join(s["name"] for j in jobs for s in j.get("steps", []) if s.get("conclusion") == "failure") or "не определён"
-          except Exception as e:
-              failed = f"не определён ({e.__class__.__name__})"
+          except Exception:
+              jobs = []
+          failed = failed_step(json.loads(os.environ["STEPS_JSON"]), jobs, wf)
           tg_send(f"❌ daily-video (${{ matrix.genre }}) упал на шаге: {failed}. Лог: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}")
           PY
 

@@ -23,15 +23,18 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Disk gate (веса+образ ~20 GB на vhdx)
-        run: bash deploy/gpu-pc/disk_gate.sh 20 /opt/data
+        # R1/R3 t_40bfcd35: образ -> vhdx (пол D:40), веса -> bind C:\dockerlocal\minimax (пол C:30), условие free-need >= floor
+        run: bash deploy/gpu-pc/disk_gate.sh d 11 && bash deploy/gpu-pc/disk_gate.sh c 10
 
       - name: Build minimax image (audio.cpp fork, sm_120)
         run: docker build -f deploy/gpu-pc/minimax/Dockerfile -t minimax-spike:local deploy/gpu-pc/minimax
 
-      - name: Weights via disk_gate volume (audio-cpp/MiniMax-Music3-GGUF, q4_k микс ~9.2 GB)
+      - name: Weights (audio-cpp/MiniMax-Music3-GGUF, q4_k микс ~9.2 GB)
         run: |
-          docker volume create minimax-weights >/dev/null
-          docker run --rm -v minimax-weights:/w -w /w -e HF_HUB_DISABLE_TELEMETRY=1 python:3.11-slim sh -c '
+          mkdir -p /run/desktop/mnt/host/c/dockerlocal/minimax
+          W=/run/desktop/mnt/host/c/dockerlocal/minimax
+          bash deploy/gpu-pc/disk_gate.sh c 10   # R3: только если после докачки на C: останется >= 30G
+          docker run --rm -v $W:/w -w /w -e HF_HUB_DISABLE_TELEMETRY=1 python:3.11-slim sh -c '
             pip install -q "huggingface_hub>=0.34" 2>/dev/null
             # имена файлов позиционно: hf игнорирует --include при явных именах, LM-файл не качался
             hf download audio-cpp/MiniMax-Music3-GGUF language_model_q4_k.gguf transformer_q4_k.gguf \
@@ -64,12 +67,12 @@ jobs:
         run: |
           rm -rf spike-out && mkdir -p spike-out
           docker rm -f mm3gen >/dev/null 2>&1 || true
-          # minimax-out: /out переживает отмену run'а, gen.py докачивает недостающие треки.
-          docker volume create minimax-out >/dev/null 2>&1 || true
+          # R2 t_40bfcd35: /out на C:\dockerlocal\minimax-out (bind) — переживает отмену run'а, gen.py докачивает недостающие треки.
+          mkdir -p /run/desktop/mnt/host/c/dockerlocal/minimax-out
           docker create --gpus all --name mm3gen \
             -e MM3_SOLVER=ab2 -e MM3_AR_CFG_FRAMES=50 -e MM3_NO_ACT_CAST=1 \
             -e MM3_DEPTH_B1=1 -e GGML_CUDA_MMVQ_MAX=4 \
-            -v minimax-weights:/models:ro -v minimax-out:/out \
+            -v /run/desktop/mnt/host/c/dockerlocal/minimax:/models:ro -v /run/desktop/mnt/host/c/dockerlocal/minimax-out:/out \
             minimax-spike:local python3 /work/gen.py
           docker cp deploy/gpu-pc/minimax/gen.py mm3gen:/work/gen.py
           docker cp deploy/gpu-pc/minimax/prompts mm3gen:/work/prompts

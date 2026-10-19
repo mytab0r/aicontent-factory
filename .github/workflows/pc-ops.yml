@@ -2,7 +2,7 @@ name: pc-ops
 # Обслуживание GPU-стека на ПК владельца. Воркер идёт self-hosted runner'ом,
 # докер-сокет хоста доступен напрямую (gh-runner контейнер с сокетом).
 # Умеет: статус; deploy-comfyui (сборка образа + запуск с GPU + сеть runner);
-# download-models (Wan2.2 FLF2V набор ~36 GB в volume wan-models).
+# download-models (Wan2.2 FLF2V набор ~36 GB в C:\dockerlocal\wan22\models).
 on:
   workflow_dispatch:
     inputs:
@@ -123,10 +123,10 @@ jobs:
         run: |
           set -e
           docker rm -f comfyui >/dev/null 2>&1 || true
-          for v in wan-models wan-output wan-input; do docker volume create $v >/dev/null; done
+          # t_40bfcd35 R2: веса/выходы — bind на C:\dockerlocal\wan22 (не docker-том на D:)
           # YAML путей моделей нужен контейнеру при старте (CMD --extra-model-paths-config);
           # шлём содержимое через stdin — не зависим от монтирования файла
-          docker run --rm -i -v wan-models:/models alpine:3.20 \
+          docker run --rm -i -v /run/desktop/mnt/host/c/dockerlocal/wan22/models:/models alpine:3.20 \
             sh -c 'cat > /models/extra_model_paths.yaml' < deploy/gpu-pc/comfyui/extra_model_paths.yaml
           docker build -q -f deploy/gpu-pc/comfyui/Dockerfile -t comfyui-wan22:local deploy/gpu-pc/comfyui
           # сеть раннера: docker compose создаёт <project>_default; реальное имя
@@ -137,9 +137,9 @@ jobs:
             --gpus all \
             --network "$NET" \
             --network-alias comfyui \
-            -v wan-models:/models \
-            -v wan-output:/app/output \
-            -v wan-input:/app/input \
+            -v /run/desktop/mnt/host/c/dockerlocal/wan22/models:/models \
+            -v /run/desktop/mnt/host/c/dockerlocal/wan22/output:/app/output \
+            -v /run/desktop/mnt/host/c/dockerlocal/wan22/input:/app/input \
             comfyui-wan22:local
           # ждём HTTP (первый старт: импорт torch, ~1-3 мин); каждый круг — статус
           # контейнера, при смерти сразу тащим логи и падаем с диагнозом
@@ -177,9 +177,10 @@ jobs:
         timeout-minutes: 540
         run: |
           set -e
-          docker run --rm -v wan-models:/models -w /models \
+          sh deploy/gpu-pc/disk_gate.sh c 36   # R3 t_40bfcd35: Wan2.2 FLF2V набор ~36 GB на C:
+          docker run --rm -v /run/desktop/mnt/host/c/dockerlocal/wan22/models:/models -w /models \
             curlimages/curl:latest -s --version >/dev/null
-          docker run --rm -v wan-models:/models --entrypoint /bin/sh alpine:3.20 -c "
+          docker run --rm -v /run/desktop/mnt/host/c/dockerlocal/wan22/models:/models --entrypoint /bin/sh alpine:3.20 -c "
             apk add -q curl >/dev/null 2>&1
             cd /models
             mkdir -p diffusion_models loras text_encoders vae clip_vision
@@ -208,5 +209,5 @@ jobs:
             echo '=== models ==='; ls -la diffusion_models loras text_encoders vae clip_vision
           "
           # extra_model_paths.yaml в volume (stdin: монтирование файла ненадёжно)
-          docker run --rm -i -v wan-models:/models alpine:3.20 \
+          docker run --rm -i -v /run/desktop/mnt/host/c/dockerlocal/wan22/models:/models alpine:3.20 \
             sh -c 'cat > /models/extra_model_paths.yaml' < deploy/gpu-pc/comfyui/extra_model_paths.yaml

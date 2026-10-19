@@ -52,4 +52,91 @@ with tempfile.TemporaryDirectory() as td:
     w_v, m_v = qg.objective(v, "phonk")
     assert any("true peak" in w for w in w_v), (w_v, m_v)
     assert qg.main(["x", v, "phonk", "--final"]) == 1
+# A6: обрыв 3 с посреди трека = FAIL; штатное затухание в хвосте (ref1: тишина 6.5 с в последние 10 с) проходит
+with tempfile.TemporaryDirectory() as td:
+    gap, tail = f"{td}/gap.wav", f"{td}/tail.wav"
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=60",
+                    "-af", "volume='if(between(t,30,33),0,1)':eval=frame", "-ac", "2", gap], check=True)
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=60",
+                    "-af", "volume='if(gt(t,53.5),0,1)':eval=frame", "-ac", "2", tail], check=True)
+    g = qg.gaps(gap)
+    assert len(g) == 1 and 29.5 < g[0][0] < 30.5 and g[0][1] >= 2.5, g
+    assert any("тишина" in w for w in qg.objective(gap, "anime lofi")[0])
+    assert qg.gaps(tail) == [], qg.gaps(tail)
+# A15: тихий финал (-30 LUFS) = FAIL; эталоны ref1 -15.1 и v2 -13.9 LUFS проходят; громче -13 = FAIL
+assert qg.loud_why(-15.1) == [] and qg.loud_why(-13.9) == []
+assert qg.loud_why(-12.0) and qg.loud_why(-17.0)
+with tempfile.TemporaryDirectory() as td:
+    q = f"{td}/quiet.wav"
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=440:d=20", "-af", "volume=-20dB",
+                    "-ac", "2", q], check=True)
+    w_q, m_q = qg.objective(q, "anime lofi")
+    assert m_q["i"] < -16 and any("LUFS" in w for w in w_q), (w_q, m_q)
+# V2/V3: 13-16.10 четыре ролика P0D. Целый mp4 проходит; без видео, рассинхрон, длина != треку = FAIL.
+with tempfile.TemporaryDirectory() as td:
+    def mk(out, vd, ad, vid=True):
+        cmd = ["ffmpeg", "-loglevel", "error", "-y"] + (["-f", "lavfi", "-i", f"color=c=gray:s=64x64:r=5:d={vd}"] if vid else [])
+        cmd += ["-f", "lavfi", "-i", f"sine=f=440:d={ad}", "-ac", "2"] + (["-c:v", "libx264"] if vid else []) + ["-c:a", "aac", out]
+        subprocess.run(cmd, check=True)
+    ok, nov, desync = f"{td}/ok.mp4", f"{td}/nov.mp4", f"{td}/ds.mp4"
+    mk(ok, 10, 10); mk(nov, 0, 10, vid=False); mk(desync, 3, 10)
+    assert qg.integrity_why(ok, 10.0) == [], qg.integrity_why(ok, 10.0)
+    assert any("нет потока" in w for w in qg.integrity_why(nov)), qg.integrity_why(nov)
+    assert any("рассинхрон" in w for w in qg.integrity_why(desync)), qg.integrity_why(desync)
+    assert any("!= трек" in w for w in qg.integrity_why(ok, 900.0)), qg.integrity_why(ok, 900.0)
+# V1: чёрные кадры >= 2 с в финальном mp4 = FAIL; тёмная ночная сцена (обложки канала YAVG 41-88) проходит.
+with tempfile.TemporaryDirectory() as td:
+    ok, dark, blk = f"{td}/ok.mp4", f"{td}/dark.mp4", f"{td}/blk.mp4"
+    for out, vf in ((ok, "color=c=gray:s=64x64:r=5:d=10"), (dark, "color=c=0x282828:s=64x64:r=5:d=10"),
+                    (blk, "color=c=gray:s=64x64:r=5:d=10,drawbox=c=black:t=fill:enable='between(t,4,7)'")):
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", vf, "-c:v", "libx264", out], check=True)
+    assert qg.black_why(ok) == [] and qg.black_why(dark) == [], (qg.black_why(ok), qg.black_why(dark))
+    assert any("чёрн" in w for w in qg.black_why(blk)), qg.black_why(blk)
+# t_3f0f7b91: гейт сегмента (gated_gen/best-of) берёт CE КАЖДОГО окна 30 с, а не 3 отрывка: 100 с = 4 окна
+with tempfile.TemporaryDirectory() as td:
+    a, b = f"{td}/a.wav", f"{td}/b.wav"
+    for out, d in ((a, 100), (b, 45)):
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", f"sine=f=220:d={d}", "-ac", "2", out], check=True)
+    seen = []
+    res = qg.ce_windows_batch([a, b], critic=lambda ps: seen.extend(ps) or [7.0 + i / 100 for i in range(len(ps))])
+    assert [len(x) for x in res] == [4, 2] and len(seen) == 6, (res, seen)
+    assert res[1] == [7.04, 7.05], res
+# t_3f0f7b91: реальные CE эталона ref1 (критик, run 39150963005): хвостовое окно 90.024 не удваивает вес хвоста в R2
+ref1 = [(0.0, 7.548), (30.0, 7.296), (60.0, 7.191), (90.0, 6.789), (90.024, 6.767)]
+assert qg.ce_why(ref1) == [], qg.ce_why(ref1)
+assert qg.ce_why([(0, 7.5), (30, 7.5), (60, 6.9), (90, 6.9), (90.024, 6.9)])  # настоящий дрейф 0.6 ловится
+# A16 (каталог): обрыв без затухания = FAIL; трек с затуханием 3 с (как у эталонов: хвост -45 дБ к треку) проходит
+with tempfile.TemporaryDirectory() as td:
+    cut_end, faded = f"{td}/cut.wav", f"{td}/fade.wav"
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=20", "-ac", "2", cut_end], check=True)
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=20", "-af",
+                    "afade=t=out:st=17:d=3", "-ac", "2", faded], check=True)
+    assert any("резкий конец" in w for w in qg.end_why(cut_end)), qg.end_why(cut_end)
+    assert qg.end_why(faded) == [], qg.end_why(faded)
 print("test_quality_gate OK")
+
+# V3 (каталог): шортс не 9:16 / длиннее 60 с / без звука = YouTube не покажет его в ленте Shorts (уйдёт обычным роликом)
+with tempfile.TemporaryDirectory() as td:
+    def mk(out, size, d, audio=True):
+        cmd = ["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", f"color=c=gray:s={size}:r=5:d={d}"]
+        cmd += (["-f", "lavfi", "-i", f"sine=f=440:d={d}", "-c:a", "aac"] if audio else []) + ["-c:v", "libx264", "-pix_fmt", "yuv420p", out]
+        subprocess.run(cmd, check=True)
+    ok, wide, long_, mute = (f"{td}/{n}.mp4" for n in ("ok", "wide", "long", "mute"))
+    mk(ok, "108x192", 40); mk(wide, "192x108", 40); mk(long_, "108x192", 61); mk(mute, "108x192", 40, audio=False)
+    assert qg.short_why(ok) == [], qg.short_why(ok)
+    assert any("9:16" in w for w in qg.short_why(wide)), qg.short_why(wide)
+    assert any("60" in w for w in qg.short_why(long_)), qg.short_why(long_)
+    assert any("поток" in w for w in qg.short_why(mute)), qg.short_why(mute)
+print("test_quality_gate V3 short-format OK")
+
+# A9 (каталог): каналы в противофазе = в моно трек пропадает; нормальное стерео и моно-файл проходят
+with tempfile.TemporaryDirectory() as td:
+    inv, ok, mono = f"{td}/inv.wav", f"{td}/ok.wav", f"{td}/mono.wav"
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=5", "-af",
+                    "pan=stereo|c0=c0|c1=-1*c0", inv], check=True)
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=5", "-ac", "2", ok], check=True)
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=5", mono], check=True)
+    assert any("моно" in w for w in qg.stereo_why(inv)), qg.stereo_why(inv)
+    assert qg.stereo_why(ok) == [] and qg.stereo_why(mono) == [], (qg.stereo_why(ok), qg.stereo_why(mono))
+    assert qg.MONO_LOSS == 3.0
+print("test_quality_gate A9 stereo OK")

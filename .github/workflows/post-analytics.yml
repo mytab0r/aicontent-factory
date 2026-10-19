@@ -1,0 +1,35 @@
+name: post analytics 48h
+
+# 12:00 UTC: видео, опубликованные 48–72 ч назад -> удержание + CTR vs медиана канала -> TG-отчёт.
+# Ниже медианы по любой метрике = флаг «разбор» (t_3017f17a). Только stdlib, без установки пакетов.
+on:
+  schedule:
+    - cron: "0 12 * * *"
+  workflow_dispatch:
+    inputs:
+      window_h:
+        description: "окно часов 'lo,hi' (пусто = 48,72; только ручной прогон)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    runs-on: [self-hosted, release]  # ubuntu-latest: billing блокирует hosted-раннеры
+    timeout-minutes: 5
+    env:
+      YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
+      TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+      TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+      TG_THREAD_ID: ${{ secrets.TG_THREAD_ID }}
+      WINDOW_H: ${{ inputs.window_h }}  # cron: пусто -> 48,72
+    steps:
+      - uses: actions/checkout@v4
+      - name: scope probe (YouTube Analytics API реальным вызовом)
+        working-directory: pipeline
+        run: python3 08_post_analytics.py --probe
+      - name: 48h report -> TG
+        working-directory: pipeline
+        run: python3 08_post_analytics.py

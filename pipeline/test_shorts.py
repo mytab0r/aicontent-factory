@@ -79,3 +79,17 @@ assert "#phonk" not in _d_lofi and "#lofi" in _d_lofi, _d_lofi
 _d_phonk = _short_desc_for("Neon Drive 🌃 Phonk Beats to Drift")
 assert "#phonk" in _d_phonk and "#lofi" not in _d_phonk, _d_phonk
 print("test_shorts genre-hashtags OK")
+
+# ---- V5/M1 (аудит 17.10): хуки шортсов повторялись — «the vibe you need right now» x3 и
+# «put this on and forget the world» x3 за 5 дней (8 хуков по crc32 заголовка). Шаблонность = риск
+# inauthentic content. Ротация через .state/hook_idx.txt: 2 шорта/день x 14 дней = 28 разных хуков.
+import tempfile as _tf
+assert len(set(h.lower() for h in sh.HOOKS)) == len(sh.HOOKS) >= 28, len(sh.HOOKS)
+with _tf.TemporaryDirectory() as _d:
+    _used = [sh.next_hook(Path(_d)) for _ in range(28)]
+assert len(set(_used)) == 28, [h for h in _used if _used.count(h) > 1]
+assert sh.short_body(idea, "u", 1, hook="x y z")["snippet"]["title"].startswith("x y z | ")
+assert "next_hook(" in (Path(__file__).parent / "07_shorts.py").read_text(encoding="utf-8").split("def main")[1]
+print("test_shorts hook-rotation OK")
+assert "short_why(" in (Path(__file__).parent / "07_shorts.py").read_text(encoding="utf-8").split("def main")[1]
+print("test_shorts V3 gate wired OK")

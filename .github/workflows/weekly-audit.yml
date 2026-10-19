@@ -1,0 +1,39 @@
+name: weekly-audit
+# t_bb361290: еженедельный самоаудит согласованности жанр↔мастеринг↔эталон↔пороги.
+# FAIL = рассогласование настроек G1zm0; чинит не воркфлоу, а владелец/оркестратор (аудит только сообщает).
+on:
+  schedule:
+    - cron: "0 6 * * 1" # пн 06:00 UTC, до дневных слотов daily-video
+  workflow_dispatch:
+  # временно (до влива): прогон на release-раннере для проверки аудита с ветки,
+  # паттерн как у smoke-release-runner (t_3c5f3862); убрать можно после merge.
+  push:
+    branches: ['audit/g1zm0-config-consistency']
+    paths: ['.github/workflows/weekly-audit.yml']
+concurrency:
+  group: weekly-audit
+  cancel-in-progress: false
+jobs:
+  audit:
+    runs-on: [self-hosted, release]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      # ref1 = одобренный 13.10 сэмпл (120 с, LRA 10.9), из него сняты пороги quality_gate.REF['lofi'].
+      # Клип Seraphine с YouTube — это вход генератора (ACE15_REF_AUDIO), не эталон гейта: сверять с ним нельзя.
+      - name: config audit (FAIL = рассогласование)
+        working-directory: pipeline
+        run: |
+          set -o pipefail
+          # 03_music импортирует gradio_client на уровне модуля; PEP 668 -> venv (как в reference audio)
+          python3 -m venv /tmp/acf-audit-v
+          /tmp/acf-audit-v/bin/pip install -q gradio_client
+          /tmp/acf-audit-v/bin/python config_audit.py --ref ../refs/ref1_approved_1310.mp3 2>&1 | tee audit_log.txt
+      - name: upload audit log
+        if: always()
+        continue-on-error: true  # лог аудита — отладка; квота артефактов не должна валить аудит (вердикт в шаге выше)
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-log
+          path: pipeline/audit_log.txt
+          retention-days: 14

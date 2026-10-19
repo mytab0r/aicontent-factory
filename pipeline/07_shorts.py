@@ -16,7 +16,7 @@ from pathlib import Path
 
 import numpy as np
 
-from common import latest_run_dir
+from common import STATE_DIR, latest_run_dir, rotate
 
 WIN_SEC = 40.0  # цель 30-45с
 MIN_SEC = 15.0
@@ -44,6 +44,28 @@ HOOKS = [
     "the vibe you need right now",
     "put this on and forget the world",
     "when the room is quiet and the tea is warm",
+    "POV: rain on the window, deadline tomorrow",
+    "save this for your next study session",
+    "the calm before the exam",
+    "one more chapter, then sleep",
+    "POV: you finally cleaned your desk",
+    "headphones on, world off",
+    "late night, warm lamp, soft beats",
+    "your brain on a quiet sunday",
+    "this sound feels like a warm blanket",
+    "when you need 40 seconds of peace",
+    "POV: the city sleeps and you don't",
+    "for the ones still awake at 3am",
+    "slow down, you're doing fine",
+    "the background music of your focus era",
+    "coffee is cold but the vibe is warm",
+    "POV: first snow outside your window",
+    "breathe in, breathe out, keep going",
+    "the playlist that never judges you",
+    "this is what calm sounds like",
+    "a little break for your tired mind",
+    "POV: you open the window at midnight",
+    "music for the long walk home",
 ]
 
 
@@ -104,9 +126,14 @@ def render(image: Path, track: Path, start: float, end: float, out: Path) -> Non
     ], check=True)
 
 
-def short_body(idea: dict, long_url: str, n: int) -> dict:
-    # ponytail: 8 фиксированных крючков, ротация по хэшу заголовка; LLM-крючки — если CTR Shorts не вырастет
-    hook = HOOKS[(zlib.crc32(idea["title"].encode()) + n - 1) % len(HOOKS)]
+def next_hook(state_dir: Path | None = None) -> str:
+    """V5/M1: следующий крючок по кругу (.state/hook_idx.txt, коммитится CI): 30 хуков / 2 в день = без повтора 15 дней."""
+    return HOOKS[rotate("hook", len(HOOKS), state_dir or STATE_DIR)]
+
+
+def short_body(idea: dict, long_url: str, n: int, hook: str | None = None) -> dict:
+    # ponytail: 30 фиксированных крючков по кругу; LLM-крючки — если CTR Shorts не вырастет
+    hook = hook or HOOKS[(zlib.crc32(idea["title"].encode()) + n - 1) % len(HOOKS)]
     title = f"{hook} | {scene_of(idea['title'])[:45]} #Shorts"
     desc = f"Full mix: {long_url}\n\n{AI_NOTE}\n\n{hashtags_for(idea['title'])}"
     return {
@@ -134,6 +161,10 @@ def main() -> None:
     for i, (s, e) in enumerate(wins, 1):
         out = run_dir / f"short_{i}.mp4"
         render(image, track, s, e, out)
+        from quality_gate import short_why  # V3: формат проверяется до заливки, брак не грузим
+        why = short_why(out)
+        if why:
+            sys.exit("ERROR: шортс не прошёл гейт: " + "; ".join(why))
         outs.append(out)
 
     from importlib import import_module
@@ -144,7 +175,7 @@ def main() -> None:
     yt = import_module("05_publish")._get_youtube_service()
     ids = []
     for i, out in enumerate(outs, 1):
-        req = yt.videos().insert(part="snippet,status", body=short_body(idea, long_url, i),
+        req = yt.videos().insert(part="snippet,status", body=short_body(idea, long_url, i, hook=next_hook()),
                                  media_body=MediaFileUpload(str(out), mimetype="video/mp4", resumable=True))
         resp = None
         while resp is None:

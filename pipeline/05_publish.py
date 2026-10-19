@@ -99,12 +99,32 @@ def full_description(text: str, chapters=None) -> str:
 
 def title_with_length(title: str, duration_sec) -> str:
     """Ресёрч 14.10: лидеры ниши пишут длину в заголовке (Lofi Girl 1:04 ч 811k, Chill Crossing «1 Hour» 150k).
-    Метка только по фактической длине (>=55 мин), без фейковых чисел; уже есть «Hour» — не трогаем."""
-    if not duration_sec or duration_sec < 3300 or re.search(r"\bhours?\b", title, re.I):
+    M4 (аудит 17.10): метка = целые часы ФАКТИЧЕСКОЙ длины (floor), «| 1 Hour» при 56:15 = misleading metadata.
+    Неверная заявка длины из заголовка LLM вырезается; верная остаётся."""
+    h = int((duration_sec or 0) // 3600)
+    claim = re.search(r"(\d+)\s*hours?\b", title, re.I)
+    if claim and int(claim.group(1)) == h:
         return title[:100]
-    h = max(1, int(duration_sec // 3600))
+    title = re.sub(r"\s*\|?\s*\d+\s*hours?\b", "", title, flags=re.I).strip()
+    if h < 1:
+        return title[:100]
     tag = f" | {h} Hour" + ("s" if h > 1 else "")
     return title[:100 - len(tag)].rstrip() + tag
+
+
+def build_body(idea: dict, meta: dict) -> dict:
+    if idea.get("channel") == "owning":  # S1 ch1 «Economics of Owning»: нарративный Short, Education
+        import owning_channel
+        title, desc, cat = idea["title"][:100], owning_channel.short_description(idea), "27"
+    else:
+        title = title_with_length(idea["title"], meta.get("duration"))
+        desc, cat = full_description(idea["description"], meta.get("chapters")), "10"  # Music
+    return {
+        "snippet": {"title": title, "description": desc, "defaultLanguage": "en", "defaultAudioLanguage": "en",
+                    "tags": idea.get("tags", []), "categoryId": cat},
+        # containsSyntheticMedia: пометка синтетического контента (AGENTS.md п.4)
+        "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False, "containsSyntheticMedia": True},
+    }
 
 
 def publish(run_dir: Path) -> str:
@@ -117,27 +137,8 @@ def publish(run_dir: Path) -> str:
 
     meta_path = run_dir / "music_meta.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
-    chaps = meta.get("chapters")
     youtube = _get_youtube_service()
-    body = {
-        "snippet": {
-            "title": title_with_length(idea["title"], meta.get("duration")),
-            "description": full_description(idea["description"], chaps),
-            "defaultLanguage": "en",
-            "defaultAudioLanguage": "en",
-            "tags": idea.get("tags", []),
-            "categoryId": "10",  # Music
-        },
-        "status": {
-            "privacyStatus": "public",
-            "selfDeclaredMadeForKids": False,
-        },
-    }
-    # YouTube API v3 (на момент реализации) помечает синтетический контент
-    # через containsSyntheticMedia в status — если поле недоступно на этом
-    # аккаунте/API-версии, запрос всё равно пройдёт без него (visual-пометка
-    # в самом видео уже вшита в 04_assemble.py, см. docs/DECISIONS.md).
-    body["status"]["containsSyntheticMedia"] = True
+    body = build_body(idea, meta)
 
     media = MediaFileUpload(str(video_path), mimetype="video/mp4", resumable=True, chunksize=1024 * 1024 * 4)
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)

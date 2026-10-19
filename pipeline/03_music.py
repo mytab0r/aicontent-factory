@@ -24,6 +24,7 @@ ponytail: HF Space — бесплатный общий ресурс без SLA (
 """
 import os
 import random
+import urllib.error
 from pathlib import Path
 
 from gradio_client import Client
@@ -186,6 +187,9 @@ def generate_track(prompt: str, duration_sec: int, seed: int | None = None,
 # ACE-Step 1.5 (MIT): REST API контейнера на ПК. Один вызов до 600с, LM
 # планирует структуру, тональность/темп фиксируются -> склеек нет.
 ACE15_MAX_SEC = 600
+# t_fe1fcf66: 600 с генерация ACE-Step даёт raw LRA 2.3-4.7 LU (плоско), 120 с — 6-9 LU (эталон 5.1).
+# Поэтому час-микс собирается из коротких сегментов.
+MIX_SEG_SEC = int(os.environ.get("ACE15_MIX_SEG_SEC") or 180)
 ACE15_KEYS = ["C major", "F major", "G major", "D major", "A major", "E major"]
 
 
@@ -211,7 +215,7 @@ class _Http:
         args = []
         for k, v in body.items():
             args += ["-F", f"{k}={str(v).lower() if isinstance(v, bool) else v}"]
-        out = subprocess.run(["curl", "-sf", "-X", "POST", self.base + path,
+        out = subprocess.run(["curl", "-sf", "-m", "120", "-X", "POST", self.base + path,
                               "-F", f"{field}=@{file_path}", *args],
                              capture_output=True, text=True, timeout=600, check=True).stdout
         return json.loads(out)
@@ -234,8 +238,8 @@ def ace15_prepare(model: str | None, lora: str | None, api=None) -> dict:
         with tempfile.TemporaryDirectory() as td:
             try:
                 generate_track_v15("warmup", 10, 0, Path(td) / "w.mp3", api=api, model=model)
-            except RuntimeError as e:
-                print(f"on-demand swap не сработал ({e}); /v1/init 900 с")
+            except (RuntimeError, urllib.error.URLError) as e:
+                print(f"on-demand swap не сработал ({type(e).__name__}: {e}); /v1/init 900 с", flush=True)
                 r = api.post("/v1/init", {"model": model}, timeout=900)
                 if r.get("code") != 200 or (r.get("data") or {}).get("loaded_model") != model:
                     raise RuntimeError(f"/v1/init {model}: {str(r)[:300]}") from e
@@ -243,12 +247,12 @@ def ace15_prepare(model: str | None, lora: str | None, api=None) -> dict:
     st = json.loads(api.get("/v1/lora/status"))["data"]
     if r.get("code") != 200 or not (st.get("lora_loaded") and st.get("use_lora")):
         raise RuntimeError(f"LoRA {lora} не подключена: {str(r)[:200]} {st}")
-    print(f"ACE15 ready: model={model} lora={lora} status={st}")
+    print(f"ACE15 ready: model={model} lora={lora} status={st}", flush=True)
     return st
 
 
 def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=None,
-                       poll_sec: float = 5, timeout_sec: int = 3600, ref_audio=None,
+                       poll_sec: float = 5, timeout_sec: int = 2400, ref_audio=None,
                        model: str | None = None) -> dict:
     import json
     import time
@@ -267,8 +271,12 @@ def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=
     else:
         tid = api.post("/release_task", body)["data"]["task_id"]
     deadline = time.time() + timeout_sec
+    n_poll = 0
     while True:
         d = api.post("/query_result", {"task_id_list": [tid]})["data"][0]
+        n_poll += 1
+        if d.get("status") != 0 or n_poll % 24 == 0:  # 24×5 c = раз в 2 мин видно, что жив и стоит в очереди
+            print(f"  task {tid[:8]} poll#{n_poll}: status={d.get('status')} qpos={d.get('queue_position')}", flush=True)
         if d["status"] != 0:
             break
         if time.time() > deadline:
@@ -284,19 +292,100 @@ def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=
     return item
 
 
-def plan_mix(target_sec, gen, dur, budget_sec=1800, max_tracks=12, now=None):
+def gated_gen(raw, scores, objective, attempts=3, log=print):
+    """Гейт сегмента час-микса (t_187762da): качество меряется по КАЖДОМУ сегменту,
+    а не только по склейке (17.10: целый час упал на одной полосе 20-60 Гц одного трека).
+    best-of-K как PR #59: attempts кандидатов с разными seed, ОДИН батчевый прогон
+    критика на сегмент, победитель = MAX CE среди прошедших (objective + CE >= MIN_CE),
+    брак удаляется с диска; 0 из attempts = None (сегмент выкидывается, план проверяет
+    min_sec). Ошибка критика = ошибка шага: вслепую сегмент не берём."""
+    from pathlib import Path
+
+    from quality_gate import MIN_CE
+
+    def gen(i):
+        paths = [raw(i, k) for k in range(attempts)]
+        ce_list = scores(paths)  # один прогон критика на сегмент (модель грузится 1 раз)
+        if len(ce_list) != len(paths):
+            raise RuntimeError(f"критик вернул {len(ce_list)}/{len(paths)} оценок: {ce_list!r}")
+        best, fails = None, []
+        for k, (p, ce) in enumerate(zip(paths, ce_list)):
+            why = list(objective(p)) + ([f"CE {min(ce):.2f} < {MIN_CE}"] if min(ce) < MIN_CE else [])
+            log(f"сегмент {i} кандидат {k + 1}/{attempts}: CE(min)={min(ce):.2f}, "
+                + ("FAIL: " + "; ".join(why) if why else "OK"))
+            if why:
+                fails.append(why)
+                Path(p).unlink(missing_ok=True)
+            elif best is None or min(ce) > best[0]:
+                best = (min(ce), p)
+        if best is None:
+            log(f"сегмент {i}: 0 из {attempts} прошли гейт: " + "; ".join(map(str, fails)))
+            return None  # сегмент выбрасывается (план проверит min_sec)
+        return best[1]
+
+    return gen
+
+
+def ace_restart(wait_sec=600):
+    """docker restart ace-step + ожидание healthy (как шаг workflow 'ACE-Step up')."""
+    import subprocess
+    import time
+    subprocess.run(["docker", "restart", "ace-step"], check=True, capture_output=True)
+    end = time.time() + wait_sec
+    while time.time() < end:
+        st = subprocess.run(["docker", "inspect", "-f", "{{.State.Health.Status}}", "ace-step"],
+                            capture_output=True, text=True).stdout.strip()
+        if st == "healthy":
+            return
+        time.sleep(6)
+    raise RuntimeError("ace-step не healthy после рестарта")
+
+
+def mix_raw(run_dir, prompt, seed, ref, genre_name):
+    """Кандидат сегмента час-микса, отмастеренный как прод ДО гейта (ревью t_187762da):
+    LOFI_AF (highpass 28 + loudnorm LRA=11) меняет полосу 20-60 Гц и LRA — ровно метрики
+    провала 17.10, поэтому гейт сегмента обязан мерить мастер, как cand() в best-of."""
+    def raw(i, k):
+        p = Path(run_dir) / f"mix_{i:02d}_{k}.mp3"
+        try:
+            generate_track_v15(prompt, MIX_SEG_SEC, seed + i * 100 + k, p, ref_audio=ref)
+        except RuntimeError as e:
+            # t_ffa7ff01: stage=failed = CUDA illegal memory access в LM (лог ace-step 18.10, run 39154188022);
+            # контекст CUDA испорчен -> все следующие задачи падают за секунды. Рестарт + 1 повтор.
+            if "failed" not in str(e):
+                raise
+            print(f"сегмент {i}/{k}: {str(e)[:160]} -> docker restart ace-step, повтор", flush=True)
+            ace_restart()
+            generate_track_v15(prompt, MIX_SEG_SEC, seed + i * 100 + k, p, ref_audio=ref)
+        mastering.master(p, p, genre=genre_name)
+        return str(p)
+    return raw
+
+
+def plan_mix(target_sec, gen, dur, budget_sec=1800, max_tracks=12, now=None, min_sec=900,
+             max_drops=3):
     """Час-микс из цельных треков 1.5 (модель отдаёт ~482 с вместо 600 — считаем по факту).
-    Стоп: набрали target, max_tracks, или следующий трек не влезет в бюджет времени шага."""
+    Стоп: набрали target, max_tracks, следующий трек не влезает в бюджет времени шага,
+    или max_drops сегментов подряд выбраковал гейт (None). Уже набранное не трогаем.
+    Итог < min_sec (15 мин) после выбраковки = ошибка шага, а не короткий выпуск."""
     import time
     now = now or time.monotonic
-    start, paths, durs = now(), [], []
-    while sum(durs) < target_sec and len(paths) < max_tracks:
-        p = gen(len(paths))
+    start, paths, durs, i, drops = now(), [], [], 0, 0
+    while sum(durs) < target_sec and len(paths) < max_tracks and drops < max_drops:
+        p = gen(i)
+        i += 1
+        if p is None:
+            drops += 1  # сегмент выбракован: микс дозаполняют другие, порог проверится в конце
+            continue
+        drops = 0
         paths.append(p)
         durs.append(dur(p))
         elapsed = now() - start
         if elapsed + elapsed / len(paths) > budget_sec:
             break
+    if sum(durs) < min_sec:
+        raise RuntimeError(f"микс {int(sum(durs))} с < {min_sec} с (15 мин) после выбраковки "
+                           f"сегментов: {len(paths)} трек(ов) — выпуск не состоялся")
     return paths, durs
 
 
@@ -306,12 +395,12 @@ def _ts(sec: float) -> str:
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
 
 
-def chapters(durs, names) -> list[str]:
-    """Главы YouTube: первая 0:00, далее накопленное время начала каждого трека."""
+def chapters(durs, names, xfade=0.0) -> list[str]:
+    """Главы YouTube: первая 0:00, далее начало каждого трека (каждый стык съедает xfade с)."""
     out, t = [], 0.0
     for d, n in zip(durs, names):
         out.append(f"{_ts(t)} {n}")
-        t += d
+        t += d - xfade
     return out
 
 
@@ -347,26 +436,104 @@ def chunk_plan(total_sec: int, max_chunk_sec: int = 240) -> list[int]:
     return chunks
 
 
-def concat_tracks(paths: list[str], out_path) -> None:
-    """Склеивает несколько mp3 в один файл через ffmpeg concat demuxer."""
+XFADE = 16.0  # t_3f0f7b91, t_ffa7ff01: стыки сегментов через acrossfade (шире — плавнее RMS-переход R3), не встык
+
+
+def seam_times(durs, xfade=XFADE) -> list[float]:
+    """Центры кроссфейдов в склейке concat_tracks: их проверяет quality_gate R3 (окно ±5 с, RMS)."""
+    return [sum(durs[:i]) - i * xfade + xfade / 2 for i in range(1, len(durs))]
+
+
+def edge_rms(path, side, sec=5.0) -> float:
+    """RMS дБ края сегмента: side='l' начало, 'r' конец (окно sec, как SEAM_HALF гейта R3)."""
+    import re
+    import subprocess
+    dur = _probe_sec(path)
+    start = max(0.0, dur - sec) if side == "r" else 0.0
+    out = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-ss", str(start), "-t", str(sec), "-i", str(path),
+                          "-af", "astats=measure_overall=RMS_level:measure_perchannel=none", "-f", "null", "-"],
+                         capture_output=True, text=True).stderr
+    return float(re.findall(r"RMS level dB: (-?[\d.]+|-inf)", out)[-1].replace("-inf", "-120"))
+
+
+def edge_match(paths, max_gain=6.0, log=print):
+    """t_ffa7ff01: acrossfade сглаживает кривые, но не громкость материала: сегмент с тихим хвостом
+    и следующий с громким началом давали R3-скачки RMS 4-5 дБ (run 39155227095, 4 стыка из 8).
+    Левый край сегмента i подгоняется константным gain к правому краю i-1, клэмп ±max_gain на проход;
+    3 прохода: gain копится (клэмп на проход, как у adaptive EQ)."""
+    import os
+    import subprocess
+    gains = [0.0]
+    for i in range(1, len(paths)):
+        tot = 0.0
+        for _ in range(3):
+            g = max(-max_gain, min(max_gain, edge_rms(paths[i - 1], "r") - edge_rms(paths[i], "l")))
+            if abs(g) > 0.1:
+                tmp = f"{paths[i]}.g.mp3"
+                subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", paths[i], "-af", f"volume={g:.2f}dB",
+                                "-c:a", "libmp3lame", "-b:a", "192k", tmp], check=True)
+                os.replace(tmp, paths[i])
+                tot += g
+        gains.append(tot)
+        log(f"edge_match {i}: суммарный gain {tot:+.2f} дБ")
+    return gains
+
+
+def trim_fade_tails(paths, max_sec=20.0, floor_db=6.0, log=print):
+    """t_ffa7ff01 (run 39170008194): ACE-Step фейдит конец каждого сегмента; после склейки этот
+    хвост-затухание остаётся в середине трека и даёт R3-скачок (тихий хвост -> громкое начало,
+    loudnorm не вытягивает 5с-окно целиком). Последний сегмент не трогаем — фейд это нормальный
+    конец микса. Срезаем 1с-окна с конца, пока RMS окна ниже медианы тела на floor_db; не более
+    max_sec на сегмент. Возвращает список срезанных секунд (по порядку paths)."""
+    import os
+    import re
+    import statistics
     import subprocess
     import tempfile
+    cuts = []
+    for p in paths:
+        dur = _probe_sec(p)
+        proc = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", p, "-af",
+                               "astats=metadata=1:reset=1:measure_overall=RMS_level:measure_perchannel=none",
+                               "-f", "null", "-"], capture_output=True, text=True)
+        win = [float(x) if x != "-inf" else -120.0 for x in re.findall(r"RMS level dB: (-?[\d.]+|-inf)", proc.stderr)]
+        if len(win) < 10:  # тимеровая сетка: короткий/битый файл не режем
+            cuts.append(0.0)
+            continue
+        frame = dur / len(win)  # astats reset=1 -> окно на кадр (~23 мс)
+        body = statistics.median(win)
+        n = 0
+        for r in reversed(win):
+            if r > body - floor_db or (n + 1) * frame >= max_sec or (n + 1) * frame > dur * 0.4:
+                break
+            n += 1
+        cut = n * frame
+        if cut >= 1.0:
+            tmp = tempfile.mktemp(suffix=".mp3")
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", p, "-t", str(dur - cut),
+                            "-c:a", "libmp3lame", "-b:a", "192k", tmp], check=True)
+            os.replace(tmp, p)
+        cuts.append(float(cut))
+        log(f"trim_fade_tail {os.path.basename(p)}: -{cut:.0f} с (хвост-затухание)")
+    return cuts
+
+
+def concat_tracks(paths: list[str], out_path, xfade: float = XFADE) -> None:
+    """Склеивает треки цепочкой acrossfade (tri/tri, xfade с): без разрыва громкости и щелчка на стыке."""
+    import shutil
+    import subprocess
 
     if len(paths) == 1:
-        import shutil
         shutil.copy(paths[0], out_path)
         return
-    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
-        for p in paths:
-            f.write(f"file '{p}'\n")
-        list_path = f.name
-    try:
-        subprocess.run(
-            ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path, str(out_path)],  # куски ACE-Step не mp3: -c copy даёт exit 234,
-            check=True, capture_output=True,
-        )
-    finally:
-        os.unlink(list_path)
+    ins = [x for p in paths for x in ("-i", str(p))]
+    fc, prev = [], "[0:a]"
+    for i in range(1, len(paths)):
+        out = "[a]" if i == len(paths) - 1 else f"[x{i}]"
+        fc.append(f"{prev}[{i}:a]acrossfade=d={xfade}:c1=tri:c2=tri{out}")
+        prev = out
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", *ins, "-filter_complex", ";".join(fc), "-map", "[a]",
+                    str(out_path)], check=True, capture_output=True)
 
 
 def main() -> None:
@@ -402,23 +569,35 @@ def main() -> None:
     seed = abs(hash(run_dir.name)) % (2**31)
 
     out_path = run_dir / "track.mp3"
-    chaps = []
+    chaps, seams = [], []
     bestof_meta = None
     if os.environ.get("ACE15_ENDPOINT"):
         ace15_prepare(os.environ.get("ACE15_MODEL"), os.environ.get("ACE15_LORA"))
     if os.environ.get("ACE15_ENDPOINT") and duration > ACE15_MAX_SEC:
         # ресёрч 13.10: хиты ниши 1-4 ч с треклистом; склеиваем ЦЕЛЬНЫЕ разные треки (не куски одного)
         ref = os.environ.get("ACE15_REF_AUDIO")
+        n_seg = int(os.environ.get("ACE15_BESTOF") or 0)  # гейт на сегмент: до N seed'ов, max CE среди прошедших
+        mix_budget = int(os.environ.get("ACE15_MIX_BUDGET_SEC") or 7200)
 
-        def gen(i):
-            p = run_dir / f"mix_{i:02d}.mp3"
-            generate_track_v15(prompt, ACE15_MAX_SEC, seed + i, p, ref_audio=ref)
-            return str(p)
+        raw = mix_raw(run_dir, prompt, seed, ref, genre_name)
+        if n_seg >= 2:
+            from quality_gate import ce_windows_batch, objective
 
-        paths, durs = plan_mix(duration, gen, _probe_sec)
+            gen_mix = gated_gen(raw, ce_windows_batch, lambda p: objective(p, genre_name)[0],
+                                attempts=n_seg, log=print)
+        else:
+            def gen_mix(i):
+                return raw(i, 0)
+
+        paths, durs = plan_mix(duration, gen_mix, _probe_sec, budget_sec=mix_budget,
+                               max_tracks=-(-duration // MIX_SEG_SEC) + 2)
+        edge_match(paths, log=print)
+        trim_fade_tails(paths[:-1], log=print)  # фейд последнего сегмента остаётся концом микса
+        durs = [_probe_sec(p) for p in paths]  # срез хвостов меняет длительности — перезамер
         concat_tracks(paths, out_path)
-        chaps = chapters(durs, track_names(len(paths), seed))
-        duration = int(sum(durs))
+        chaps = chapters(durs, track_names(len(paths), seed), xfade=XFADE)
+        seams = seam_times(durs)
+        duration = int(sum(durs) - XFADE * (len(durs) - 1))
     elif os.environ.get("ACE15_ENDPOINT"):
         duration = min(duration, ACE15_MAX_SEC)
         ref = os.environ.get("ACE15_REF_AUDIO")
@@ -426,7 +605,7 @@ def main() -> None:
         if n >= 2:
             import bestof
             import shutil
-            from quality_gate import ce_batch, objective
+            from quality_gate import ce_windows_batch, objective
 
             def cand(k):
                 c = run_dir / f"cand_{k:02d}.mp3"  # мастерится как прод: гейт меряет то, что уйдёт на канал
@@ -434,7 +613,7 @@ def main() -> None:
                 mastering.master(c, c, genre=genre_name)
                 return str(c)
 
-            bi, bp, rows = bestof.best_of(n, cand, ce_batch, objective=lambda p: objective(p, genre_name)[0])
+            bi, bp, rows = bestof.best_of(n, cand, ce_windows_batch, objective=lambda p: objective(p, genre_name)[0])
             shutil.move(bp, out_path)
             for c in run_dir.glob("cand_*.mp3"):
                 c.unlink()  # кандидаты удаляются сразу после выбора (диск)
@@ -450,11 +629,13 @@ def main() -> None:
             for i, c in enumerate(chunks)
         ]
         concat_tracks(chunk_paths, out_path)
+    # Склейка мастерится повторно сознательно: concat перекодирует и стыкует сегменты, итоговый
+    # loudnorm выравнивает громкость часа; этот файл целиком меряют 03c и 04b (гейт выпуска).
     if bestof_meta is None:  # победитель best-of уже отмастерен
         mastering.master(out_path, out_path, genre=genre_name)
     (run_dir / "music_meta.json").write_text(
         json.dumps({"genre": genre_name, "prompt": prompt, "seed": seed, "duration": duration,
-                    "chapters": chaps, "bestof": bestof_meta},
+                    "chapters": chaps, "seams": seams, "bestof": bestof_meta},
                    ensure_ascii=False, indent=2),
         encoding="utf-8",
     )

@@ -152,6 +152,9 @@ async function setup({ wallets = true, reject = null } = {}) {
 const logHas = (page, text, timeout = 10_000) =>
   page.waitForFunction((t) => (document.getElementById('log')?.textContent || '').includes(t), text, { timeout });
 const addresses = (page) => page.locator('#addresses').textContent();
+const addrHas = (page, text, what) =>
+  page.waitForFunction((t) => (document.getElementById('addresses')?.textContent || '').includes(t), text, { timeout: 10_000 })
+    .catch((e) => { throw new Error(what + ': ' + e.message); });
 const shown = (chain, addr) => chain + ': ' + (chain === 'evm' ? addr.toLowerCase() : addr);
 const noPageErrors = (env, what) => assert.deepStrictEqual(env.errors, [], what + ': необработанные исключения на странице');
 const notDefined = async (env) => assert.doesNotMatch(await env.page.locator('#log').textContent(), /is not defined/);
@@ -170,9 +173,10 @@ for (const chain of CHAINS) await scenario(`S1 ${chain}: привязка, ад�
   try {
     await env.page.click('#connect-' + chain);
     await logHas(env.page, `✔ ${chain}: адрес сохранён ${shown(chain, ADDR[chain]).slice(chain.length + 2)}`);
-    assert.ok((await addresses(env.page)).includes(shown(chain, ADDR[chain])), 'адрес в #addresses');
+    // UI пишет «сохранён» до await loadConfig() — список обновляется следующим fetch; ждём его, а не читаем сразу (t_4f672ba9)
+    await addrHas(env.page, shown(chain, ADDR[chain]), 'адрес в #addresses');
     await env.page.reload();
-    await env.page.waitForFunction((t) => document.getElementById('addresses')?.textContent.includes(t), shown(chain, ADDR[chain]), { timeout: 10_000 });
+    await addrHas(env.page, shown(chain, ADDR[chain]), 'адрес в #addresses после reload');
     noPageErrors(env, chain);
   } finally { await env.close(); }
 });

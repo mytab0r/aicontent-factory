@@ -11,6 +11,10 @@ on:
         description: "взять готовые варианты из /tmp/xlrun прошлого прогона (без генерации)"
         type: boolean
         default: true
+      canary_only:
+        description: "turbo-контроль + 1 XL кандидат (замер времени), без полных best-of-8"
+        type: boolean
+        default: false
 concurrency:
   group: daily-video
   cancel-in-progress: false
@@ -101,24 +105,48 @@ jobs:
             rm -rf /tmp/xlrun runs && mkdir -p /tmp/xlrun; SKIP_GEN=0
           fi
           docker exec ace-step ls -la /app/output/lora/out/final
-          gen() {  # $1 = имя, далее env прод-варианта
+          gen() {  # $1 = имя, далее env прод-варианта; TO= секунд timeout (по умолч. 2700)
             local name=$1; shift
+            local to=${TO:-2700}
+            local t0=$SECONDS
             d=runs/$(date -u +%Y%m%d_%H%M%S)_$name; mkdir -p "$d"
             echo '{"mood": "cozy lofi"}' > "$d/idea.json"
-            if env "$@" timeout -k 30 2700 /tmp/xlv/bin/python pipeline/03_music.py 2>&1 | tee "/tmp/xlrun/$name.log"; then
+            if env "$@" PYTHONUNBUFFERED=1 timeout -k 30 "$to" /tmp/xlv/bin/python -u pipeline/03_music.py 2>&1 | tee "/tmp/xlrun/$name.log"; then
+              echo "WALL $name: $((SECONDS - t0))s"; echo "$((SECONDS - t0))" > "/tmp/xlrun/$name.wall"
               cp "$d/track.mp3" "/tmp/xlrun/$name.mp3"
               cp "$d/music_meta.json" "/tmp/xlrun/$name.json"
             else
               echo "VARIANT-FAIL $name (лог в $name.log)" >&2
-              docker logs ace-step --since 40m 2>&1 | grep -aE "On-demand|on demand|using primary|not found|Loading model|API Server" | tail -30 || true
+              docker logs ace-step --since 50m 2>&1 | tail -60 || true
+              docker inspect ace-step --format "state={{.State.Status}} restarting={{.State.Restarting}} restarts={{.RestartCount}} health={{.State.Health.Status}}" || true
+              # 39095339812: после XL /v1/init воркер-зомби, следующие варианты status=0 навсегда;
+              # единственный известный сброс очереди — рестарт (restore так и делает).
+              echo "restart ace-step после $name (сброс очереди-зомби)"
+              docker restart ace-step >/dev/null
+              for i in $(seq 1 72); do [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step 2>/dev/null)" = healthy ] && break; sleep 15; done
             fi
             sleep 1
           }
-          XL="ACE15_MODEL=acestep-v15-xl-sft ACE15_LORA=/app/output/lora/out/final ACE15_BESTOF=8"
+          XL8="ACE15_MODEL=acestep-v15-xl-sft ACE15_LORA=/app/output/lora/out/final ACE15_BESTOF=8"
+          XL1="ACE15_MODEL=acestep-v15-xl-sft ACE15_LORA=/app/output/lora/out/final ACE15_BESTOF=1"
           if [ "$SKIP_GEN" = 0 ]; then
-            gen xl_1 $XL; gen xl_2 $XL
-            curl -sf -m 300 -X POST "$ACE15_ENDPOINT/v1/lora/unload" -H 'Content-Type: application/json' -d '{}' || true
-            gen turbo_1 ACE15_MODEL=acestep-v15-turbo; gen turbo_2 ACE15_MODEL=acestep-v15-turbo
+            # решение 00:30 (t_b4006a6e): turbo-контроль ПЕРВЫМ, затем 1 XL-кандидат с замером
+            # времени и nvidia-smi; 1 кандидат XL >600 с на 90 с -> best-of-8 непригоден для
+            # час-микса: KILL-вердикт, полные варианты не тратим.
+            (docker exec ace-step nvidia-smi --query-gpu=name,memory.used,memory.total --format=csv || echo "nvidia-smi n/a") > /tmp/xlrun/gpu_before.txt
+            gen turbo_1 ACE15_MODEL=acestep-v15-turbo
+            TO=1500 gen xl_solo $XL1
+            WALL=$(cat /tmp/xlrun/xl_solo.wall 2>/dev/null || echo 99999)
+            (docker exec ace-step nvidia-smi --query-gpu=name,memory.used,memory.total --format=csv || echo "nvidia-smi n/a") > /tmp/xlrun/gpu_after.txt
+            if [ "${{ inputs.canary_only }}" = true ]; then
+              echo "CANARY_ONLY: только turbo_1 + xl_solo, полные варианты скипнуты"
+            elif [ "$WALL" -le 600 ]; then
+              gen xl_1 $XL8; gen xl_2 $XL8
+              curl -sf -m 300 -X POST "$ACE15_ENDPOINT/v1/lora/unload" -H 'Content-Type: application/json' -d '{}' || true
+              gen turbo_2 ACE15_MODEL=acestep-v15-turbo
+            else
+              echo "KILL-VERDICT: 1 кандидат XL (90 с, best-of-1) занял ${WALL}с > 600 с — best-of-8 XL непригоден для час-микса (решение 00:30); A/B из turbo_1 + xl_solo"
+            fi
           fi
           # считаем сырые варианты (versija_* создаются ниже); find, т.к. ls без совпадений + pipefail = exit
           N=$(find /tmp/xlrun -maxdepth 1 -name '*.mp3' ! -name 'versija_*' | wc -l)

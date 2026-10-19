@@ -2,7 +2,9 @@
 """Шаг 1: через 9router (LLM) сгенерировать идею трека + метаданные YouTube."""
 import json
 import os
+import re
 import sys
+import unicodedata
 from datetime import date
 from pathlib import Path
 
@@ -54,7 +56,7 @@ def season_hint(today: date) -> str:
 # Заголовочная формула по жанру: guard жанра (watchdog.GENRE_IN_TITLE) матчит
 # слово жанра в заголовке выпуска — формула обязана его туда принести.
 TITLE_FORMULAS = {
-    "anime lofi": "\"[Сезонная сцена] + emoji + [use-case] Music to Study/\n    Relax/Sleep/Focus to\" — например \"Pumpkin Café on a Rainy Night 🎃 Lofi Beats to\n    Study and Relax to\". Сцена конкретная, не общее \"Anime Nights\". Без фейковых чисел длительности.",
+    "anime lofi": "\"[Сезонная сцена] + emoji + [use-case] Music to Study/\n    Relax/Sleep/Focus to\" — например \"Rainy Night Café ☕ Lofi Beats to\n    Study and Relax to\". Сцена конкретная, не общее \"Anime Nights\". Без фейковых чисел длительности.",
     "chill phonk": "\"[Сезонная сцена] + emoji + Phonk Beats to [use-case]\" — например\n    \"Neon Highway at Midnight 🌃 Phonk Beats to Drift and Focus to\". Слово Phonk обязательно\n    в заголовке. Сцена конкретная (ночная дорога/неон/город), без \"Lofi\". Без фейковых чисел длительности.",
 }
 
@@ -92,6 +94,19 @@ def fallback_idea(mood: str, state_dir: Path | None = None) -> dict:
     }
 
 
+# M5 (аудит 18.10): сезонная метка вне сезона (🎃/Halloween в ноябре) = устаревший, шаблонный вид.
+# Маркер -> месяцы, когда он уместен; вне их маркер вырезается из title детерминированно (после LLM).
+SEASON_MARKERS = {"🎃": {9, 10}, "halloween": {10}, "spooky": {10}, "🎄": {11, 12}, "christmas": {11, 12},
+                  "xmas": {11, 12}, "🌸": {3, 4, 5}, "sakura": {3, 4, 5}}
+
+
+def strip_off_season(title: str, today: date) -> str:
+    for mark, months in SEASON_MARKERS.items():
+        if today.month not in months:
+            title = re.sub(re.escape(mark) + r"\s*", "", title, flags=re.I)
+    return re.sub(r"\s{2,}", " ", title).strip()
+
+
 def ensure_genre_word(title: str, mood: str) -> str:
     """Гарантия слова жанра в title: guard дублей (watchdog.already_published)
     ищет маркер жанра в заголовке; если LLM его не принёс — дописываем
@@ -108,17 +123,71 @@ def ensure_genre_word(title: str, mood: str) -> str:
     return f"{keep} {suffix.strip()}" if keep else suffix.strip()
 
 
-def main() -> None:
-    channel = os.environ.get("CHANNEL", "lofi")
-    if channel == "dd":
-        # D&D ambience канал-эксперимент (DECISIONS.md п.8): своя ротация сцен
-        # и своя заголовочная формула, состояние отдельно от lofi-ротации.
-        scene = dd_channel.next_scene(STATE_DIR / "dd_scene_idx.txt")
-        prompt = dd_channel.idea_prompt(scene)
+# M1 (аудит 18.10): дубли сцен в заголовках long-form — «Cozy Halloween Night Train» x2 (14.10), «Anime Nights» x2
+# (12.10), «… Sunset Rooftop» x2 (16.10). Шаблонность = риск inauthentic content (демонетизация канала).
+# Сцена = слова до слова жанра/emoji без сезонных/жанровых наполнителей; Jaccard >= 0.5 с заголовком за 14 дней = дубль.
+TITLES_FILE, TITLE_DAYS, TITLE_JACCARD = "titles.json", 14, 0.5
+FILLER = {"cozy", "autumn", "fall", "anime", "chill", "the", "a", "an", "of", "on", "in", "at", "and", "with"}
+
+
+def scene_words(title: str) -> set:
+    t = re.split(r"[^\w\s'&/.,:-]|\b(?:lo-?fi|phonk|chill|beats|music)\b", title, maxsplit=1, flags=re.I)[0]
+    t = unicodedata.normalize("NFKD", t).encode("ascii", "ignore").decode().lower()
+    return set(re.findall(r"[a-z0-9]+", t)) - FILLER
+
+
+def dup_title(title: str, recent: list, today: date, days: int = TITLE_DAYS):
+    """Заголовок за `days` дней с той же сценой (Jaccard >= TITLE_JACCARD) или None."""
+    a = scene_words(title)
+    for r in recent:
+        b = scene_words(r["title"])
+        if a and b and (today - date.fromisoformat(r["date"])).days < days and len(a & b) / len(a | b) >= TITLE_JACCARD:
+            return r["title"]
+    return None
+
+
+def recent_titles(state_dir: Path | None = None) -> list:
+    f = (state_dir or STATE_DIR) / TITLES_FILE
+    return json.loads(f.read_text(encoding="utf-8")) if f.exists() else []
+
+
+def remember_title(title: str, today: date, state_dir: Path | None = None) -> None:
+    """ponytail: пишется на шаге 01 (до публикации): несостоявшийся выпуск тоже занимает сцену на 14 дней — лишь больше разнообразия."""
+    d = state_dir or STATE_DIR
+    d.mkdir(exist_ok=True)
+    keep = [r for r in recent_titles(d) if (today - date.fromisoformat(r["date"])).days < 60]
+    (d / TITLES_FILE).write_text(json.dumps(keep + [{"date": today.isoformat(), "title": title}], ensure_ascii=False,
+                                            indent=1), encoding="utf-8")
+
+
+def owning_idea() -> None:
+    """S1 ch1 «Economics of Owning»: скрипт Short через 9router; невалидный ответ = следующая модель.
+    ponytail: без шаблонного фолбэка (inauthentic content) — нет валидного скрипта, нет выпуска."""
+    import owning_channel as oc
+    plan = oc.next_plan(STATE_DIR)
+    prompt, err = oc.idea_prompt(plan), None
+    # glm первым: 18.10 из 9router валидный JSON скрипта дал только он (gemini 429, cx 400, combo битый JSON)
+    for model in ["glm/glm-5.3-flash", *MODELS]:
+        try:
+            # 4000: reasoning-модели тратят бюджет до ответа (при 1500 content пустой); json_object чинит битый JSON combo
+            resp = router_post("/chat/completions", {"model": model, "stream": False, "max_tokens": 4000,
+                                                     "response_format": {"type": "json_object"},
+                                                     "messages": [{"role": "user", "content": prompt}]})
+            idea = oc.validate_script(oc.parse_json(resp["choices"][0]["message"]["content"]))
+            break
+        except (RuntimeError, ValueError, KeyError, IndexError, AttributeError) as e:  # content=None → AttributeError
+            print(f"model {model}: {e}"[:300])
+            err = e
     else:
-        mood = os.environ.get("GENRE") or next_mood()
-        scene = None
-        prompt = build_prompt(mood, date.today())
+        raise SystemExit(f"нет валидного скрипта: {err}")
+    idea.update(channel="owning", topic=plan["topic"], plan=plan)
+    out = new_run_dir() / "idea.json"
+    out.write_text(json.dumps(idea, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"idea -> {out}\n{json.dumps(idea, ensure_ascii=False, indent=2)}")
+
+
+def llm_idea(prompt: str):
+    """(idea | None, ошибка): модели по очереди, ```json-обёртка срезается."""
     resp, err = None, None
     for model in MODELS:
         try:
@@ -132,34 +201,58 @@ def main() -> None:
         except RuntimeError as e:
             print(f"model {model} failed: {e}"[:300])
             err = e
-    idea = None
-    if resp is not None:
-        content = resp["choices"][0]["message"]["content"].strip()
-        # LLM иногда оборачивает в ```json ... ``` — срезаем
-        if content.startswith("```"):
-            content = content.strip("`")
-            content = content.split("\n", 1)[1] if "\n" in content else content
-            if content.lower().startswith("json"):
-                content = content[4:]
-        try:
-            idea = json.loads(content)
-        except json.JSONDecodeError as e:
-            err = e
+    if resp is None:
+        return None, err
+    content = resp["choices"][0]["message"]["content"].strip()
+    if content.startswith("```"):
+        content = content.strip("`")
+        content = content.split("\n", 1)[1] if "\n" in content else content
+        if content.lower().startswith("json"):
+            content = content[4:]
+    try:
+        return json.loads(content), None
+    except json.JSONDecodeError as e:
+        return None, e
+
+
+def main() -> None:
+    channel = os.environ.get("CHANNEL", "lofi")
+    if channel == "owning":
+        return owning_idea()
+    if channel == "dd":
+        # D&D ambience канал-эксперимент (DECISIONS.md п.8): своя ротация сцен
+        # и своя заголовочная формула, состояние отдельно от lofi-ротации.
+        scene = dd_channel.next_scene(STATE_DIR / "dd_scene_idx.txt")
+        prompt = dd_channel.idea_prompt(scene)
+    else:
+        mood = os.environ.get("GENRE") or next_mood()
+        scene = None
+        prompt = build_prompt(mood, date.today())
+    recent = recent_titles() if channel != "dd" else []
+    for attempt in range(3):  # M1: LLM повторил сцену за 14 дней -> повтор с запретом этих сцен
+        idea, err = llm_idea(prompt)
+        if idea is None or channel == "dd":
+            break
+        idea["title"] = ensure_genre_word(strip_off_season(idea.get("title", ""), date.today()), mood)
+        dup = dup_title(idea["title"], recent, date.today())
+        if not dup:
+            break
+        print(f"M1 дубль сцены: {idea['title']!r} ~ {dup!r} (попытка {attempt + 1})"[:300])
+        prompt += f"\nНЕ повторяй сцену из заголовка: {dup}. Выбери другое место/время."
+        idea = None
     if idea is None:
         if channel == "dd":
             raise err  # ponytail: D&D-эксперимент без шаблонного фолбэка (ручной запуск)
-        print(f"LLM недоступен ({err}); детерминированный фолбэк"[:300])
-        idea = fallback_idea(mood, STATE_DIR)
+        print(f"LLM недоступен/повторы ({err}); детерминированный фолбэк"[:300])
+        for _ in range(len(SCENES) * len(USES)):
+            idea = fallback_idea(mood, STATE_DIR)
+            if not dup_title(idea["title"], recent, date.today()):
+                break
     if channel == "dd":
         idea["channel"] = "dd"
         idea["scene"] = scene["name"] if scene else None
     else:
-        # Пост-проверка слова жанра (t_93ee3737): guard дублей матчит маркер жанра
-        # в заголовке; если LLM его пропустил — детерминированно дописываем.
-        fixed = ensure_genre_word(idea.get("title", ""), mood)
-        if fixed != idea.get("title"):
-            print(f"title без слова жанра ({mood}); исправлено: {fixed!r}"[:300])
-            idea["title"] = fixed
+        remember_title(idea["title"], date.today())
 
     run_dir = new_run_dir()
     out_path = run_dir / "idea.json"
