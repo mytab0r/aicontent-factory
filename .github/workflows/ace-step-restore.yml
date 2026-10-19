@@ -15,7 +15,7 @@ jobs:
         run: |
           for p in ace-proxy auth-proxy; do echo "== $p"; docker logs --since 2026-10-17T00:00:00Z $p 2>&1 | grep -E 'DELETE|/prune|images/.*/(tag|push)|containers/ace-step' | grep -v '/exec' | tail -40; done
           docker ps -a --format '{{.Names}} {{.Networks}}' | sort
-      - name: disk gate + free space (orchestrator decision: drop minimax-spike if short)
+      - name: disk gate + free space (drop minimax-spike if short, orchestrator decision)
         run: |
           free_d() { docker run --rm -v /run/desktop/mnt/host/d:/d:ro alpine:3.20 df -BG /d | awk 'NR==2{gsub("G","",$4);print $4}'; }
           echo "D free: $(free_d) GB"
