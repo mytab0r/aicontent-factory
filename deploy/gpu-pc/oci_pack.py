@@ -16,5 +16,7 @@ with tarfile.open(tar,"w") as t:
     for name,data in [("oci-layout",b'{"imageLayoutVersion":"1.0.0"}'),("index.json",json.dumps(idx).encode()),("blobs/sha256/"+md[7:],mb)]:
         ti=tarfile.TarInfo(name); ti.size=len(data); t.addfile(ti,io.BytesIO(data))
     for d in [cfg]+[l["digest"] for l in man["layers"]]:
-        t.add(os.path.join(blobs,d[7:]),arcname="blobs/sha256/"+d[7:])
+        p=os.path.join(blobs,d[7:])
+        t.add(p,arcname="blobs/sha256/"+d[7:])
+        os.remove(p)  # operator 16:40: peak D: = 1x image (7.2GB), not 2x
 print("packed",tar)
