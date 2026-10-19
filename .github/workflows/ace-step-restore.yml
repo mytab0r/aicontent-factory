@@ -16,12 +16,13 @@ jobs:
           timeout 60 docker events --since 2026-10-19T00:30:00Z --until 2026-10-19T03:20:00Z \
             --format '{{.Time}} {{.Type}} {{.Action}} {{.Actor.ID}} {{index .Actor.Attributes "name"}} {{index .Actor.Attributes "image"}}' \
             | grep -v -E ' (exec_create|exec_start|exec_die|top|health_status|attach|resize)' | tail -200 || true
-      - name: uptime
+      - name: who-deleted
         run: |
-          docker ps -a --format '{{.Names}}|{{.Status}}|{{.CreatedAt}}|{{.Image}}'
-          docker info --format 'boot={{.SystemTime}} kernel={{.KernelVersion}}'
-          docker run --rm --pid=host alpine:3.20 cat /proc/uptime
-          timeout 30 docker events --since 2026-10-19T01:00:00Z --until 2026-10-19T02:00:00Z --filter type=image --format '{{.Time}} {{.Action}} {{.Actor.ID}} {{index .Actor.Attributes "name"}}' | head -50 || true
+          echo "== janitor logs"; docker logs --since 2026-10-18T20:00:00Z docker-janitor 2>&1 | tail -60
+          echo "== ace-proxy DELETE/POST"; docker logs --since 2026-10-18T20:00:00Z ace-proxy 2>&1 | grep -v -E '"GET ' | tail -60
+          echo "== auth-proxy"; docker logs --since 2026-10-19T00:30:00Z --until 2026-10-19T02:00:00Z auth-proxy 2>&1 | grep -v -E '"GET ' | tail -60
+          docker inspect ace-proxy --format '{{json .Config.Env}}'
+          docker run --rm -v /run/desktop/mnt/host/c/dockerlocal/janitor:/j:ro alpine:3.20 sh -c 'ls -la /j; cat /j/janitor.sh'
       - name: disk
         run: |
           docker run --rm -v /run/desktop/mnt/host:/h:ro alpine:3.20 df -h /h/c /h/d
