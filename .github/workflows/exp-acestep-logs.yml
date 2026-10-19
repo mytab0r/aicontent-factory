@@ -11,12 +11,10 @@ jobs:
     runs-on: [self-hosted, pc]
     timeout-minutes: 10
     steps:
-      - name: docker context + ace-step search
+      - name: endpoint probe + name resolution
         run: |
-          env | grep -i docker || echo "no DOCKER env"
-          docker context ls 2>&1 | head -5
-          docker version --format '{{.Server.Os}}/{{.Server.Arch}} {{.Server.Version}}' 2>&1
-          docker ps -a --format '{{.Names}} {{.Status}}' | grep -i "ace\|step" || echo "no ace containers"
-          docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}' | grep -i ace | head -5 || true
-          ls -d ~/ace* /opt/ace* /work/ace* /srv/ace* 2>/dev/null || true
-          docker volume ls --format '{{.Name}}' | grep -i ace | head
+          getent hosts ace-step || echo "no dns"
+          grep -i ace /etc/hosts || echo "no hosts entry"
+          curl -s -m 8 -o /dev/null -w 'root=%{http_code}\n' http://ace-step:8001/ || echo "root fail"
+          curl -s -m 8 -o /dev/null -w 'health=%{http_code}\n' http://ace-step:8001/health || true
+          docker network ls --format '{{.Name}}' | head -8
