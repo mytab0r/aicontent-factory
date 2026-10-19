@@ -1,0 +1,26 @@
+name: ace-step restore (t_03efb867)
+on:
+  push:
+    branches: ["ops/ace-step-restore"]
+permissions:
+  contents: read
+concurrency:
+  group: ace-step-restore
+jobs:
+  diag:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 15
+    steps:
+      - name: forensics (docker events 19.10 00:30-03:20Z)
+        run: |
+          timeout 60 docker events --since 2026-10-19T00:30:00Z --until 2026-10-19T03:20:00Z \
+            --format '{{.Time}} {{.Type}} {{.Action}} {{.Actor.ID}} {{index .Actor.Attributes "name"}} {{index .Actor.Attributes "image"}}' \
+            | grep -v -E ' (exec_create|exec_start|exec_die|top|health_status|attach|resize)' | tail -200 || true
+      - name: disk
+        run: |
+          docker run --rm -v /run/desktop/mnt/host:/h:ro alpine:3.20 df -h /h/c /h/d
+          docker system df
+          docker images --format '{{.Repository}}:{{.Tag}} {{.Size}} {{.CreatedSince}}'
+          docker volume ls --format '{{.Name}}' | grep -E 'minimax|ace' || true
+          docker network inspect comfynet --format '{{range .Containers}}{{.Name}} {{end}}' || echo "no comfynet"
+          docker run --rm -v /run/desktop/mnt/host/c/dockerlocal/ace15:/a:ro alpine:3.20 sh -c 'ls /a; du -sh /a/* 2>/dev/null'
