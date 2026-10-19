@@ -8,7 +8,7 @@ concurrency:
   group: exp-acestep-logs
 jobs:
   logs:
-    runs-on: [self-hosted, pc]
+    runs-on: [self-hosted, release]
     timeout-minutes: 10
     steps:
       - name: ace-step health 19.10 (не healthy при старте daily 39187777858)
