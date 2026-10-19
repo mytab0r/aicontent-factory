@@ -128,3 +128,15 @@ with tempfile.TemporaryDirectory() as td:
     assert any("60" in w for w in qg.short_why(long_)), qg.short_why(long_)
     assert any("поток" in w for w in qg.short_why(mute)), qg.short_why(mute)
 print("test_quality_gate V3 short-format OK")
+
+# A9 (каталог): каналы в противофазе = в моно трек пропадает; нормальное стерео и моно-файл проходят
+with tempfile.TemporaryDirectory() as td:
+    inv, ok, mono = f"{td}/inv.wav", f"{td}/ok.wav", f"{td}/mono.wav"
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=5", "-af",
+                    "pan=stereo|c0=c0|c1=-1*c0", inv], check=True)
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=5", "-ac", "2", ok], check=True)
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=5", mono], check=True)
+    assert any("моно" in w for w in qg.stereo_why(inv)), qg.stereo_why(inv)
+    assert qg.stereo_why(ok) == [] and qg.stereo_why(mono) == [], (qg.stereo_why(ok), qg.stereo_why(mono))
+    assert qg.MONO_LOSS == 3.0
+print("test_quality_gate A9 stereo OK")
