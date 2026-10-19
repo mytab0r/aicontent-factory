@@ -14,6 +14,7 @@ dfree() { echo "D: free $(docker run --rm -v /run/desktop/mnt/host/d:/d:ro alpin
 host() { docker run --rm --privileged --pid=host alpine:3.20 nsenter -t 1 -m -- sh -c "$1"; }
 
 exec 9>/tmp/ensure_ace_step.lock; flock 9   # R1 within this runner
+ok=1   # pull path sets 0 on total failure; relay path stays success
 dfree start
 if docker inspect ace-step >/dev/null 2>&1; then
   [ "${1:-}" = restart ] && docker restart ace-step >/dev/null || docker start ace-step >/dev/null 2>&1 || true
