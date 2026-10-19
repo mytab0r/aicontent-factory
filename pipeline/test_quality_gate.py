@@ -140,3 +140,17 @@ with tempfile.TemporaryDirectory() as td:
     assert qg.stereo_why(ok) == [] and qg.stereo_why(mono) == [], (qg.stereo_why(ok), qg.stereo_why(mono))
     assert qg.MONO_LOSS == 3.0
 print("test_quality_gate A9 stereo OK")
+
+# A17 (каталог): инфразвук < 20 Гц / DC-смещение съедают запас громкости. Замер 19.10 (энергия < 20 Гц к треку):
+# ref1 -33.6, ref2 -35.5, ref3 -35.1, phonk v1 -27.2, v2 -31.6, v3 -25.6; ref1 + 8 Гц 0.1 = -8.4, ref1 + DC 0.05 = -10.6
+with tempfile.TemporaryDirectory() as td:
+    ok, inf, dc = f"{td}/ok.wav", f"{td}/inf.wav", f"{td}/dc.wav"
+    for out, af in ((ok, "anull"), (inf, "aeval=val(0)+0.1*sin(2*PI*8*t)|val(1)+0.1*sin(2*PI*8*t)"),
+                    (dc, "aeval=val(0)+0.05|val(1)+0.05")):
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=5", "-af",
+                        "pan=stereo|c0=0.3*c0|c1=0.3*c0," + af, out], check=True)
+    assert qg.sub_why(ok) == [], qg.sub_why(ok)
+    assert any("инфразвук" in w for w in qg.sub_why(inf)), qg.sub_why(inf)
+    assert any("инфразвук" in w for w in qg.sub_why(dc)), qg.sub_why(dc)
+    assert qg.SUB_MAX == -20.0
+print("test_quality_gate A17 infrasound OK")

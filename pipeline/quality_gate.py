@@ -40,6 +40,10 @@ END_WIN, END_DROP = 0.5, 12.0
 # в противофазе (корреляция < 0): на телефоне/колонке-моно трек «пропадает». Замер 19.10: ref1/ref2/ref3 -0.3,
 # phonk v2 -0.5, v1 -1.4, прод KXNsSx2FlXA -0.6; некоррелированные каналы = -3, инверсия канала = -inf.
 MONO_LOSS = 3.0
+# A17: инфразвук < 20 Гц и DC-смещение съедают запас громкости (loudnorm/TP), на телефонах «бубнит».
+# Энергия ниже 20 Гц (двойной lowpass) относительно всего трека. Замер 19.10: ref1 -33.6, ref2 -35.5, ref3 -35.1,
+# phonk v1 -27.2, v2 -31.6, v3 -25.6 (худший одобренный); брак ref1 + синус 8 Гц 0.1 = -8.4, ref1 + DC 0.05 = -10.6.
+SUB_MAX = -20.0
 MIN_CE = 6.5  # ниже худшего рефа ниши (7.07), сильно выше брака (<=3.6)
 
 
@@ -320,6 +324,14 @@ def stereo_why(f):
     return [f"моно-совместимость: сведение в моно теряет {loss:.1f} дБ > {MONO_LOSS} (каналы в противофазе)"] if loss > MONO_LOSS else []
 
 
+def sub_why(f):
+    """A17: [причина], если энергия < 20 Гц (инфразвук/DC) громче SUB_MAX дБ относительно всего трека."""
+    rms = lambda af: float((re.findall(r"RMS level dB: (-?[\d.]+|-inf)", ff(f, af + "astats=measure_overall=RMS_level:"
+                           "measure_perchannel=none")) or ["-200"])[-1].replace("-inf", "-200"))
+    sub = rms("lowpass=f=20,lowpass=f=20,") - rms("")
+    return [f"инфразвук/DC: энергия < 20 Гц {sub:+.1f} дБ к треку > {SUB_MAX} (съедает громкость)"] if sub > SUB_MAX else []
+
+
 def target(d, final):
     """--final: финальный файл после 04 assemble (то, что заливается), иначе трек после 03."""
     return d / ("video.mp4" if final else "track.mp3")
@@ -342,6 +354,7 @@ def main(argv):
             seams = [float(x) for x in a[8:].split(",") if x]
     why, m = objective(f, genre)
     why += stereo_why(f)  # A9
+    why += sub_why(f)  # A17
     why += end_why(f)  # A16: только целый трек/финальный mp4, не сегменты best-of (их хвосты режет склейка)
     if "--final" in argv:
         why += integrity_why(f, expect) + black_why(f)
