@@ -8,11 +8,15 @@ concurrency:
   group: exp-acestep-logs
 jobs:
   logs:
-    runs-on: [self-hosted, release]
+    runs-on: [self-hosted, pc]
     timeout-minutes: 10
     steps:
-      - name: identify host + ace-step presence
+      - name: docker context + ace-step search
         run: |
-          echo "hostname=$(hostname) user=$(whoami)"
-          nvidia-smi -L 2>&1 | head -3
-          docker ps -a --format '{{.Names}} {{.Status}}' | head -10
+          env | grep -i docker || echo "no DOCKER env"
+          docker context ls 2>&1 | head -5
+          docker version --format '{{.Server.Os}}/{{.Server.Arch}} {{.Server.Version}}' 2>&1
+          docker ps -a --format '{{.Names}} {{.Status}}' | grep -i "ace\|step" || echo "no ace containers"
+          docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}' | grep -i ace | head -5 || true
+          ls -d ~/ace* /opt/ace* /work/ace* /srv/ace* 2>/dev/null || true
+          docker volume ls --format '{{.Name}}' | grep -i ace | head
