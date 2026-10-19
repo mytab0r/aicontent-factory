@@ -14,7 +14,8 @@ else
     inner=$(docker run --rm --privileged --pid=host alpine:3.20 nsenter -t 1 -m -- df -Pk /var/lib/docker 2>/dev/null | awk 'NR==2{print int($4/1048576)}')
     echo "docker inner free: ${inner:-?} GB"
     [ "${inner:-0}" -ge 20 ] || { echo "::error::docker inner free < 20 GB, pull refused"; exit 1; }
-    for i in 1 2 3; do docker pull -q "$IMG" && break; sleep 30; done
+    for i in 1 2 3 4 5 6 7 8; do docker pull -q "$IMG" && break; echo "pull attempt $i failed"; sleep 20; done
+    docker image inspect "$IMG" >/dev/null || { echo "::error::pull failed"; exit 1; }
   fi
   docker run -d --name ace-step --restart unless-stopped --gpus all --network comfynet \
     --health-cmd "python3 -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:8001/health',timeout=5)\"" \

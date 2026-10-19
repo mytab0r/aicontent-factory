@@ -9,15 +9,11 @@ concurrency:
 jobs:
   restore:
     runs-on: [self-hosted, pc]
-    timeout-minutes: 90
+    timeout-minutes: 300
     steps:
-      - name: who-deleted (DELETE via proxies, 17-19.10)
-        run: |
-          for p in ace-proxy auth-proxy; do echo "== $p"; docker logs --since 2026-10-17T00:00:00Z $p 2>&1 | grep -E 'DELETE|/prune|images/.*/(tag|push)|containers/ace-step' | grep -v '/exec' | tail -40; done
-          docker ps -a --format '{{.Names}} {{.Networks}}' | sort
       - uses: actions/checkout@v4
       - name: ensure ace-step
-        timeout-minutes: 60
+        timeout-minutes: 280
         run: sh deploy/gpu-pc/ensure_ace_step.sh
       - name: verify from runner (comfynet)
         run: |
