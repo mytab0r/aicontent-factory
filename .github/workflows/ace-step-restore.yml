@@ -19,3 +19,12 @@ jobs:
         run: |
           getent hosts ace-step
           curl -fsS --max-time 10 http://ace-step:8001/health; echo
+      - name: audit (R5, read-only)
+        if: always()
+        run: |
+          for c in gh-runner-acf-release gh-runner-aicontent-factory hermes-runner; do
+            echo "== $c writable $(docker ps -s --filter name=^/$c$ --format '{{.Size}}')"
+            docker exec $c sh -c 'du -xh -d2 / 2>/dev/null | sort -rh | head -15' || true
+          done
+          echo "== hermes-runner:0.22.2-hf users"; docker ps -a --filter ancestor=hermes-runner:0.22.2-hf --format '{{.Names}}' ; docker image inspect hermes-runner:0.22.2-hf -f 'created={{.Created}} labels={{json .Config.Labels}}' || true
+          docker system df

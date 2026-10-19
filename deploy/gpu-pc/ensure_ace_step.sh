@@ -1,21 +1,40 @@
 #!/bin/sh
 # Idempotent: ace-step (ACE-Step 1.5 REST :8001, comfynet) exists, running, healthy.
-# Self-heal for "No such container"/missing image (t_03efb867, 19.10): recreate + pull, never prune.
-# Usage: sh deploy/gpu-pc/ensure_ace_step.sh [restart]
+# Self-heal for "No such container"/missing image (t_03efb867, 19.10).
+# Owner rules 19.10: R1 one pull at a time (caller holds concurrency lock + flock here);
+# R2 retries = same docker pull, finished layers reused, no rmi/prune between attempts;
+# R3 final failure -> drop only stale containerd ingest (partial blobs), D: before/after;
+# R4 success -> no second copy (dangling / other ace-step tags) left.
 set -eu
 IMG=ghcr.io/ace-step/ace-step-1.5:latest
+REPO=${IMG%:*}
 A=/run/desktop/mnt/host/c/dockerlocal/ace15
+INGEST=/var/lib/desktop-containerd/daemon/io.containerd.content.v1.content/ingest
+dfree() { echo "D: free $(docker run --rm -v /run/desktop/mnt/host/d:/d:ro alpine:3.20 df -BG /d | awk 'NR==2{print $4}') [$1]"; }
+host() { docker run --rm --privileged --pid=host alpine:3.20 nsenter -t 1 -m -- sh -c "$1"; }
+
+exec 9>/tmp/ensure_ace_step.lock; flock 9   # R1 within this runner
+dfree start
 if docker inspect ace-step >/dev/null 2>&1; then
   [ "${1:-}" = restart ] && docker restart ace-step >/dev/null || docker start ace-step >/dev/null 2>&1 || true
 else
   echo "ace-step missing -> recreate"
   if ! docker image inspect "$IMG" >/dev/null 2>&1; then
-    # VHDX on D: grows only if docker-internal free space runs out; gate on the inner fs.
-    inner=$(docker run --rm --privileged --pid=host alpine:3.20 nsenter -t 1 -m -- df -Pk /var/lib/docker 2>/dev/null | awk 'NR==2{print int($4/1048576)}')
-    echo "docker inner free: ${inner:-?} GB"
-    [ "${inner:-0}" -ge 20 ] || { echo "::error::docker inner free < 20 GB, pull refused"; exit 1; }
-    for i in 1 2 3 4 5 6 7 8; do docker pull -q "$IMG" && break; echo "pull attempt $i failed"; sleep 20; done
-    docker image inspect "$IMG" >/dev/null || { echo "::error::pull failed"; exit 1; }
+    ok=0
+    for i in 1 2 3 4 5 6 7 8; do
+      # R2: plain pull resumes; log only layer outcome lines
+      if docker pull "$IMG" 2>&1 | tee /tmp/pull.log | grep -E 'Already exists|Pull complete|Digest|Status|rror'; then :; fi
+      echo "attempt $i: layers already-present=$(grep -c 'Already exists' /tmp/pull.log || true) completed=$(grep -c 'Pull complete' /tmp/pull.log || true)"
+      dfree "after pull attempt $i"
+      docker image inspect "$IMG" >/dev/null 2>&1 && { ok=1; break; }
+      sleep 20
+    done
+    if [ $ok = 0 ]; then
+      dfree "before ingest cleanup"
+      host "du -sh $INGEST 2>/dev/null; find $INGEST -mindepth 1 -maxdepth 1 -type d -mmin +10 -exec rm -rf {} +; du -sh $INGEST 2>/dev/null" || true
+      dfree "after ingest cleanup"
+      echo "::error::pull failed after 8 attempts"; exit 1
+    fi
   fi
   docker run -d --name ace-step --restart unless-stopped --gpus all --network comfynet \
     --health-cmd "python3 -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:8001/health',timeout=5)\"" \
@@ -28,9 +47,18 @@ else
     -v $A/checkpoints:/app/checkpoints -v $A/output:/app/output -v $A/hf:/root/.cache/huggingface \
     "$IMG" >/dev/null
 fi
+# R4: single copy of the image
+keep=$(docker image inspect -f '{{.Id}}' "$IMG")
+for id in $(docker images -q --no-trunc "$REPO" | sort -u) $(docker images -q --no-trunc -f dangling=true | sort -u); do
+  [ "$id" = "$keep" ] && continue
+  docker ps -aq --filter ancestor="$id" | grep -q . && { echo "keep $id (used)"; continue; }
+  echo "remove extra copy $id"; docker rmi "$id" || true
+done
+dfree "after dedupe"
+docker images --format '{{.Repository}}:{{.Tag}} {{.ID}} {{.Size}}'
 for i in $(seq 1 100); do
   s=$(docker inspect -f '{{.State.Status}}/{{if .State.Health}}{{.State.Health.Status}}{{end}}' ace-step)
-  [ "${s#*/}" = healthy ] && { echo "ace-step healthy"; exit 0; }
+  [ "${s#*/}" = healthy ] && { echo "ace-step healthy"; dfree end; exit 0; }
   [ "${s%/*}" = running ] || break
   sleep 12
 done
