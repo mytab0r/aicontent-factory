@@ -25,7 +25,13 @@ while read -r dg size; do
     [ "$waited" -ge 10800 ] && { echo "::error::blob $hex.blob not on HF after 3h"; exit 1; }
     echo "waiting blob $n ($hex) ${waited}s"
   done
-  curl -fSL --retry 5 --retry-delay 5 -C - -H "Authorization: Bearer $TOK" "https://huggingface.co/datasets/$REPO/resolve/main/$hex.blob" -o "$f.part" || { echo "::error::download $hex failed"; exit 1; }
+  ok=""
+  for att in 1 2 3 4 5 6 7 8; do
+    if curl -fSL --retry 5 --retry-delay 5 --retry-all-errors -C - -H "Authorization: Bearer $TOK" "https://huggingface.co/datasets/$REPO/resolve/main/$hex.blob" -o "$f.part"; then ok=1; break; fi
+    echo "download attempt $att failed (SSL/eof), resuming from $(stat -c %s "$f.part" 2>/dev/null || echo 0) bytes"
+    sleep 10
+  done
+  [ -n "$ok" ] || { echo "::error::download $hex failed after retries"; exit 1; }
   mv "$f.part" "$f"
   [ "$(stat -c %s "$f")" = "$size" ] || { echo "::error::size mismatch $hex"; exit 1; }
   sha256sum "$f" | grep -q "$hex" || { echo "::error::sha mismatch $hex"; exit 1; }
