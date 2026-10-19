@@ -17,9 +17,9 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          printf '%s' "$HF_TOKEN" > /work/hermes-codex/.relay-token
+          printf '%s' "$HF_TOKEN" > /h/d/hermes-codex/.relay-token
           chmod 600 /work/hermes-codex/.relay-token
-          trap 'rm -f /work/hermes-codex/.relay-token' EXIT
+          trap 'rm -f /h/d/hermes-codex/.relay-token' EXIT
           sh deploy/gpu-pc/ensure_ace_step.sh
       - name: verify from runner (comfynet)
         run: |
