@@ -29,12 +29,12 @@ jobs:
           # comfyui может отсутствовать (janitor удалил контейнер) — пересоздаём из образа
           if [ -z "$(docker ps -q --filter name=wan22)" ]; then
             echo "comfyui нет — пересоздаю из comfyui-wan22:local"
-            for v in wan-models wan-output wan-input; do docker volume create $v >/dev/null; done
+            # t_40bfcd35 R2: веса/выходы — bind на C:\dockerlocal\wan22 (не docker-том на D:)
             NET=$(docker network ls --format '{{.Name}}' | grep -v '^bridge$\|^host$\|^none$' | while read n; do docker network inspect "$n" --format '{{range .Containers}}{{printf "%s\n" .Name}}{{end}}' | grep -qx 'gh-runner-aicontent-factory' && echo "$n" && break; done)
-            docker run --rm -i -v wan-models:/models alpine:3.20 \
+            docker run --rm -i -v /run/desktop/mnt/host/c/dockerlocal/wan22/models:/models alpine:3.20 \
               sh -c 'cat > /models/extra_model_paths.yaml' < deploy/gpu-pc/comfyui/extra_model_paths.yaml
             docker run -d --name wan22 --gpus all --network "$NET" --network-alias comfyui \
-              -v wan-models:/models -v wan-output:/app/output -v wan-input:/app/input \
+              -v /run/desktop/mnt/host/c/dockerlocal/wan22/models:/models -v /run/desktop/mnt/host/c/dockerlocal/wan22/output:/app/output -v /run/desktop/mnt/host/c/dockerlocal/wan22/input:/app/input \
               comfyui-wan22:local
             for i in $(seq 1 60); do
               sleep 5
@@ -47,7 +47,7 @@ jobs:
             # диагностика: что ComfyUI реально видит после свежего recreate
             OIP=$(docker inspect wan22 --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
             echo "=== /models на volume ==="
-            docker run --rm -v wan-models:/models:ro alpine:3.20 find /models -maxdepth 2 -type f | sort
+            docker run --rm -v /run/desktop/mnt/host/c/dockerlocal/wan22/models:/models:ro alpine:3.20 find /models -maxdepth 2 -type f | sort
             echo "=== object_info списки ==="
             curl -s -m 20 "http://$OIP:8188/object_info" | docker run --rm -i python:3.12-slim python -c "import json,sys; oi=json.load(sys.stdin); g=lambda c,k: oi.get(c,{}).get('input',{}).get('required',{}).get(k,[[],{}])[0]; print('OBJDUMP unet:',g('UNETLoader','unet_name')); print('OBJDUMP clip:',g('CLIPLoader','clip_name')); print('OBJDUMP vae:',g('VAELoader','vae_name')); print('OBJDUMP lora:',g('LoraLoaderModelOnly','lora_name'))"
           fi
