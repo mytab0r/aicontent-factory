@@ -23,7 +23,7 @@ while read -r dg size; do
   if [ -f "$f" ] && [ "$(stat -c %s "$f")" = "$size" ] && sha256sum "$f" | grep -q "${dg#sha256:}"; then echo "skip $n verified"; continue; fi
   fn=$(echo "$dg" | tr ':_' '__' | tr '/' '_')
   # PC resume download from HF if partial exists
-  have=0; [ -f "$f" ] && have=$(stat -c %s "$f")
+  have=$(stat -c %s "$f" 2>/dev/null || echo 0)
   if [ "$have" -lt "$size" ]; then
     if [ "$have" -gt 0 ]; then
       curl -fsSL -C - -H "Authorization: Bearer $HF_TOKEN" "https://huggingface.co/datasets/$REPO/resolve/main/$fn" >> "$f" || true

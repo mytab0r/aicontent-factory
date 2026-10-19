@@ -31,14 +31,14 @@ else
       sleep 60
       now=$(docker run --rm --privileged --pid=host alpine:3.20 sh -c 's=0; for d in /var/lib/desktop-containerd/daemon/io.containerd.content.v1.content/ingest/*/; do [ -f "$d/data" ] && s=$((s+$(stat -c %s "$d/data" 2>/dev/null||echo 0))); done; echo $s' || echo 0)
       dt=$(( $(date +%s) - pt )); rate=$(( dt>0 ? (now-prev)/dt/1000 : 0 ))
-      echo "progress: $((now/1000000))/$((total/1000000)) MB ($((now*100/total))%) ${rate}KB/s"
+      echo "progress: $((now/1000000))/$((total/1000000)) MB ($((now*100/total))%) ${rate}KB/s | $(tail -1 /tmp/pull.log 2>/dev/null | cut -c1-80)"
       if [ "$rate" -lt 3000 ]; then slow=$((slow+1)); [ $slow -ge 10 ] && { echo "SLOW 10min: switching to VPS relay"; break; }; else slow=0; fi
       prev=$now; pt=$(date +%s)
     done
     if [ -f /tmp/pull.done ] && grep -q "Status: Downloaded" /tmp/pull.log; then
       rm -f /tmp/pull.done
     else
-      pkill -f "docker pull" || true; sleep 3; rm -f /tmp/pull.done
+      echo "=== pull.log tail ==="; tail -5 /tmp/pull.log 2>/dev/null; pkill -f "docker pull" || true; sleep 3; rm -f /tmp/pull.done
       sh deploy/gpu-pc/hf_relay.sh || { echo "::error::pull + relay failed"; exit 1; }
     fi
     docker image inspect "$IMG" >/dev/null || { echo "::error::image still missing"; exit 1; }
