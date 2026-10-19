@@ -20,15 +20,24 @@ if docker inspect ace-step >/dev/null 2>&1; then
 else
   echo "ace-step missing -> recreate"
   if ! docker image inspect "$IMG" >/dev/null 2>&1; then
-    ok=0
-    for i in 1 2 3 4 5 6 7 8; do
-      # R2: plain pull resumes; log only layer outcome lines
-      if docker pull "$IMG" 2>&1 | tee /tmp/pull.log | grep -E 'Already exists|Pull complete|Digest|Status|rror'; then :; fi
-      echo "attempt $i: layers already-present=$(grep -c 'Already exists' /tmp/pull.log || true) completed=$(grep -c 'Pull complete' /tmp/pull.log || true)"
-      dfree "after pull attempt $i"
-      docker image inspect "$IMG" >/dev/null 2>&1 && { ok=1; break; }
-      sleep 20
+    # R1/R2: pull in background + progress monitor; abort to VPS mirror route if <3MB/s for 10min
+    ( for i in 1 2 3 4 5 6 7 8 9 10; do
+        docker pull "$IMG" >/tmp/pull.log 2>&1 && break
+        echo "pull attempt $i failed" >>/tmp/pull.log; sleep 20
+      done; touch /tmp/pull.done ) &
+    total=7160000000  # amd64 compressed layers, owner measure 19.10
+    slow=0; prev=0; pt=$(date +%s)
+    while [ ! -f /tmp/pull.done ]; do
+      sleep 60
+      now=$(docker run --rm --privileged --pid=host alpine:3.20 sh -c 's=0; for d in /var/lib/desktop-containerd/daemon/io.containerd.content.v1.content/ingest/*/; do [ -f "$d/data" ] && s=$((s+$(stat -c %s "$d/data" 2>/dev/null||echo 0))); done; echo $s' || echo 0)
+      dt=$(( $(date +%s) - pt )); rate=$(( dt>0 ? (now-prev)/dt/1000 : 0 ))
+      echo "progress: $((now/1000000))/$((total/1000000)) MB ($((now*100/total))%) ${rate}KB/s"
+      if [ "$rate" -lt 3000 ]; then slow=$((slow+1)); [ $slow -ge 10 ] && { echo "SLOW 10min: switching to VPS relay"; break; }; else slow=0; fi
+      prev=$now; pt=$(date +%s)
     done
+    [ -f /tmp/pull.done ] && grep -q "Status: Downloaded" /tmp/pull.log || { pkill -f "docker pull" || true; sleep 3; . /vps_relay.sh; }
+    docker image inspect "$IMG" >/dev/null || { echo "::error::pull failed incl. relay"; exit 1; }
+    rm -f /tmp/pull.done
     if [ $ok = 0 ]; then
       dfree "before ingest cleanup"
       host "du -sh $INGEST 2>/dev/null; find $INGEST -mindepth 1 -maxdepth 1 -type d -mmin +10 -exec rm -rf {} +; du -sh $INGEST 2>/dev/null" || true
