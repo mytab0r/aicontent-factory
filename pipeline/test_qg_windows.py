@@ -142,8 +142,8 @@ def test_seam_why_boundaries():
 
 
 def test_music_helpers():
-    assert music.XFADE == 8.0
-    assert music.seam_times([100, 100, 100]) == [96.0, 188.0]
+    assert music.XFADE == 16.0  # t_ffa7ff01: шире кроссфейд — плавнее RMS-переход R3
+    assert music.seam_times([100, 100, 100]) == [92.0, 176.0]
     assert music.chapters([100, 100], ['A', 'B'], xfade=8) == ['0:00 A', '1:32 B']
     assert music.chapters([482.0, 482.0], ['A', 'B'])[1] == '8:02 B'
 
