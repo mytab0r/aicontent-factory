@@ -1,0 +1,25 @@
+name: pc docker forensics
+on:
+  push:
+    branches: ['ops/docker-forensics']
+  workflow_dispatch: {}
+
+jobs:
+  diag:
+    runs-on: [self-hosted, release]
+    timeout-minutes: 15
+    steps:
+      - name: nginx access log auth-proxy (2376) - kto delal rm
+        run: |
+          docker logs auth-proxy --since 2026-10-19T01:00:00Z --until 2026-10-19T03:00:00Z 2>&1 | head -300 || true
+          echo "=== vse DELETE/POST containers v logah (vse vremya) ==="
+          docker logs auth-proxy 2>&1 | grep -aiE "DELETE|/containers/.*(stop|rm|delete)|/containers/prune" | tail -200 || true
+      - name: ace-proxy (socket proxy) logi
+        run: |
+          docker logs ace-proxy --since 2026-10-19T01:00:00Z --until 2026-10-19T03:00:00Z 2>&1 | head -200 || true
+      - name: janitor logi (polnye, za 19.10)
+        run: |
+          docker logs docker-janitor --since 2026-10-19T00:30:00Z --until 2026-10-19T03:00:00Z 2>&1 | head -100 || true
+      - name: tekushchee sostoyanie ace-step + verification smoke run
+        run: |
+          docker inspect ace-step --format 'state={{.State.Status}} health={{.State.Health.Status}} image={{.Config.Image}}' || true

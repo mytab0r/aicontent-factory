@@ -154,3 +154,17 @@ with tempfile.TemporaryDirectory() as td:
     assert any("инфразвук" in w for w in qg.sub_why(dc)), qg.sub_why(dc)
     assert qg.SUB_MAX == -20.0
 print("test_quality_gate A17 infrasound OK")
+
+# A18 (каталог): скачок громкости между сегментами микса — зритель крутит громкость. Медиана short-term LUFS (3 с)
+# по блокам 60 с, скачок между соседними блоками. Замер 19.10: одобренный 15-мин микс ref-style6 1.5, MIX ref-style4 0.8,
+# MIX 85-95-105 1.0, voice-in-transitions 0.2; блок 30 с непригоден (ref1 внутри трека 8.8 — штатная динамика).
+with tempfile.TemporaryDirectory() as td:
+    ok, jump = f"{td}/ok.wav", f"{td}/jump.wav"
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=150", "-af",
+                    "volume=-14dB", "-ac", "2", ok], check=True)
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=150", "-af",
+                    "volume=-14dB,volume='if(lt(t,75),1,0.316)':eval=frame", "-ac", "2", jump], check=True)
+    assert qg.loudjump_why(ok) == [], qg.loudjump_why(ok)
+    assert any("скачок громкости" in w for w in qg.loudjump_why(jump)), qg.loudjump_why(jump)
+    assert qg.JUMP_MAX == 4.0 and qg.JUMP_BLOCK == 60.0
+print("test_quality_gate A18 loudness jump OK")
