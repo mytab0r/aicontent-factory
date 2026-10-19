@@ -93,3 +93,24 @@ def test_title_formula_has_genre_word():
         p_phonk = idea.build_prompt("chill phonk", date(2026, 10, 13), Path(d))
     assert "lofi" in p_lofi.lower()
     assert "phonk" in p_phonk.lower()
+
+
+def test_m1_duplicate_scene_titles_blocked():
+    """M1 (аудит 18.10): на канале ушли дубли сцен long-form — «Cozy Halloween Night Train» x2 (14.10),
+    «Anime Nights» x2 (12.10), «… Sunset Rooftop» x2 (16.10). Шаблонность = риск inauthentic content."""
+    rec = [{"date": "2026-10-14", "title": "Cozy Halloween Night Train 🎃 Lofi Beats to Relax / Sleep to | 1 Hour"},
+           {"date": "2026-10-12", "title": "Anime Nights 🌸 Chill Lofi Beats to Study and Relax to"},
+           {"date": "2026-10-16", "title": "Cozy Sunset Rooftop 🎃 Lofi Beats to Study and Relax to | 1 Hour"}]
+    d = date(2026, 10, 17)
+    assert idea.dup_title("Cozy Halloween Night Train 🎃 Lofi Beats to Study & Relax to", rec, d)
+    assert idea.dup_title("Anime Nights 🌙 Chill Lofi Beats to Study and Relax to", rec, d)
+    assert idea.dup_title("Autumn Sunset Rooftop 🎃 Phonk Beats to Relax and Drift to", rec, d)
+    assert idea.dup_title("Pumpkin Night Train 🎃 Cozy Lofi Beats to Study and Relax to", rec, d), "та же сцена: night train"
+    for ok in ("Rainy Tokyo Pumpkin Café 🎃 Cozy Lofi Beats to Study & Relax to", "Autumn Café Window 🎃 Phonk Beats",
+               "Anime Sunset Study Sessions 🌸 Chill Lofi Beats to Study and Relax to"):
+        assert not idea.dup_title(ok, rec, d), ok
+    assert not idea.dup_title("Cozy Halloween Night Train 🎃 Lofi Beats", rec, date(2026, 11, 1)), "окно 14 дней"
+    with tempfile.TemporaryDirectory() as t:
+        idea.remember_title("A", date(2026, 10, 1), Path(t))
+        idea.remember_title("B", date(2026, 10, 20), Path(t))
+        assert [r["title"] for r in idea.recent_titles(Path(t))] == ["A", "B"]
