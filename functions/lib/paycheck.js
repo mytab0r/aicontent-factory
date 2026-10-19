@@ -16,6 +16,8 @@ const RPC = {
   base: 'https://base-rpc.publicnode.com',
 };
 // среднее время блока в секундах — для оценки стартового блока от времени invoice
+// ponytail: PAY_TRON_API только для e2e на Nile (https://nileapi.tronscan.org); в CF Workers process нет -> mainnet.
+const TRON_API = globalThis.process?.env?.PAY_TRON_API || 'https://apilist.tronscanapi.com';
 const BLOCK_TIME = { eth: 12, bsc: 3, poly: 2, arb: 1, base: 2 };
 const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 
@@ -32,7 +34,7 @@ export function toMicro(quantRaw, decimals) {
 
 async function tronMatches(pair, address, dueMicro, createdMs) {
   const url =
-    'https://apilist.tronscanapi.com/api/token_trc20/transfers?limit=50&start=0&sort=-timestamp' +
+    TRON_API + '/api/token_trc20/transfers?limit=50&start=0&sort=-timestamp' +
     '&relatedAddress=' + encodeURIComponent(address) +
     '&filterToken=' + pair.token;
   const r = await fetch(url, { headers: { 'User-Agent': 'pay.pxbt.app' } });

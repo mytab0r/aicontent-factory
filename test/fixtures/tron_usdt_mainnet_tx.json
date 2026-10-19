@@ -1,0 +1,99 @@
+{
+ "_note": "Real mainnet USDT-TRC20 transfer, captured 2026-10-19 (t_eb7fa17b). trongrid_*: TronGrid API; tronscan_transfers: response shape paycheck.js reads (Tronscan token_trc20/transfers), trimmed to this tx.",
+ "trongrid_trc20": {
+  "transaction_id": "26baced44fad6f91a29d5ba4e6cb6236b48c9da9b72d4a487015e41a30bc487c",
+  "token_info": {
+   "symbol": "USDT",
+   "address": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+   "decimals": 6,
+   "name": "Tether USD"
+  },
+  "block_timestamp": 1792227087000,
+  "from": "TL7o4s6xMXG6SLFq8nTiJZT7Q8EBPK572C",
+  "to": "TNXoiAJ3dct8Fjg4M9fkLFh9S2v9TXc32G",
+  "type": "Transfer",
+  "value": "500000000"
+ },
+ "trongrid_txinfo": {
+  "id": "26baced44fad6f91a29d5ba4e6cb6236b48c9da9b72d4a487015e41a30bc487c",
+  "blockNumber": 87184703,
+  "blockTimeStamp": 1792227087000,
+  "contractResult": [
+   "0000000000000000000000000000000000000000000000000000000000000000"
+  ],
+  "contract_address": "41a614f803b6fd780986a42c78ec9c7f77e6ded13c",
+  "receipt": {
+   "energy_usage": 64285,
+   "energy_usage_total": 64285,
+   "net_usage": 345,
+   "result": "SUCCESS",
+   "energy_penalty_total": 49635
+  },
+  "log": [
+   {
+    "address": "a614f803b6fd780986a42c78ec9c7f77e6ded13c",
+    "topics": [
+     "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+     "0000000000000000000000006f5105a6b912f1ec48cd44b4ba08898453374392",
+     "00000000000000000000000089cbcb2372e1c2fbc00f24895a406a0c722c89f3"
+    ],
+    "data": "000000000000000000000000000000000000000000000000000000001dcd6500"
+   }
+  ]
+ },
+ "tronscan_transfers": {
+  "token_transfers": [
+   {
+    "transaction_id": "26baced44fad6f91a29d5ba4e6cb6236b48c9da9b72d4a487015e41a30bc487c",
+    "status": 0,
+    "block_ts": 1792227087000,
+    "from_address": "TL7o4s6xMXG6SLFq8nTiJZT7Q8EBPK572C",
+    "to_address": "TNXoiAJ3dct8Fjg4M9fkLFh9S2v9TXc32G",
+    "block": 87184703,
+    "contract_address": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+    "quant": "500000000",
+    "approval_amount": "0",
+    "event_type": "Transfer",
+    "confirmed": true,
+    "contractRet": "SUCCESS",
+    "finalResult": "SUCCESS",
+    "tokenType2": "trc20",
+    "tokenInfo": {
+     "tokenId": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+     "tokenAbbr": "USDT",
+     "tokenName": "Tether USD",
+     "tokenDecimal": 6,
+     "tokenCanShow": 1,
+     "tokenType": "trc20",
+     "tokenLogo": "https://static.tronscan.org/production/logo/usdtlogo.png",
+     "tokenLevel": "2",
+     "issuerAddr": "THPvaUhoh2Qn2y9THCZML3H815hhFhn5YC",
+     "vip": true
+    },
+    "fromAddressIsContract": false,
+    "from_address_tag": {
+     "from_address_tag_logo": ""
+    },
+    "toAddressIsContract": false,
+    "to_address_tag": {
+     "to_address_tag_logo": "https://coin.top/production/upload/logo/Binance.png",
+     "to_address_tag": "Binance-Hot 4"
+    },
+    "trigger_info": {
+     "method": "transfer(address _to,uint256 _value)",
+     "data": "a9059cbb00000000000000000000000089cbcb2372e1c2fbc00f24895a406a0c722c89f3000000000000000000000000000000000000000000000000000000001dcd6500",
+     "parameter": {
+      "_value": "500000000",
+      "_to": "TNXoiAJ3dct8Fjg4M9fkLFh9S2v9TXc32G"
+     },
+     "methodName": "transfer",
+     "contract_address": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+     "call_value": 0
+    },
+    "revert": false,
+    "contract_type": "trc20",
+    "riskTransaction": false
+   }
+  ]
+ }
+}
