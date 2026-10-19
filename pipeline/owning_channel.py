@@ -121,6 +121,11 @@ def count_today(published_at: list[str], today: dt.date) -> int:
     return sum(1 for p in published_at if p[:10] == today.isoformat())
 
 
+def count_owning_today(items: list[tuple[str, str]], today: dt.date) -> int:
+    """(publishedAt, title): лимит слотов Owning не съедают ролики «What if» (ch2 живёт плейлистом на ch1)."""
+    return count_today([p for p, t in items if t.startswith("The Economics of Owning")], today)
+
+
 # ---------- render (TTS + инфографика) ----------
 
 def _font(size, bold=True):
@@ -226,11 +231,12 @@ def guard() -> int:
     ch = y.channels().list(part="contentDetails", mine=True).execute()["items"][0]
     up = ch["contentDetails"]["relatedPlaylists"]["uploads"]
     try:
-        items = y.playlistItems().list(part="contentDetails", playlistId=up, maxResults=20).execute().get("items", [])
+        items = y.playlistItems().list(part="snippet,contentDetails", playlistId=up, maxResults=30).execute().get("items", [])
     except Exception as e:  # пустой канал: uploads-плейлист ещё 404
         print(f"uploads list: {type(e).__name__}; считаю 0")
         items = []
-    n = count_today([i["contentDetails"].get("videoPublishedAt", "") for i in items], dt.datetime.now(dt.timezone.utc).date())
+    n = count_owning_today([(i["contentDetails"].get("videoPublishedAt", ""), i["snippet"].get("title", "")) for i in items],
+                           dt.datetime.now(dt.timezone.utc).date())
     print(f"uploads today: {n}/{MAX_PER_DAY}")
     return 0 if n < MAX_PER_DAY else 3  # 3 = лимит (workflow: тихий пропуск), иное = ошибка
 
