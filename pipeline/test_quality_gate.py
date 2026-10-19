@@ -114,3 +114,17 @@ with tempfile.TemporaryDirectory() as td:
     assert any("резкий конец" in w for w in qg.end_why(cut_end)), qg.end_why(cut_end)
     assert qg.end_why(faded) == [], qg.end_why(faded)
 print("test_quality_gate OK")
+
+# V3 (каталог): шортс не 9:16 / длиннее 60 с / без звука = YouTube не покажет его в ленте Shorts (уйдёт обычным роликом)
+with tempfile.TemporaryDirectory() as td:
+    def mk(out, size, d, audio=True):
+        cmd = ["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", f"color=c=gray:s={size}:r=5:d={d}"]
+        cmd += (["-f", "lavfi", "-i", f"sine=f=440:d={d}", "-c:a", "aac"] if audio else []) + ["-c:v", "libx264", "-pix_fmt", "yuv420p", out]
+        subprocess.run(cmd, check=True)
+    ok, wide, long_, mute = (f"{td}/{n}.mp4" for n in ("ok", "wide", "long", "mute"))
+    mk(ok, "108x192", 40); mk(wide, "192x108", 40); mk(long_, "108x192", 61); mk(mute, "108x192", 40, audio=False)
+    assert qg.short_why(ok) == [], qg.short_why(ok)
+    assert any("9:16" in w for w in qg.short_why(wide)), qg.short_why(wide)
+    assert any("60" in w for w in qg.short_why(long_)), qg.short_why(long_)
+    assert any("поток" in w for w in qg.short_why(mute)), qg.short_why(mute)
+print("test_quality_gate V3 short-format OK")

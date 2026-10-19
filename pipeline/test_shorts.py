@@ -91,3 +91,5 @@ assert len(set(_used)) == 28, [h for h in _used if _used.count(h) > 1]
 assert sh.short_body(idea, "u", 1, hook="x y z")["snippet"]["title"].startswith("x y z | ")
 assert "next_hook(" in (Path(__file__).parent / "07_shorts.py").read_text(encoding="utf-8").split("def main")[1]
 print("test_shorts hook-rotation OK")
+assert "short_why(" in (Path(__file__).parent / "07_shorts.py").read_text(encoding="utf-8").split("def main")[1]
+print("test_shorts V3 gate wired OK")
