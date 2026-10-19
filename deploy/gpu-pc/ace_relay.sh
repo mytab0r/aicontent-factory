@@ -13,7 +13,7 @@ mf=$(curl -fsSL -H "Authorization: Bearer $GH_TOK" -H "Accept: application/vnd.o
 amd=$(echo "$mf" | python3 -c 'import json,sys;m=json.load(sys.stdin);print([x["digest"] for x in m["manifests"] if x["platform"]["architecture"]=="amd64"][0])')
 man=$(curl -fsSL -H "Authorization: Bearer $GH_TOK" -H "Accept: application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json" $API/manifests/$amd)
 echo "$man" > "$RELAY/manifest.json"
-echo "$man" | python3 -c 'import json,sys;m=json.load(sys.stdin);print(m["config"]["digest"]);[print(l["digest"],l["size"]) for l in m["layers"]]' > "$RELAY/bloblist.txt"
+echo "$man" | python3 -c 'import json,sys;m=json.load(sys.stdin);print(m["config"]["digest"],m["config"]["size"]);[print(l["digest"],l["size"]) for l in m["layers"]]' > "$RELAY/bloblist.txt"
 TOTAL=$(awk '{s+=$2}END{print s}' "$RELAY/bloblist.txt")
 n=0
 while read -r dg size; do
