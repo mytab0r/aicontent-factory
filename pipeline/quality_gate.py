@@ -36,6 +36,10 @@ BLACK_MIN = 2.0
 # phonk v2 -49.5, 15-мин микс ref-style6 -28.7, MIX ref-style4 -20.0; обрезанные 60-с отрывки -1.9/+1.1.
 # Начало не проверяется: эталоны стартуют сразу на полной громкости (первые 100 мс ref1 -11.3 дБ).
 END_WIN, END_DROP = 0.5, 12.0
+# A9: моно-совместимость. Потери громкости при сведении в моно (L+R)/2 против стерео > MONO_LOSS дБ = каналы
+# в противофазе (корреляция < 0): на телефоне/колонке-моно трек «пропадает». Замер 19.10: ref1/ref2/ref3 -0.3,
+# phonk v2 -0.5, v1 -1.4, прод KXNsSx2FlXA -0.6; некоррелированные каналы = -3, инверсия канала = -inf.
+MONO_LOSS = 3.0
 MIN_CE = 6.5  # ниже худшего рефа ниши (7.07), сильно выше брака (<=3.6)
 
 
@@ -304,6 +308,18 @@ def end_why(f):
             f"(затухание {tail - whole:+.1f} < {END_DROP} дБ)"] if tail - whole > -END_DROP else []
 
 
+def stereo_why(f):
+    """A9: [причина], если сведение в моно теряет > MONO_LOSS дБ (противофаза). Моно-файл совместим по определению."""
+    ch = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=channels",
+                         "-of", "csv=p=0", str(f)], capture_output=True, text=True).stdout.strip()
+    if ch != "2":
+        return []
+    rms = lambda af: float((re.findall(r"RMS level dB: (-?[\d.]+|-inf)", ff(f, af + "astats=measure_overall=RMS_level:"
+                           "measure_perchannel=none")) or ["-200"])[-1].replace("-inf", "-200"))
+    loss = rms("") - rms("pan=mono|c0=0.5*c0+0.5*c1,")
+    return [f"моно-совместимость: сведение в моно теряет {loss:.1f} дБ > {MONO_LOSS} (каналы в противофазе)"] if loss > MONO_LOSS else []
+
+
 def target(d, final):
     """--final: финальный файл после 04 assemble (то, что заливается), иначе трек после 03."""
     return d / ("video.mp4" if final else "track.mp3")
@@ -325,6 +341,7 @@ def main(argv):
         if a.startswith("--seams="):
             seams = [float(x) for x in a[8:].split(",") if x]
     why, m = objective(f, genre)
+    why += stereo_why(f)  # A9
     why += end_why(f)  # A16: только целый трек/финальный mp4, не сегменты best-of (их хвосты режет склейка)
     if "--final" in argv:
         why += integrity_why(f, expect) + black_why(f)
