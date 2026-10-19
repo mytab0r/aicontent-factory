@@ -185,10 +185,10 @@ def test_seams(d):
     music.concat_tracks([str(loud), str(quiet)], str(joined))
     assert abs(dur_of(joined) - (60 + 60 - music.XFADE)) <= 0.3
     ts = music.seam_times([60.0, 60.0])
-    assert len(ts) == 1 and abs(ts[0] - 56.0) < 1e-9
+    assert len(ts) == 1 and abs(ts[0] - (60.0 - music.XFADE / 2)) < 1e-9
     fake = zcr_critic(good=7.6, bad=4.0)
     why, rep = qg.full_ce_why(str(joined), seams=ts, critic=fake)
-    assert len(rep['seams']) == 1 and abs(rep['seams'][0]['t'] - 56.0) < 1e-9
+    assert len(rep['seams']) == 1 and abs(rep['seams'][0]['t'] - (60.0 - music.XFADE / 2)) < 1e-9
     assert abs(rep['seams'][0]['rms_l'] - rep['seams'][0]['rms_r']) > qg.SEAM_RMS_MAX
     assert any('R3' in r for r in why)
     same = d / 'seam_same.wav'
