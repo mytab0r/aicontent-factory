@@ -39,7 +39,14 @@ else
       rm -f /tmp/pull.done
     else
       echo "=== pull.log tail ==="; tail -5 /tmp/pull.log 2>/dev/null; pkill -f "docker pull" || true; sleep 3; rm -f /tmp/pull.done
-      sh deploy/gpu-pc/hf_relay.sh || { echo "::error::pull + relay failed"; exit 1; }
+      # HF relay: download runs inside hermes-runner (D: mount), tar loaded by this runner
+      docker exec hermes-runner sh /work/dockerlocal/ace-relay/ace_relay.sh || { echo "::error::hf relay download failed"; exit 1; }
+      docker cp hermes-runner:/work/dockerlocal/ace-relay/ace-step-oci.tar /tmp/ace-step-oci.tar || { echo "::error::cp tar failed"; exit 1; }
+      docker load -i /tmp/ace-step-oci.tar || { echo "::error::docker load failed"; exit 1; }
+      rm -f /tmp/ace-step-oci.tar
+      docker exec hermes-runner rm -f /work/dockerlocal/ace-relay/ace-step-oci.tar
+      docker exec hermes-runner sh -c 'rm -f /work/dockerlocal/ace-relay/blobs/sha256/*'
+      echo "relay complete, temps cleaned"
     fi
     docker image inspect "$IMG" >/dev/null || { echo "::error::image still missing"; exit 1; }
     if [ $ok = 0 ]; then
