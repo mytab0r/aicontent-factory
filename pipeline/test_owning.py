@@ -81,12 +81,12 @@ def test_cta_decision_and_description():
     d = oc.short_description(GOOD)
     assert "Not financial advice" in d and "#Shorts" in d
     assert oc.AI_NOTE in d
-    # решение (отчёт t_018254ae): таро-CTA в Shorts НЕ ставим — ссылки в описании Shorts некликабельны
-    # (YouTube Help 13748639) и вне ниши; CTA только в описании канала.
-    assert oc.CTA_IN_SHORTS is False and oc.CTA_URL not in d
+    # решение владельца 18.10 (t_018254ae): таро-CTA с канала 1 убрать везде — аудитория не та,
+    # вредит доверию; на канале 1 только тематические ссылки. Таро-воронка → канал 2.
     ch = oc.channel_description()
-    assert oc.CTA_URL in ch and "for entertainment" in ch
-    assert oc.CTA_URL.endswith("start=yt_manifest")
+    for text in (d, ch):
+        assert "tarot" not in text.lower() and "t.me/" not in text
+    assert "https://" in ch and oc.DISCLAIMER in ch
 
 
 def test_upload_body_for_channel():
