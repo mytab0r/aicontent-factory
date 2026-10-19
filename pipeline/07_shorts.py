@@ -161,6 +161,10 @@ def main() -> None:
     for i, (s, e) in enumerate(wins, 1):
         out = run_dir / f"short_{i}.mp4"
         render(image, track, s, e, out)
+        from quality_gate import short_why  # V3: формат проверяется до заливки, брак не грузим
+        why = short_why(out)
+        if why:
+            sys.exit("ERROR: шортс не прошёл гейт: " + "; ".join(why))
         outs.append(out)
 
     from importlib import import_module

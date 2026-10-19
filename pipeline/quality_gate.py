@@ -279,6 +279,23 @@ def black_why(f):
             re.findall(r"black_start:([\d.]+) black_end:[\d.]+ black_duration:([\d.]+)", e)]
 
 
+# V3: шортс = вертикаль 9:16, <= 60 с, есть видео+звук; иначе YouTube не кладёт его в ленту Shorts.
+SHORT_MAX, SHORT_AR, SHORT_AR_TOL = 60.0, 9 / 16, 0.01
+
+
+def short_why(f):
+    """V3: [причины], почему файл не годится как Shorts (формат/длительность/потоки)."""
+    j = json.loads(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,width,height:format=duration",
+                                   "-of", "json", str(f)], capture_output=True, text=True).stdout or "{}")
+    st = {s.get("codec_type"): s for s in j.get("streams", [])}
+    if "video" not in st or "audio" not in st:
+        return [f"шортс: нет потока {sorted(st)} (нужны video+audio)"]
+    w, h = int(st["video"].get("width") or 0), int(st["video"].get("height") or 0)
+    d = float(j.get("format", {}).get("duration") or 0)
+    why = [] if h and abs(w / h - SHORT_AR) <= SHORT_AR_TOL else [f"шортс {w}x{h} не 9:16"]
+    return why + ([f"шортс {d:.1f} с > {SHORT_MAX:.0f} с"] if d > SHORT_MAX else [])
+
+
 def end_why(f):
     """A16: [причина], если последние END_WIN с не тише всего трека на END_DROP дБ (обрыв без затухания)."""
     d = duration(f)
