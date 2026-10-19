@@ -15,46 +15,10 @@ jobs:
         run: |
           for p in ace-proxy auth-proxy; do echo "== $p"; docker logs --since 2026-10-17T00:00:00Z $p 2>&1 | grep -E 'DELETE|/prune|images/.*/(tag|push)|containers/ace-step' | grep -v '/exec' | tail -40; done
           docker ps -a --format '{{.Names}} {{.Networks}}' | sort
-      - name: disk gate + free space (drop minimax-spike if short, orchestrator decision)
-        run: |
-          free_d() { docker run --rm -v /run/desktop/mnt/host/d:/d:ro alpine:3.20 df -BG /d | awk 'NR==2{gsub("G","",$4);print $4}'; }
-          echo "D free: $(free_d) GB"
-          if [ "$(free_d)" -lt 50 ] && ! docker images -q ghcr.io/ace-step/ace-step-1.5:latest | grep -q .; then
-            docker rm -f mm3gen 2>/dev/null || true
-            docker rmi minimax-spike:local || true
-            docker volume rm minimax-out minimax-weights || true
-            echo "after cleanup D free: $(free_d) GB"
-          fi
-          [ "$(free_d)" -ge 35 ] || { echo "::error::D: < 35 GB"; exit 1; }
-      - name: pull
-        run: |
-          for i in 1 2 3; do docker pull -q ghcr.io/ace-step/ace-step-1.5:latest && break; sleep 30; done
-          docker image inspect ghcr.io/ace-step/ace-step-1.5:latest --format 'hc={{json .Config.Healthcheck}} size={{.Size}}'
-      - name: recreate ace-step (same env/mounts as xl-probe)
-        run: |
-          docker rm -f ace-step 2>/dev/null || true
-          docker run -d --name ace-step --restart unless-stopped --gpus all --network comfynet \
-            --health-cmd "python3 -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:8001/health',timeout=5)\"" \
-            --health-interval 30s --health-timeout 10s --health-retries 3 --health-start-period 20m \
-            -e ACESTEP_MODE=api -e ACESTEP_LLM_BACKEND=pt \
-            -e ACESTEP_CONFIG_PATH=acestep-v15-turbo \
-            -e ACESTEP_CONFIG_PATH2=acestep-v15-base \
-            -e ACESTEP_LM_MODEL_PATH=acestep-5Hz-lm-1.7B \
-            -e ACESTEP_ON_DEMAND_MODEL_LOAD=true \
-            -e ACESTEP_QUEUE_WORKERS=1 -e ACESTEP_API_WORKERS=1 \
-            -e ACESTEP_API_HOST=0.0.0.0 -e ACESTEP_INIT_SERVICE=true \
-            -v /run/desktop/mnt/host/c/dockerlocal/ace15/checkpoints:/app/checkpoints \
-            -v /run/desktop/mnt/host/c/dockerlocal/ace15/output:/app/output \
-            -v /run/desktop/mnt/host/c/dockerlocal/ace15/hf:/root/.cache/huggingface \
-            ghcr.io/ace-step/ace-step-1.5:latest
-          for i in $(seq 1 80); do
-            s=$(docker inspect -f '{{.State.Status}}/{{.State.Health.Status}}' ace-step); echo "$i $s"
-            [ "${s#*/}" = healthy ] && break
-            [ "${s%/*}" = running ] || break
-            sleep 15
-          done
-          docker logs --tail 40 ace-step 2>&1
-          [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step)" = healthy ]
+      - uses: actions/checkout@v4
+      - name: ensure ace-step
+        timeout-minutes: 60
+        run: sh deploy/gpu-pc/ensure_ace_step.sh
       - name: verify from runner (comfynet)
         run: |
           getent hosts ace-step
