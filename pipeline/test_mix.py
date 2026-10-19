@@ -243,3 +243,26 @@ if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"):
             f(); print("ok", n)
+
+
+def test_trim_fade_tails_cuts_quiet_end_and_respects_last():
+    "trim_fade_tails: срезает хвост-затухание (RMS ниже медианы на 6 дБ), последний сегмент не трогаем; после среза края сегментов на уровне тела (R3)."
+    import importlib.util as _ilu
+    _sp = _ilu.spec_from_file_location("music03", os.path.join(os.path.dirname(__file__), "03_music.py"))
+    _m = _ilu.module_from_spec(_sp); _sp.loader.exec_module(_m)
+    fs = []
+    for k in range(3):
+        f = f"{TDIR}/tf{k}.mp3"
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=30",
+                        "-af", "volume=0.5,afade=t=out:st=22:d=8:curve=exp",
+                        "-c:a", "libmp3lame", "-b:a", "192k", f], check=True)
+        fs.append(f)
+    cuts = _m.trim_fade_tails(fs[:-1])
+    assert cuts[0] >= 5, cuts  # хвост 8 с затухания срезан
+    d30 = _m._probe_sec(fs[0])
+    assert d30 < 28, d30       # файл реально короче
+    assert _m._probe_sec(fs[-1]) >= 29, "последний сегмент не режется"
+    # после среза правый край сегмента 0 на уровне тела (отклонение < 6 дБ)
+    body = _m.edge_rms(fs[0], "l", sec=10)
+    tail = _m.edge_rms(fs[0], "r", sec=5)
+    assert abs(tail - body) < 6, (body, tail)

@@ -436,7 +436,7 @@ def chunk_plan(total_sec: int, max_chunk_sec: int = 240) -> list[int]:
     return chunks
 
 
-XFADE = 8.0  # t_3f0f7b91: стыки сегментов через acrossfade (как одобренный рецепт микса 14.10), не встык
+XFADE = 16.0  # t_3f0f7b91, t_ffa7ff01: стыки сегментов через acrossfade (шире — плавнее RMS-переход R3), не встык
 
 
 def seam_times(durs, xfade=XFADE) -> list[float]:
@@ -477,6 +477,45 @@ def edge_match(paths, max_gain=6.0, log=print):
         gains.append(tot)
         log(f"edge_match {i}: суммарный gain {tot:+.2f} дБ")
     return gains
+
+
+def trim_fade_tails(paths, max_sec=20.0, floor_db=6.0, log=print):
+    """t_ffa7ff01 (run 39170008194): ACE-Step фейдит конец каждого сегмента; после склейки этот
+    хвост-затухание остаётся в середине трека и даёт R3-скачок (тихий хвост -> громкое начало,
+    loudnorm не вытягивает 5с-окно целиком). Последний сегмент не трогаем — фейд это нормальный
+    конец микса. Срезаем 1с-окна с конца, пока RMS окна ниже медианы тела на floor_db; не более
+    max_sec на сегмент. Возвращает список срезанных секунд (по порядку paths)."""
+    import os
+    import re
+    import statistics
+    import subprocess
+    import tempfile
+    cuts = []
+    for p in paths:
+        dur = _probe_sec(p)
+        proc = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", p, "-af",
+                               "astats=metadata=1:reset=1:measure_overall=RMS_level:measure_perchannel=none",
+                               "-f", "null", "-"], capture_output=True, text=True)
+        win = [float(x) if x != "-inf" else -120.0 for x in re.findall(r"RMS level dB: (-?[\d.]+|-inf)", proc.stderr)]
+        if len(win) < 10:  # тимеровая сетка: короткий/битый файл не режем
+            cuts.append(0.0)
+            continue
+        frame = dur / len(win)  # astats reset=1 -> окно на кадр (~23 мс)
+        body = statistics.median(win)
+        n = 0
+        for r in reversed(win):
+            if r > body - floor_db or (n + 1) * frame >= max_sec or (n + 1) * frame > dur * 0.4:
+                break
+            n += 1
+        cut = n * frame
+        if cut >= 1.0:
+            tmp = tempfile.mktemp(suffix=".mp3")
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", p, "-t", str(dur - cut),
+                            "-c:a", "libmp3lame", "-b:a", "192k", tmp], check=True)
+            os.replace(tmp, p)
+        cuts.append(float(cut))
+        log(f"trim_fade_tail {os.path.basename(p)}: -{cut:.0f} с (хвост-затухание)")
+    return cuts
 
 
 def concat_tracks(paths: list[str], out_path, xfade: float = XFADE) -> None:
@@ -553,6 +592,8 @@ def main() -> None:
         paths, durs = plan_mix(duration, gen_mix, _probe_sec, budget_sec=mix_budget,
                                max_tracks=-(-duration // MIX_SEG_SEC) + 2)
         edge_match(paths, log=print)
+        trim_fade_tails(paths[:-1], log=print)  # фейд последнего сегмента остаётся концом микса
+        durs = [_probe_sec(p) for p in paths]  # срез хвостов меняет длительности — перезамер
         concat_tracks(paths, out_path)
         chaps = chapters(durs, track_names(len(paths), seed), xfade=XFADE)
         seams = seam_times(durs)
