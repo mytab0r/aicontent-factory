@@ -11,13 +11,8 @@ jobs:
     runs-on: [self-hosted, release]
     timeout-minutes: 10
     steps:
-      - name: ace-step health 19.10 (не healthy при старте daily 39187777858)
+      - name: identify host + ace-step presence
         run: |
-          docker ps -a --filter name=ace-step --format '{{.Names}} {{.Status}}'
-          docker inspect -f 'health={{.State.Health.Status}} failing={{.State.Health.FailingStreak}} started={{.State.StartedAt}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}}' ace-step
-          docker inspect -f '{{range .State.Health.Log}}{{.End}} exit={{.ExitCode}} {{slice .Output 0 160}}{{println}}{{end}}' ace-step | tail -5
-          docker logs --since 2026-10-19T01:50:00Z --until 2026-10-19T02:35:00Z ace-step > l.txt 2>&1 || true
-          wc -l l.txt
-          grep -n -iE 'error|fail|traceback|exception|out of memory|cuda|killed|listen|address' l.txt | head -100
-          echo ---- tail 60 ----
-          tail -60 l.txt
+          echo "hostname=$(hostname) user=$(whoami)"
+          nvidia-smi -L 2>&1 | head -3
+          docker ps -a --format '{{.Names}} {{.Status}}' | head -10
