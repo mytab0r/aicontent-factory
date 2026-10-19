@@ -35,7 +35,7 @@ else
       if [ "$rate" -lt 3000 ]; then slow=$((slow+1)); [ $slow -ge 10 ] && { echo "SLOW 10min: switching to VPS relay"; break; }; else slow=0; fi
       prev=$now; pt=$(date +%s)
     done
-    [ -f /tmp/pull.done ] && grep -q "Status: Downloaded" /tmp/pull.log || { pkill -f "docker pull" || true; sleep 3; . /vps_relay.sh; }
+    [ -f /tmp/pull.done ] && grep -q "Status: Downloaded" /tmp/pull.log || { pkill -f "docker pull" || true; sleep 3; . ./deploy/gpu-pc/vps_relay.sh; }
     docker image inspect "$IMG" >/dev/null || { echo "::error::pull failed incl. relay"; exit 1; }
     rm -f /tmp/pull.done
     if [ $ok = 0 ]; then
