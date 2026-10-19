@@ -17,9 +17,12 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          printf '%s' "$HF_TOKEN" > /h/d/hermes-codex/.relay-token
-          chmod 600 /h/d/hermes-codex/.relay-token
-          trap 'rm -f /h/d/hermes-codex/.relay-token' EXIT
+          printf '%s' "$HF_TOKEN" > /tmp/.relay-token
+          chmod 600 /tmp/.relay-token
+          # D: via docker.sock cp into hermes-runner (D:\ = /work there)
+          docker cp /tmp/.relay-token hermes-runner:/work/hermes-codex/.relay-token
+          docker exec hermes-runner chmod 600 /work/hermes-codex/.relay-token
+          trap 'rm -f /tmp/.relay-token; docker exec hermes-runner rm -f /work/hermes-codex/.relay-token || true' EXIT
           sh deploy/gpu-pc/ensure_ace_step.sh
       - name: verify from runner (comfynet)
         run: |
