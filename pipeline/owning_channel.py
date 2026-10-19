@@ -5,7 +5,7 @@ CHANNEL=owning: 01_idea.py пишет EN-скрипт через 9router (next_p
 этот модуль озвучивает его (edge-tts, бесплатно) и собирает 1080x1920 инфографику (PIL + ffmpeg):
   python owning_channel.py render   -> runs/<last>/video.mp4
   python owning_channel.py guard    -> exit 0 если сегодня ещё < MAX_PER_DAY загрузок (печатает count)
-  python owning_channel.py channel-desc  -> обновить описание канала (CTA)
+  python owning_channel.py channel-desc  -> обновить описание канала (тематические ссылки, без таро)
 Анти-шаблон (inauthentic content): тема/хук/структура ротируются взаимно простыми длинами списков,
 состояние .state/owning_idx.txt коммитит CI.
 """
@@ -42,12 +42,9 @@ MAX_SPEECH_WORDS = 150  # ~55 с при 165 wpm: Short <= 60 с
 AI_NOTE = "AI-generated narration and visuals (synthetic content)."
 DISCLAIMER = "Numbers are rough US estimates for illustration. Not financial advice."
 HASHTAGS = "#Shorts #smallbusiness #businessideas #passiveincome"
-CTA_TEXT = "Free AI tarot reading in Telegram (for entertainment)"
-CTA_URL = "https://t.me/Tar0_Astral_bot?start=yt_manifest"
-# Решение t_018254ae: в описание Shorts CTA не ставим. Ссылки там некликабельны
-# (support.google.com/youtube/answer/13748639), а таро вне ниши и вредит доверию к цифрам.
-# CTA ставим только в описание канала, отдельным блоком.
-CTA_IN_SHORTS = False
+# Решение владельца 18.10 (t_018254ae): таро-CTA на канале 1 нет нигде (аудитория не совпадает, вредит доверию).
+# Только тематические ссылки; таро-воронка — на канале 2.
+LINKS = "Free tools: SBA business plan guide https://www.sba.gov/business-guide/plan-your-business | SCORE free mentoring https://www.score.org"
 
 PALETTES = [  # (фон, акцент, текст), по теме
     ("#0f1b2d", "#33d17a", "#ffffff"), ("#1d1023", "#ffb000", "#ffffff"), ("#0d2422", "#4fd1c5", "#ffffff"),
@@ -109,15 +106,15 @@ def validate_script(s: dict) -> dict:
 
 def short_description(s: dict) -> str:
     parts = [s.get("description", "").strip(), DISCLAIMER, AI_NOTE, HASHTAGS]
-    if CTA_IN_SHORTS:
-        parts.insert(1, f"{CTA_TEXT}: {CTA_URL}")
     return "\n\n".join(p for p in parts if p)
 
 
 def channel_description() -> str:
     return ("What it really costs to own a car wash, a laundromat, a vending route and other small businesses "
             "in America. Real ballpark numbers, money in vs money out, no hype. New Shorts every day.\n\n"
-            f"{DISCLAIMER}\n{AI_NOTE}\n\n---\n{CTA_TEXT}: {CTA_URL}")
+            "Topics: small business economics, passive income reality checks, side hustle math, franchise and route "
+            "costs, self-storage, laundromat and car wash profit breakdowns.\n\n"
+            f"{DISCLAIMER}\n{AI_NOTE}\n\n{LINKS}")
 
 
 def count_today(published_at: list[str], today: dt.date) -> int:
