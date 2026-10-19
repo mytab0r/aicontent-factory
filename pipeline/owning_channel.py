@@ -193,10 +193,11 @@ def render(run_dir: Path) -> Path:
         beats = [{"say": s["hook"], "big": beats[0]["big"], "label": beats[0].get("label", "")}] + beats
     w = run_dir / "owning"
     w.mkdir(exist_ok=True)
-    segs = []
+    segs, said = [], []
     for i, b in enumerate(beats):
         a, img, seg = w / f"{i:02d}.mp3", w / f"{i:02d}.png", w / f"{i:02d}.mp4"
         dur = tts(b["say"], a) + 0.25
+        said.append((b["say"], dur))
         card(img, s["title"], b["big"], b.get("label", ""), b["say"], pal, i, len(beats))
         n = int(dur * 30)
         # лёгкий zoom-in: кадр не статичен
@@ -206,6 +207,8 @@ def render(run_dir: Path) -> Path:
                         "-map", "[v]", "-map", "[a]", "-t", f"{dur:.2f}", "-c:v", "libx264", "-preset", "veryfast",
                         "-c:a", "aac", "-ar", "44100", "-ac", "2", str(seg)], check=True)
         segs.append(seg)
+    import localize
+    localize.write_cues(run_dir / "cues.json", said)  # тайминги реплик для ES/PT субтитров (t_b9eb61b2)
     lst = w / "list.txt"
     lst.write_text("".join(f"file '{p.name}'\n" for p in segs))
     out = run_dir / "video.mp4"
