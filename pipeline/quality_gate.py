@@ -31,6 +31,11 @@ DUR_TOL = 0.02
 # V1: чёрный экран >= 2 с в финальном видео (сбой анимации/кодирования). Порог яркости 0.10 — ночные обложки
 # канала YAVG 41-88 (из 255) проходят с запасом.
 BLACK_MIN = 2.0
+# A16: резкий конец трека (обрыв без затухания) = щелчок в конце и при повторе в плеере. Последние 0.5 с
+# по RMS должны быть тише всего трека минимум на END_DROP дБ. Замер 19.10: одобренные ref1/ref2/ref3 -45.6..-46.5,
+# phonk v2 -49.5, 15-мин микс ref-style6 -28.7, MIX ref-style4 -20.0; обрезанные 60-с отрывки -1.9/+1.1.
+# Начало не проверяется: эталоны стартуют сразу на полной громкости (первые 100 мс ref1 -11.3 дБ).
+END_WIN, END_DROP = 0.5, 12.0
 MIN_CE = 6.5  # ниже худшего рефа ниши (7.07), сильно выше брака (<=3.6)
 
 
@@ -274,6 +279,14 @@ def black_why(f):
             re.findall(r"black_start:([\d.]+) black_end:[\d.]+ black_duration:([\d.]+)", e)]
 
 
+def end_why(f):
+    """A16: [причина], если последние END_WIN с не тише всего трека на END_DROP дБ (обрыв без затухания)."""
+    d = duration(f)
+    whole, tail = rms_db(f, 0, d), rms_db(f, d - END_WIN, END_WIN)
+    return [f"резкий конец: последние {END_WIN} с {tail:.1f} дБ при треке {whole:.1f} дБ "
+            f"(затухание {tail - whole:+.1f} < {END_DROP} дБ)"] if tail - whole > -END_DROP else []
+
+
 def target(d, final):
     """--final: финальный файл после 04 assemble (то, что заливается), иначе трек после 03."""
     return d / ("video.mp4" if final else "track.mp3")
@@ -295,6 +308,7 @@ def main(argv):
         if a.startswith("--seams="):
             seams = [float(x) for x in a[8:].split(",") if x]
     why, m = objective(f, genre)
+    why += end_why(f)  # A16: только целый трек/финальный mp4, не сегменты best-of (их хвосты режет склейка)
     if "--final" in argv:
         why += integrity_why(f, expect) + black_why(f)
     if "--no-ce" not in argv:  # R4: окна CE/дрейф/стыки и на финальном mp4 (04b) — мерим то, что заливается
