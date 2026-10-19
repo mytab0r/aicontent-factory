@@ -4,7 +4,7 @@ on:
 
 # спайк t_737ca0ec: MiniMax Music 3 (форк audio.cpp) vs ACE-Step 1.5 turbo на RTX 5070 12GB.
 # ace-step останавливается только на время генерации MiniMax (VRAM 12GB не делится), всегда поднимается обратно.
-# Повторный запуск продолжает: веса в volume minimax-weights, готовые треки пропускаются.
+# Повторный запуск продолжает: веса в C:\dockerlocal\minimax (bind, t_40bfcd35), готовые треки пропускаются.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
