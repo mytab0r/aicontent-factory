@@ -105,4 +105,12 @@ with tempfile.TemporaryDirectory() as td:
 ref1 = [(0.0, 7.548), (30.0, 7.296), (60.0, 7.191), (90.0, 6.789), (90.024, 6.767)]
 assert qg.ce_why(ref1) == [], qg.ce_why(ref1)
 assert qg.ce_why([(0, 7.5), (30, 7.5), (60, 6.9), (90, 6.9), (90.024, 6.9)])  # настоящий дрейф 0.6 ловится
+# A16 (каталог): обрыв без затухания = FAIL; трек с затуханием 3 с (как у эталонов: хвост -45 дБ к треку) проходит
+with tempfile.TemporaryDirectory() as td:
+    cut_end, faded = f"{td}/cut.wav", f"{td}/fade.wav"
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=20", "-ac", "2", cut_end], check=True)
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=20", "-af",
+                    "afade=t=out:st=17:d=3", "-ac", "2", faded], check=True)
+    assert any("резкий конец" in w for w in qg.end_why(cut_end)), qg.end_why(cut_end)
+    assert qg.end_why(faded) == [], qg.end_why(faded)
 print("test_quality_gate OK")
