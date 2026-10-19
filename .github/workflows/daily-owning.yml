@@ -23,6 +23,7 @@ jobs:
       ROUTER_API_KEY: ${{ secrets.ROUTER_API_KEY }}
       CHANNEL: owning
       PUBLISH: ${{ vars.OWNING_PUBLISH }}
+      LOCALIZE: ${{ vars.LOCALIZE }}  # '1' = ES/pt-BR localizations + субтитры (localize.py), иначе no-op
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3

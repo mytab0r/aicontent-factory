@@ -165,6 +165,13 @@ def publish(run_dir: Path) -> str:
             youtube.thumbnails().set(videoId=video_id, media_body=MediaFileUpload(str(cover), mimetype="image/png")).execute()
         except Exception as e:
             print(f"thumbnail skip: {type(e).__name__}: {e}")
+    cues = run_dir / "cues.json"
+    if cues.exists():  # LOCALIZE=1: ES/pt-BR title/description + субтитры; иначе no-op (t_b9eb61b2)
+        import localize
+        try:  # локализация не валит уже опубликованный выпуск
+            localize.localize_video(youtube, video_id, json.loads(cues.read_text(encoding="utf-8")))
+        except Exception as e:
+            print(f"localize skip: {type(e).__name__}: {e}")
     meta = run_dir / "music_meta.json"
     if meta.exists():
         genre = json.loads(meta.read_text(encoding="utf-8"))["genre"]
