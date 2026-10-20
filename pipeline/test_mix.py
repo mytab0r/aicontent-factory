@@ -324,12 +324,6 @@ def test_fade_end_passes_a16_after_loudnorm():
     assert abs(music._probe_sec(f) - dur) < 0.1, "длительность не меняется (главы/стыки)"
 
 
-if __name__ == "__main__":
-    for n, f in list(globals().items()):
-        if n.startswith("test_"):
-            f(); print("ok", n)
-
-
 def test_mix_segment_extra_candidates_only_when_all_fail():
     """t_f0794976, run 39450050733: 3 сегмента из 9 дали 0/3 (max CE 6.49/6.13/6.43 < 6.5).
     Порог не трогаем: сегменту с 0 прошедших дозаказываем extra кандидатов (3 -> 5),
@@ -346,3 +340,10 @@ def test_mix_segment_extra_candidates_only_when_all_fail():
     assert made.count((1, 3)) == 1 and made.count((1, 4)) == 1 and (1, 5) not in made
     gen0 = music.gated_gen(raw, scores, lambda p: [], attempts=3, extra=0, log=lambda *a: None)
     assert gen0(1) is None
+
+
+if __name__ == "__main__":
+    for n, f in list(globals().items()):
+        if n.startswith("test_"):
+            f(); print("ok", n)
+
