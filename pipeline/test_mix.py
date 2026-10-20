@@ -239,20 +239,34 @@ def test_edge_match_levels_seam_rms():
     assert g2[1] == 18.0, g2
 
 
-if __name__ == "__main__":
-    for n, f in list(globals().items()):
-        if n.startswith("test_"):
-            f(); print("ok", n)
-
+def test_prep_segments_trims_fade_before_edge_match():
+    """run 39326466292: edge_match до trim_fade_tails мерил тихий хвост-затухание -> сегменты 2-5
+    задавлены на -18 дБ, R3 стык 336 с -16.2 -> -19.6 дБ. Одинаковые по телу сегменты с фейдом
+    в конце после prep_segments почти не получают gain и стыки <= 3 дБ."""
+    import subprocess as sp
+    import tempfile
+    d = Path(tempfile.mkdtemp())
+    fs = []
+    for k in range(4):
+        f = d / f"pf{k}.mp3"
+        sp.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=40",
+                "-af", "volume=0.5,afade=t=out:st=28:d=12:curve=exp", "-c:a", "libmp3lame", "-b:a", "192k", str(f)],
+               check=True)
+        fs.append(str(f))
+    gains = music.prep_segments(fs, log=lambda *x: None)
+    assert all(abs(g) <= 1.5 for g in gains), gains
+    for i in range(1, len(fs)):
+        assert abs(music.edge_rms(fs[i], "l") - music.edge_rms(fs[i - 1], "r")) <= 3.0
 
 def test_trim_fade_tails_cuts_quiet_end_and_respects_last():
     "trim_fade_tails: срезает хвост-затухание (RMS ниже медианы на 6 дБ), последний сегмент не трогаем; после среза края сегментов на уровне тела (R3)."
-    import importlib.util as _ilu
-    _sp = _ilu.spec_from_file_location("music03", os.path.join(os.path.dirname(__file__), "03_music.py"))
-    _m = _ilu.module_from_spec(_sp); _sp.loader.exec_module(_m)
+    import subprocess
+    import tempfile
+    _m = music
+    tdir = tempfile.mkdtemp()
     fs = []
     for k in range(3):
-        f = f"{TDIR}/tf{k}.mp3"
+        f = f"{tdir}/tf{k}.mp3"
         subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=30",
                         "-af", "volume=0.5,afade=t=out:st=22:d=8:curve=exp",
                         "-c:a", "libmp3lame", "-b:a", "192k", f], check=True)
@@ -266,3 +280,8 @@ def test_trim_fade_tails_cuts_quiet_end_and_respects_last():
     body = _m.edge_rms(fs[0], "l", sec=10)
     tail = _m.edge_rms(fs[0], "r", sec=5)
     assert abs(tail - body) < 6, (body, tail)
+
+if __name__ == "__main__":
+    for n, f in list(globals().items()):
+        if n.startswith("test_"):
+            f(); print("ok", n)

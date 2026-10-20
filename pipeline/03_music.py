@@ -493,10 +493,13 @@ def trim_fade_tails(paths, max_sec=20.0, floor_db=6.0, log=print):
     cuts = []
     for p in paths:
         dur = _probe_sec(p)
-        proc = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", p, "-af",
-                               "astats=metadata=1:reset=1:measure_overall=RMS_level:measure_perchannel=none",
+        # metadata=1 кладёт RMS в метаданные кадра, в stderr их нет: без ametadata=print win пуст и срез = no-op
+        proc = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-loglevel", "error", "-i", p, "-af",
+                               "astats=metadata=1:reset=1:measure_overall=RMS_level:measure_perchannel=none,"
+                               "ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-",
                                "-f", "null", "-"], capture_output=True, text=True)
-        win = [float(x) if x != "-inf" else -120.0 for x in re.findall(r"RMS level dB: (-?[\d.]+|-inf)", proc.stderr)]
+        win = [float(x) if x != "-inf" else -120.0
+               for x in re.findall(r"RMS_level=(-?[\d.]+|-inf)", proc.stdout)]
         if len(win) < 10:  # тимеровая сетка: короткий/битый файл не режем
             cuts.append(0.0)
             continue
@@ -516,6 +519,14 @@ def trim_fade_tails(paths, max_sec=20.0, floor_db=6.0, log=print):
         cuts.append(float(cut))
         log(f"trim_fade_tail {os.path.basename(p)}: -{cut:.0f} с (хвост-затухание)")
     return cuts
+
+
+def prep_segments(paths, log=print):
+    """Срез хвостов-затуханий ДО выравнивания краёв. Обратный порядок (run 39326466292): edge_match
+    мерил тихий фейд, давил следующие сегменты на -18 дБ, после среза хвоста стык 336 с -> R3 FAIL.
+    Фейд последнего сегмента остаётся концом микса."""
+    trim_fade_tails(paths[:-1], log=log)
+    return edge_match(paths, log=log)
 
 
 def concat_tracks(paths: list[str], out_path, xfade: float = XFADE) -> None:
@@ -591,8 +602,7 @@ def main() -> None:
 
         paths, durs = plan_mix(duration, gen_mix, _probe_sec, budget_sec=mix_budget,
                                max_tracks=-(-duration // MIX_SEG_SEC) + 2)
-        edge_match(paths, log=print)
-        trim_fade_tails(paths[:-1], log=print)  # фейд последнего сегмента остаётся концом микса
+        prep_segments(paths, log=print)
         durs = [_probe_sec(p) for p in paths]  # срез хвостов меняет длительности — перезамер
         concat_tracks(paths, out_path)
         chaps = chapters(durs, track_names(len(paths), seed), xfade=XFADE)
