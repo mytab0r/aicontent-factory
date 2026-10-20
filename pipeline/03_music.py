@@ -295,34 +295,42 @@ def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=
     return item
 
 
-def gated_gen(raw, scores, objective, attempts=3, log=print):
+def gated_gen(raw, scores, objective, attempts=3, log=print, extra=0):
     """Гейт сегмента час-микса (t_187762da): качество меряется по КАЖДОМУ сегменту,
     а не только по склейке (17.10: целый час упал на одной полосе 20-60 Гц одного трека).
     best-of-K как PR #59: attempts кандидатов с разными seed, ОДИН батчевый прогон
     критика на сегмент, победитель = MAX CE среди прошедших (objective + CE >= MIN_CE),
-    брак удаляется с диска; 0 из attempts = None (сегмент выкидывается, план проверяет
-    min_sec). Ошибка критика = ошибка шага: вслепую сегмент не берём."""
+    брак удаляется с диска; 0 из attempts -> ещё extra кандидатов (t_f0794976: 3 из 9
+    сегментов давали 0/3 при CE 6.13-6.49, порог не снижаем); 0 из всех = None (сегмент
+    выкидывается, план проверяет min_sec). Ошибка критика = ошибка шага."""
     from pathlib import Path
 
     from quality_gate import MIN_CE
 
-    def gen(i):
-        paths = [raw(i, k) for k in range(attempts)]
-        ce_list = scores(paths)  # один прогон критика на сегмент (модель грузится 1 раз)
+    def batch(i, ks, total):
+        paths = [raw(i, k) for k in ks]
+        ce_list = scores(paths)  # один прогон критика на пачку (модель грузится 1 раз)
         if len(ce_list) != len(paths):
             raise RuntimeError(f"критик вернул {len(ce_list)}/{len(paths)} оценок: {ce_list!r}")
         best, fails = None, []
-        for k, (p, ce) in enumerate(zip(paths, ce_list)):
+        for k, p, ce in zip(ks, paths, ce_list):
             why = list(objective(p)) + ([f"CE {min(ce):.2f} < {MIN_CE}"] if min(ce) < MIN_CE else [])
-            log(f"сегмент {i} кандидат {k + 1}/{attempts}: CE(min)={min(ce):.2f}, "
+            log(f"сегмент {i} кандидат {k + 1}/{total}: CE(min)={min(ce):.2f}, "
                 + ("FAIL: " + "; ".join(why) if why else "OK"))
             if why:
                 fails.append(why)
                 Path(p).unlink(missing_ok=True)
             elif best is None or min(ce) > best[0]:
                 best = (min(ce), p)
+        return best, fails
+
+    def gen(i):
+        best, fails = batch(i, list(range(attempts)), attempts)
+        if best is None and extra > 0:
+            best, more = batch(i, list(range(attempts, attempts + extra)), attempts + extra)
+            fails += more
         if best is None:
-            log(f"сегмент {i}: 0 из {attempts} прошли гейт: " + "; ".join(map(str, fails)))
+            log(f"сегмент {i}: 0 из {attempts + extra} прошли гейт: " + "; ".join(map(str, fails)))
             return None  # сегмент выбрасывается (план проверит min_sec)
         return best[1]
 
@@ -630,7 +638,8 @@ def main() -> None:
             from quality_gate import ce_windows_batch, objective
 
             gen_mix = gated_gen(raw, ce_windows_batch, lambda p: objective(p, genre_name)[0],
-                                attempts=n_seg, log=print)
+                                attempts=n_seg, log=print,
+                                extra=int(os.environ.get("ACE15_SEG_EXTRA") or 0))
         else:
             def gen_mix(i):
                 return raw(i, 0)
