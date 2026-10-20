@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from watchdog import already_published, decide, report_text, videos_on
+from watchdog import already_published, days_without_long, decide, report_text, videos_on
 
 # образец реального фида канала (сокращён)
 RSS = """<?xml version="1.0" encoding="UTF-8"?>
@@ -111,6 +111,20 @@ def test_already_published_genre():
     # shorts не считаются ни для какого жанра
     shorts_only = RSS.replace("Anime Sunset Bedroom Lofi", "hook #Shorts")
     assert not already_published(shorts_only, D11, "anime lofi")
+
+def test_days_without_long():
+    """P5 (18-20.10): 0 public long-form 7+ дней — канал пуст для зрителя, алерт обязан назвать срок."""
+    shorts_only = RSS.replace("Anime Sunset Bedroom Lofi", "x #Shorts").replace("Late night", "y #Shorts")
+    assert days_without_long(RSS, D13) == 1  # последний long-form 12.10 (UTC)
+    assert days_without_long(RSS, dt.date(2026, 10, 20)) == 8
+    assert days_without_long(shorts_only, D13) is None  # в ленте нет ни одного long-form
+    msg, _ = decide(RSS, [], dt.date(2026, 10, 20))
+    assert "8 дн" in msg, msg
+    msg, _ = decide(shorts_only, [], D13)
+    assert "нет ни одного" in msg, msg
+    msg, _ = decide(RSS, [], D13)  # 1 день — штатно, без строки о пустом канале
+    assert "дн. без" not in msg, msg
+
 
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
