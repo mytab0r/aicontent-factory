@@ -122,6 +122,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: ci-bypass-lint («Повтор = класс»)
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/mytab0r/hermes-scripts/main/ci-bypass-lint/ci_bypass_lint.py -o ci_bypass_lint.py
-          python3 ci_bypass_lint.py .
+        run: python3 scripts/ci_bypass_lint.py .
