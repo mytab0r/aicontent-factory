@@ -124,3 +124,17 @@ with tempfile.TemporaryDirectory() as td:
     print(f"adaptive EQ: {m['bands']} LRA={m['lra']} fail={why}")
     assert not [w for w in why if "полоса" in w or "баланс" in w or "LRA" in w], why
 print("test_mastering adaptive EQ OK")
+
+
+# ---- phonk: адаптивная EQ тянет полосы к REF['phonk'] (20.10: 0/15 сегментов прошли гейт,
+# ср. |откл| 5.2 дБ в 20-60 и 150-400 Гц при CE>=6.5 у 10/15 — тон правится, отбор SEED'ов не спасает) ----
+with tempfile.TemporaryDirectory() as td:
+    raw = f"{td}/tilt_p.wav"  # одобренный v2 с наклоном: муть +5, верх -5 (профиль провала 20.10)
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", str(HERE.parent / "refs/ref1_approved_1310.mp3"),
+                    "-af", "equalizer=f=250:t=o:w=2:g=5,equalizer=f=8000:t=o:w=2:g=-5", raw], check=True)
+    assert any("полоса" in w for w in qg.objective(raw, "chill phonk")[0])
+    M.master(raw, f"{td}/p.mp3", genre="chill phonk")
+    why, m = qg.objective(f"{td}/p.mp3", "chill phonk")
+    print(f"phonk adaptive EQ: {m['bands']} LRA={m['lra']} fail={why}")
+    assert not [w for w in why if "полоса" in w or "баланс" in w], why
+print("test_mastering phonk adaptive EQ OK")
