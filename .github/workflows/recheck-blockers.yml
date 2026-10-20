@@ -2,6 +2,7 @@ name: recheck-blockers
 # Ежедневная перепроверка blocked-карточек всех досок (recheck_blockers.py, t_c819a3fc).
 # Self-hosted PC runner (DooD): БД досок и /opt/data/secrets живут в docker volume hermes-data
 # на том же демоне. Bind-mount workdir раннера невозможен (DooD) — скрипт идёт в контейнер через stdin.
+# uid 10000 = владелец тома hermes-data после переноса 20.10 (/opt/data 700); 10001 -> Permission denied.
 on:
   schedule:
     - cron: "0 3 * * *"  # 06:00 Europe/Moscow (UTC+3)
@@ -30,7 +31,7 @@ jobs:
           DRY=""; [ "${{ inputs.dry_run }}" = "true" ] && DRY="--dry-run"
           # -e NAME без значения: docker берёт значение из env раннера, в командной строке его нет
           ENVS=""; for n in ROUTER_API_KEY HF_TOKEN YOUTUBE_TOKEN_JSON; do [ -n "$(printenv $n)" ] && ENVS="$ENVS -e $n"; done
-          docker run --rm -i --user 10001:10001 $ENVS -v hermes-data:/opt/data python:3.12-slim sh -c '
+          docker run --rm -i --user 10000:10000 $ENVS -v hermes-data:/opt/data python:3.12-slim sh -c '
             set -e
             cat > /tmp/r.py
             ls /opt/data/kanban/boards/*/kanban.db >/dev/null
