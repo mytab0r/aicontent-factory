@@ -517,7 +517,7 @@ def trim_fade_tails(paths, max_sec=20.0, floor_db=6.0, log=print):
             n += 1
         cut = n * frame
         if cut >= 1.0:
-            tmp = tempfile.mktemp(suffix=".mp3")
+            tmp = f"{p}.trim.mp3"  # рядом с целью: tempfile в /tmp -> OSError 18 cross-device
             subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", p, "-t", str(dur - cut),
                             "-c:a", "libmp3lame", "-b:a", "192k", tmp], check=True)
             os.replace(tmp, p)
