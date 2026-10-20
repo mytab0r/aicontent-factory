@@ -69,10 +69,34 @@ jobs:
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           TG_THREAD_ID: ${{ secrets.TG_THREAD_ID }}
         run: |
+          set +e
           if [ -z "${TG_BOT_TOKEN}" ]; then echo "TG_BOT_TOKEN empty - skip"; exit 0; fi
           TEXT="A/B G1zm0: 4 варианта на разных эталонах пула — выбери лучший. Публикация заблокирована до твоего вердикта."
-          curl -sS -m 30 "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage"             -d chat_id="${TG_CHAT_ID}" -d message_thread_id="${TG_THREAD_ID}" -d text="${TEXT}" >/dev/null
+          RESP=$(curl -sS -m 30 "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TG_CHAT_ID}" -d message_thread_id="${TG_THREAD_ID}" -d text="${TEXT}")
+          echo "TG sendMessage: ${RESP:0:300}"
           for f in runs/ab_*/ab_*.mp3; do
-            curl -sS -m 120 "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendAudio"               -F chat_id="${TG_CHAT_ID}" -F message_thread_id="${TG_THREAD_ID}"               -F audio="@${f}" >/dev/null || echo "send fail: $f"
+            RESP=$(curl -sS -m 120 "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendAudio" \
+              -F chat_id="${TG_CHAT_ID}" -F message_thread_id="${TG_THREAD_ID}" \
+              -F audio="@${f}")
+            echo "TG sendAudio ${f}: $(echo "${RESP}" | head -c 200)"
           done
-          curl -sS -m 30 "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage"             -d chat_id="${TG_CHAT_ID}" -d message_thread_id="${TG_THREAD_ID}"             -d text="Эталоны (manifest): $(cat runs/ab_*/manifest.json | head -c 1500)" >/dev/null
+          curl -sS -m 30 "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TG_CHAT_ID}" -d message_thread_id="${TG_THREAD_ID}" \
+            -d text="Эталоны (manifest): $(cat runs/ab_*/manifest.json | head -c 1500)"
+          exit 0  # доставка не должна валить run; файлы останутся в runs/ для повторной попытки
+
+      - name: deliver via git branch (fallback, мимо artifacts и TG)
+        if: ${{ always() }}
+        run: |
+          set +e
+          D=$(ls -d runs/ab_* 2>/dev/null | tail -1)
+          [ -z "$D" ] && { echo "no ab dir"; exit 0; }
+          git config user.email "bot@users.noreply.github.com"
+          git config user.name "acf-bot"
+          git fetch origin delivery/ab-refpool || true
+          git checkout -B delivery/ab-refpool origin/delivery/ab-refpool 2>/dev/null || git checkout -B delivery/ab-refpool
+          mkdir -p samples
+          cp "$D"/ab_*.mp3 "$D"/manifest.json samples/ 2>/dev/null
+          git add samples && git commit -m "ab samples $(date -u +%Y%m%d_%H%M%S)" && git push origin delivery/ab-refpool && echo "PUSHED to delivery/ab-refpool" || echo "push failed"
+
