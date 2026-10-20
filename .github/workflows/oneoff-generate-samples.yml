@@ -112,7 +112,7 @@ jobs:
           if remaining:
               print(f"GAVE UP on: {list(remaining)}", flush=True)
           PY
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4  # artifact-ok: логи прогона; доставка результата вне артефактов
         with:
           name: candidate-samples
           path: samples_candidates/*.mp3

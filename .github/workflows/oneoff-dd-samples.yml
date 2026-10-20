@@ -23,7 +23,7 @@ jobs:
         run: .venv/bin/python pipeline/dd_samples.py
       - name: upload artifact (даже при неполном результате)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4  # artifact-ok: логи прогона; доставка результата вне артефактов
         with:
           name: dd-samples-${{ github.run_id }}
           path: samples_candidates/dd_*.mp3

@@ -31,8 +31,8 @@ jobs:
           /tmp/acf-audit-v/bin/python config_audit.py --ref ../refs/ref1_approved_1310.mp3 2>&1 | tee audit_log.txt
       - name: upload audit log
         if: always()
-        continue-on-error: true  # лог аудита — отладка; квота артефактов не должна валить аудит (вердикт в шаге выше)
-        uses: actions/upload-artifact@v4
+        continue-on-error: true  # лог аудита — отладка; квота артефактов не должна валить аудит (вердикт в шаге выше)  # root-cause: t_f95a06da
+        uses: actions/upload-artifact@v4  # artifact-ok: логи прогона; доставка результата вне артефактов
         with:
           name: audit-log
           path: pipeline/audit_log.txt

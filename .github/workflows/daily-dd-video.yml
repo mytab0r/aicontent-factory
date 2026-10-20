@@ -58,10 +58,10 @@ jobs:
           git config user.email "actions@users.noreply.github.com"
           git add -f .state/dd_scene_idx.txt 2>/dev/null || true
           git diff --cached --quiet || git commit -m "chore: advance dd scene rotation [skip ci]"
-          git push || true
+          git push || true  # root-cause: t_f95a06da
 
       - name: upload run artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4  # artifact-ok: логи прогона; доставка результата вне артефактов
         with:
           name: dd-video-${{ github.run_id }}
           path: runs/*/video.mp4

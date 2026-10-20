@@ -117,3 +117,9 @@ jobs:
           trap "docker rmi -f $T >/dev/null 2>&1 || true" EXIT
           docker build -q -f test/e2e/Dockerfile -t $T .
           docker run --rm --ipc=host $T
+  ci-bypass-lint:
+    runs-on: [self-hosted, pc]
+    steps:
+      - uses: actions/checkout@v4
+      - name: ci-bypass-lint («Повтор = класс»)
+        run: python3 scripts/ci_bypass_lint.py .
