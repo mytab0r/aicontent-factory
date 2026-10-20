@@ -64,6 +64,18 @@ def already_published(rss_xml: str, day: dt.date, genre: str | None = None) -> b
     return bool(longs)
 
 
+def days_without_long(rss_xml: str, today: dt.date) -> int | None:
+    """P5: дней с последнего ПУБЛИЧНОГО long-form (RSS видит только public); None = в ленте ни одного.
+    18-20.10 гейт скрывал всё, канал 7+ дней был пуст для зрителя, а сторож писал лишь «нет ролика сегодня»."""
+    days = [dt.datetime.fromisoformat(e.findtext("a:published", "", NS)).astimezone(dt.timezone.utc).date()
+            for e in ET.fromstring(rss_xml).findall("a:entry", NS)
+            if "#shorts" not in e.findtext("a:title", "", NS).lower()]
+    return (today - max(days)).days if days else None
+
+
+EMPTY_DAYS = 2  # 2+ дня без публичного long-form = канал пустеет, причина в алерт
+
+
 def run_date(run: dict) -> dt.date:
     return dt.datetime.fromisoformat(run["created_at"].replace("Z", "+00:00")).date()
 
@@ -73,6 +85,11 @@ def decide(rss_xml: str, runs: list[dict], today: dt.date) -> tuple[str | None, 
     if videos_on(rss_xml, today):
         return None, False
     head = f"⚠️ {today}: на канале нет ролика за сегодня (UTC)."
+    gap = days_without_long(rss_xml, today)
+    if gap is None:
+        head += " Публичных long-form в ленте нет ни одного (всё скрыто гейтом/аудитом?)."
+    elif gap >= EMPTY_DAYS:
+        head += f" Публичного long-form нет уже {gap} дн. без выпуска — зритель видит пустой канал."
     todays = [r for r in runs if run_date(r) == today]
     active = [r for r in todays if r["status"] in ("queued", "in_progress", "waiting", "pending", "requested")]
     if active:
