@@ -4,7 +4,9 @@ FAIL на: continue-on-error: true | `|| true`/`|| :` после теста/ге
 Разрешение: `# root-cause: t_<id>` (первые два) или `# artifact-ok: <причина>` (upload) в той же строке
 или в непрерывном блоке комментариев прямо над строкой.
 Usage: python3 ci_bypass_lint.py [ROOT]"""
-import pathlib, re, sys
+import pathlib
+import re
+import sys
 
 COE = re.compile(r"""^\s*-?\s*continue-on-error:\s*['"]?true['"]?\s*(#.*)?$""", re.I)
 OR_TRUE = re.compile(r"\|\|\s*(?:true|:)(?=$|[\s;)#])")
@@ -24,13 +26,15 @@ def _rules(line):
         yield "upload-artifact", ARTIFACT_OK
 
 
+
 def lint_text(text):
     lines, out = text.splitlines(), []
     for i, line in enumerate(lines):
         for rule, waiver in _rules(line):
             ctx, j = [line], i - 1
             while j >= 0 and lines[j].strip().startswith("#"):
-                ctx.append(lines[j]); j -= 1
+                ctx.append(lines[j])
+                j -= 1
             if not any(waiver.search(c) for c in ctx):
                 out.append((i + 1, rule))
     return out
