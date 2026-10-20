@@ -159,3 +159,24 @@ if __name__ == "__main__":
         if name.startswith("test_"):
             fn()
             print(f"ok {name}")
+
+
+def test_p17_probe_transient_retry_and_alert():
+    """P17 (аудит 20.10): probe упал за 45 с (CI 39457223327) без алерта; локально тот же токен зелёный = сетевой сбой.
+    Транзиентная ошибка -> повтор; окончательный сбой -> одна русская строка в TG и код 1."""
+    import urllib.error
+    pa.time_sleep = lambda s: None
+    calls = []
+
+    def flaky():
+        calls.append(1)
+        if len(calls) < 3:
+            raise urllib.error.URLError("Connection reset by peer")
+        return "ok"
+    assert pa.with_retry(flaky) == "ok" and len(calls) == 3
+
+    sent = []
+    pa.tg_send = lambda t: sent.append(t) or True
+    pa._token_raw = lambda: (_ for _ in ()).throw(urllib.error.URLError("timed out"))
+    assert pa.probe() == 1
+    assert len(sent) == 1 and "аналитик" in sent[0] and "timed out" not in sent[0]
