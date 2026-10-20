@@ -9,12 +9,13 @@ jobs:
     runs-on: [self-hosted, release]
     timeout-minutes: 15
     steps:
-      - name: v6 runner-disk-guard + hermes-ops/janitor + docker-guard.log window
+      - name: v7 disk-guard full + log at 19.10 01:2x + tz
         run: |
-          docker run --rm -v /run/desktop/mnt/host/c:/c:ro -v /run/desktop/mnt/host/d:/d:ro alpine:3.20 sh -c '
-            for f in /d/hermes-runner/disk-guard.ps1 /c/Users/magic/hermes-ops/disk-guard.ps1 /c/dockerlocal/disk-guard.ps1 /c/Users/magic/tools/docker-guard.ps1 /c/dockerlocal/scratch-clean.sh; do echo "===== $f"; cat "$f" 2>&1; echo; done
-            echo "===== ls"; ls -la --full-time /d/hermes-runner /c/Users/magic/hermes-ops/janitor /c/dockerlocal/janitor 2>&1 | head -60
-            for f in /c/Users/magic/hermes-ops/janitor/* /c/dockerlocal/janitor/*; do case "$f" in *.log) continue;; esac; echo "===== $f"; head -c 4000 "$f"; echo; done
-            for f in $(ls /d/hermes-runner/*.log /c/Users/magic/hermes-ops/janitor/*.log /c/dockerlocal/janitor/*.log /c/Users/magic/tools/docker-guard.log /c/Users/magic/hermes-ops/guard.log 2>/dev/null); do
-              echo "===== $f window 18.10 22:00 - 19.10 06:00 (UTC or local)"; grep -aE "2026-10-1(8[T ]2[2-3]|9[T ]0[0-6])|1[89]\.10\.2026" "$f" | head -120
-            done; true'
+          docker run --rm -v /run/desktop/mnt/host/d:/d:ro alpine:3.20 sh -c '
+            echo "=== script"; cat -A /d/hermes-runner/disk-guard.ps1 | head -12; echo "=== vbs"; cat /d/hermes-runner/disk-guard.vbs
+            echo "=== log 19.10 01:00-02:30"; grep -aE "2026-10-19T0(1|2):" /d/hermes-runner/disk-guard.log | head -40
+            echo "=== tail"; tail -6 /d/hermes-runner/disk-guard.log; date -u
+            echo "=== aggressive count"; grep -c "aggressive image prune" /d/hermes-runner/disk-guard.log; grep -a "aggressive" /d/hermes-runner/disk-guard.log | head -2'
+          docker image inspect ghcr.io/ace-step/ace-step-1.5:latest -f 'created={{.Created}}'; docker inspect ace-step -f 'created={{.Created}} labels={{json .Config.Labels}}'
+          docker images --format '{{.Repository}}:{{.Tag}}|{{.ID}}|{{.CreatedAt}}|{{.Size}}'
+          docker ps -a --format '{{.Names}}|{{.Status}}|{{.CreatedAt}}'
