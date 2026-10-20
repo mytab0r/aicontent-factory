@@ -328,3 +328,21 @@ if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"):
             f(); print("ok", n)
+
+
+def test_mix_segment_extra_candidates_only_when_all_fail():
+    """t_f0794976, run 39450050733: 3 сегмента из 9 дали 0/3 (max CE 6.49/6.13/6.43 < 6.5).
+    Порог не трогаем: сегменту с 0 прошедших дозаказываем extra кандидатов (3 -> 5),
+    сегменты с OK из первых 3 лишнего GPU не тратят."""
+    made = []
+    def raw(i, k):
+        made.append((i, k))
+        return f"s{i}_{k}"
+    ce = {"s0_0": 7.0, "s0_1": 6.4, "s0_2": 6.4, "s1_0": 6.49, "s1_1": 6.13, "s1_2": 6.43, "s1_3": 6.2, "s1_4": 6.8}
+    scores = lambda fs: [[ce.get(f, 6.0)] * 3 for f in fs]
+    gen = music.gated_gen(raw, scores, lambda p: [], attempts=3, extra=2, log=lambda *a: None)
+    assert gen(0) == "s0_0" and (0, 3) not in made
+    assert gen(1) == "s1_4", made
+    assert made.count((1, 3)) == 1 and made.count((1, 4)) == 1 and (1, 5) not in made
+    gen0 = music.gated_gen(raw, scores, lambda p: [], attempts=3, extra=0, log=lambda *a: None)
+    assert gen0(1) is None
