@@ -196,8 +196,13 @@ def main() -> None:
             print(f"OK: опубликовано (claim-гейт пройден) https://www.youtube.com/watch?v={vid}")
         else:
             claim_gate.delete_video(claim_gate._youtube(), vid)
+            try:  # пара дня сгорела: следующая попытка берёт другой эталон/промпт
+                import refpool
+                refpool.bump_offset()
+            except Exception as e:
+                print(f"refpool bump skip: {type(e).__name__}: {e}")
             from common import tg_send
-            tg_send("❌ G1zm0: Content ID claim на свежий трек — видео удалено, нужна перегенерация с другим эталоном/промптом (refpool)")
+            tg_send("❌ G1zm0: Content ID claim на свежий трек — видео удалено, перегенерация со следующим эталоном пула (refpool)")
             raise SystemExit(2)
         return
     publish(run_dir)

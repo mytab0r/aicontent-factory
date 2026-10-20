@@ -55,6 +55,17 @@ def test_ref_fragment_not_from_zero():
     assert rp.REF_START_SEC >= 60, "фрагмент с 0:00 = самый fingerprint-опасный кусок"
 
 
+def test_claim_bumps_refpool_offset():
+    import tempfile
+    now = dt.datetime(2026, 10, 20, 9, 0, tzinfo=UTC)
+    with tempfile.TemporaryDirectory() as td:
+        rp.OFFSET_FILE = Path(td) / "off.txt"
+        a = rp.pick(now)
+        rp.bump_offset()
+        b = rp.pick(now)
+        assert (b["yt_id"], b["prompt"]) != (a["yt_id"], a["prompt"]), "offset не сменил пару"
+
+
 if __name__ == "__main__":
     test_pool_size_in_range()
     test_pool_refs_distinct()
@@ -62,4 +73,5 @@ if __name__ == "__main__":
     test_prompt_rotates_and_differs()
     test_prompt_hygiene_no_noise_words_no_vocals()
     test_ref_fragment_not_from_zero()
+    test_claim_bumps_refpool_offset()
     print("ok test_refpool")

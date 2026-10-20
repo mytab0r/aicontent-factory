@@ -59,6 +59,22 @@ PROMPT_VARIANTS = [
 ]
 
 
+# Offset on claim (t_d53850f6): the day pair is burned, next attempt takes the next one.
+OFFSET_FILE = None  # Path; tests override
+
+
+def bump_offset(n: int = 1) -> None:
+    f = OFFSET_FILE or (REF_DIR / "offset.txt")
+    f.parent.mkdir(parents=True, exist_ok=True)
+    cur = int(f.read_text()) if f.is_file() else 0
+    f.write_text(str(cur + n))
+
+
+def _offset() -> int:
+    f = OFFSET_FILE or (REF_DIR / "offset.txt")
+    return int(f.read_text()) if f.is_file() else 0
+
+
 def _day_epoch(now=None) -> int:
     """Сутки как стабильное число (UTC): 0 -> pool[0]/prompt[0], 1 -> следующая пара."""
     now = now or dt.datetime.now(dt.timezone.utc)
@@ -69,7 +85,7 @@ def pick(now=None) -> dict:
     """Детерминированная пара (эталон, промпт) на день. 10 и 5 взаимно просты,
     поэтому пары (эталон, промпт) не повторяются 50 дней, а соседние дни
     различаются хотя бы одним компонентом."""
-    day = _day_epoch(now)
+    day = _day_epoch(now) + _offset()
     e = POOL[day % len(POOL)]
     return {
         "day": day,
