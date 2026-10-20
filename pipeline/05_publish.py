@@ -185,6 +185,21 @@ def main() -> None:
         print("ERROR: нет валидного OAuth-токена. Сначала youtube_oauth.py --check/--auth-url.")
         sys.exit(1)
     run_dir = latest_run_dir()
+    if "--claim-gate" in sys.argv:  # t_d53850f6: unlisted -> вердикт Content ID -> public/удаление
+        import claim_gate
+        vid = claim_gate.upload_unlisted(run_dir)
+        if claim_gate.wait_verdict(vid):
+            claim_gate.make_public(claim_gate._youtube(), vid)
+            (run_dir / "published.json").write_text(
+                json.dumps({"url": "https://www.youtube.com/watch?v=" + vid, "id": vid}),
+                encoding="utf-8")
+            print(f"OK: опубликовано (claim-гейт пройден) https://www.youtube.com/watch?v={vid}")
+        else:
+            claim_gate.delete_video(claim_gate._youtube(), vid)
+            from common import tg_send
+            tg_send("❌ G1zm0: Content ID claim на свежий трек — видео удалено, нужна перегенерация с другим эталоном/промптом (refpool)")
+            raise SystemExit(2)
+        return
     publish(run_dir)
 
 

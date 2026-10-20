@@ -211,11 +211,18 @@ jobs:
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           TG_THREAD_ID: ${{ secrets.TG_THREAD_ID }}
         run: |
+          # t_d53850f6: A/B-варианты владельца (ab_LOCK.json в run) публикует только владелец.
+          if ls ../runs/*/ab_LOCK.json >/dev/null 2>&1; then
+            echo "skip: найден ab_LOCK.json — A/B-варианты ждут вердикта владельца (sample gate)"
+            exit 0
+          fi
           if [ -n "$YOUTUBE_TOKEN_JSON" ]; then
             mkdir -p ../.state
             printf '%s' "$YOUTUBE_TOKEN_JSON" > ../.state/youtube_token.json
             uv pip install --quiet --python ../.venv/bin/python google-api-python-client google-auth-oauthlib
-            ../.venv/bin/python 05_publish.py
+            # t_d53850f6: гейт Content ID — unlisted -> ждём вердикт -> public / удаление.
+            uv pip install --quiet --python ../.venv/bin/python google-api-python-client
+            ../.venv/bin/python 05_publish.py --claim-gate
           else
             echo "skip: секрет YOUTUBE_TOKEN_JSON не задан, публикация отложена"
           fi
