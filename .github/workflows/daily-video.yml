@@ -153,7 +153,7 @@ jobs:
             [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step 2>/dev/null)" = healthy ] && { echo "ace-step healthy"; exit 0; }
             sleep 6
           done
-          echo "::error::ace-step не healthy за 18 мин"; docker logs --tail 50 ace-step 2>&1 | tail -40; exit 1
+          echo "::error::ace-step не healthy за 18 мин"; docker inspect -f 'status={{.State.Status}} health={{.State.Health.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}} restarts={{.RestartCount}} image={{.Config.Image}}' ace-step 2>&1 || echo "ace-step: контейнер отсутствует (t_50f1fc9b)"; docker logs --tail 40 ace-step 2>&1 || echo "ace-step: логов нет"; exit 1
 
       - name: reference audio (cache)
         id: ref
