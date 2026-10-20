@@ -86,6 +86,7 @@ jobs:
           set -e
           echo "=== final: concat -c copy до длины трека + aac ===" | tee runs/loopgen/steps.log
           T0=$(date +%s)
+          python3 -m pip install -q numpy  # P15: loop_build импортирует numpy
           python3 pipeline/loop_build.py final runs/loopgen/loop.mp4 runs/loopgen/track.mp3 runs/loopgen/final.mp4 --fps 24 \
             2>&1 | tee runs/loopgen/final_report.log
           echo "final_elapsed_s=$(( $(date +%s) - T0 ))" | tee -a runs/loopgen/steps.log
