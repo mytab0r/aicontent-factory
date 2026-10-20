@@ -11,7 +11,7 @@ jobs:
     steps:
       - name: verify disk-guard tick after install + audit alive
         run: |
-          docker run --rm -v /run/desktop/mnt/host/d/hermes-runner:/h:ro alpine:3.20 sh -c 'tail -8 /h/disk-guard.log; echo; wc -l /h/docker-events.jsonl'
+          docker run --rm -v /run/desktop/mnt/host/d/hermes-runner:/h:ro alpine:3.20 sh -c 'tail -8 /h/disk-guard.log; echo; echo === 19.10 local 03-06; grep -aE "2026-10-19T0[3-6]:" /h/disk-guard.log; echo === 13-16.10; grep -aE "2026-10-1[3-6]T" /h/disk-guard.log | awk "NR%8==1" | head -40; grep -c . /h/disk-guard.log; head -3 /h/disk-guard.log; wc -l /h/docker-events.jsonl'
           docker ps --filter name=docker-audit --format '{{.Names}} {{.Status}}'
           docker inspect ace-step -f 'ace-step {{.State.Status}} {{.State.Health.Status}}'
           docker image inspect ghcr.io/ace-step/ace-step-1.5:latest -f 'image ok {{.Id}}'
