@@ -1,0 +1,61 @@
+name: G1zm0 A/B refpool samples
+
+on:
+  workflow_dispatch:
+    inputs:
+      n:
+        description: "how many variants (refs)"
+        default: "4"
+      seg_sec:
+        description: "segment length, s"
+        default: "60"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ab-refpool
+  cancel-in-progress: false
+
+jobs:
+  samples:
+    runs-on: [self-hosted, release]
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+
+      - uses: astral-sh/setup-uv@v3
+
+      - name: install deps
+        run: |
+          command -v ffmpeg || { sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg; }
+          uv venv .venv
+          uv pip install --python .venv/bin/python pillow gradio_client numpy
+
+      - name: reference pool (download missing refs)
+        run: |
+          mkdir -p /tmp/acf-refpool
+          cd pipeline && ../.venv/bin/python refpool.py --ensure && for e in $(../.venv/bin/python - <<'PY'
+          import refpool
+          print(" ".join(x[0] for x in refpool.POOL))
+          PY
+          ); do ../.venv/bin/python -c "import refpool,sys; refpool.ensure_ref({'yt_id':sys.argv[1]})" "$e"; done
+
+      - name: A/B candidates (4 refs, no publish)
+        working-directory: pipeline
+        env:
+          ACE15_ENDPOINT: http://ace-step:8001  # ACE-Step 1.5 REST на ПК (comfynet)
+        run: |
+          ../.venv/bin/python ab_samples.py --n "${{ inputs.n || 4 }}" --seg-sec "${{ inputs.seg_sec || 60 }}" --out ../runs/ab_$(date -u +%Y%m%d_%H%M%S)
+
+      - name: upload A/B artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ab-refpool-${{ github.run_id }}
+          path: |
+            runs/ab_*/ab_*.mp3
+            runs/ab_*/manifest.json
+            runs/ab_*/ab_LOCK.json
+          retention-days: 14

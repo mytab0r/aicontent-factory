@@ -262,6 +262,9 @@ def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=
             "bpm": 70 + seed % 21, "key_scale": ACE15_KEYS[seed % len(ACE15_KEYS)],
             "time_signature": "4", "batch_size": 1, "thinking": True,
             "use_random_seed": False, "seed": seed, "audio_format": "mp3"}
+    # t_d53850f6: переделка мелодий чужих треков (cover/repaint/lego) запрещена —
+    # эталон задаёт ТОЛЬКО стиль, Content ID матчит каверы и ремиксы.
+    assert "task_type" not in body, "task_type (cover/repaint) запрещён в проде"
     m = model or os.environ.get("ACE15_MODEL")  # t_b4006a6e: модель на запрос (XL-sft), пусто = слот контейнера
     if m:
         body["model"] = m
@@ -569,8 +572,23 @@ def main() -> None:
         # several videos/day, one per genre (workflow matrix sets GENRE)
         genre_name = os.environ["GENRE"]
         prompt = {**CANDIDATE_GENRE_PROMPTS, **GENRE_PROMPTS}[genre_name]
+        # t_d53850f6: сутки-ротация (эталон, промпт-вариант) — треки каждого дня
+        # звучат по-разному (пул одобренных 90-с OST-референсов в .state/refpool).
+        import sys as _sys
+        if str(Path(__file__).parent) not in _sys.path:
+            _sys.path.insert(0, str(Path(__file__).parent))
+        import refpool
+        day_pair = refpool.pick()
+        prompt = day_pair["prompt"]
+        try:
+            refpool.ensure_ref(day_pair)  # качает 90-с клип, если ещё не в кэше
+            ref_override = day_pair["ref_path"]
+        except Exception as e:  # нет сети/yt-dlp: prod fallback на ACE15_REF_AUDIO (ref1)
+            print(f"refpool: эталон дня недоступен ({type(e).__name__}: {e}); fallback ref1")
+            ref_override = None
     else:
         genre_name, prompt = genre_for_mood(mood)
+        ref_override = None
 
     # Длительность по умолчанию 60с (сигнатурный клип). Long-form
     # (sleep/meditation/ambient каналы по конкурентному анализу — часто
@@ -580,6 +598,7 @@ def main() -> None:
     duration = int(os.environ.get("TRACK_DURATION_SEC", "60"))
 
     seed = abs(hash(run_dir.name)) % (2**31)
+    ref = ref_override or os.environ.get("ACE15_REF_AUDIO")  # t_d53850f6: пул > фикс-файл
 
     out_path = run_dir / "track.mp3"
     chaps, seams = [], []
@@ -588,7 +607,6 @@ def main() -> None:
         ace15_prepare(os.environ.get("ACE15_MODEL"), os.environ.get("ACE15_LORA"))
     if os.environ.get("ACE15_ENDPOINT") and duration > ACE15_MAX_SEC:
         # ресёрч 13.10: хиты ниши 1-4 ч с треклистом; склеиваем ЦЕЛЬНЫЕ разные треки (не куски одного)
-        ref = os.environ.get("ACE15_REF_AUDIO")
         n_seg = int(os.environ.get("ACE15_BESTOF") or 0)  # гейт на сегмент: до N seed'ов, max CE среди прошедших
         mix_budget = int(os.environ.get("ACE15_MIX_BUDGET_SEC") or 7200)
 
@@ -612,7 +630,6 @@ def main() -> None:
         duration = int(sum(durs) - XFADE * (len(durs) - 1))
     elif os.environ.get("ACE15_ENDPOINT"):
         duration = min(duration, ACE15_MAX_SEC)
-        ref = os.environ.get("ACE15_REF_AUDIO")
         n = int(os.environ.get("ACE15_BESTOF") or 0)  # t_b4006a6e: best-of-N через quality_gate, 0 = 1 кандидат
         if n >= 2:
             import bestof
