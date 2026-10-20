@@ -15,6 +15,10 @@ on:
         description: "плановый запуск: guard (пропуск, если long-form жанра за сегодня уже есть)"
         type: boolean
         default: false
+      force:
+        description: "P16: намеренный второй long-form жанра за сутки (guard выключен). Без force guard работает и на ручном dispatch"
+        type: boolean
+        default: false
 
 # слоты не перекрываются: второй run ждёт первый и guard видит выпуск
 concurrency:
@@ -76,7 +80,8 @@ jobs:
       # Слот жанра: cron-ы обеих матриц срабатывают оба, чужой слот = published=1 (скип всех шагов).
       - name: guard (один long-form жанра в сутки)
         id: guard
-        if: github.event_name == 'schedule' || inputs.scheduled
+        # P16 (20.10): 4 ручных dispatch без scheduled обходили guard -> риск дубля long-form. Guard всегда, кроме force.
+        if: ${{ !inputs.force }}
         working-directory: pipeline
         run: |
           if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" != "${{ matrix.slots }}" ]; then
