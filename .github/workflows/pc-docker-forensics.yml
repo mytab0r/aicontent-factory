@@ -9,13 +9,22 @@ jobs:
     runs-on: [self-hosted, release]
     timeout-minutes: 15
     steps:
-      - name: v7 disk-guard full + log at 19.10 01:2x + tz
+      - name: install protected disk-guard.ps1 (backup .bak-t03efb867)
         run: |
-          docker run --rm -v /run/desktop/mnt/host/d:/d:ro alpine:3.20 sh -c '
-            echo "=== script"; cat -A /d/hermes-runner/disk-guard.ps1 | head -12; echo "=== vbs"; cat /d/hermes-runner/disk-guard.vbs
-            echo "=== log 19.10 01:00-02:30"; grep -aE "2026-10-19T0(1|2):" /d/hermes-runner/disk-guard.log | head -40
-            echo "=== tail"; tail -6 /d/hermes-runner/disk-guard.log; date -u
-            echo "=== aggressive count"; grep -c "aggressive image prune" /d/hermes-runner/disk-guard.log; grep -a "aggressive" /d/hermes-runner/disk-guard.log | head -2'
-          docker image inspect ghcr.io/ace-step/ace-step-1.5:latest -f 'created={{.Created}}'; docker inspect ace-step -f 'created={{.Created}} labels={{json .Config.Labels}}'
-          docker images --format '{{.Repository}}:{{.Tag}}|{{.ID}}|{{.CreatedAt}}|{{.Size}}'
-          docker ps -a --format '{{.Names}}|{{.Status}}|{{.CreatedAt}}'
+          docker run --rm -v /run/desktop/mnt/host/d/hermes-runner:/h -v "$PWD/deploy/gpu-pc/host":/src:ro alpine:3.20 sh -c '
+            [ -f /h/disk-guard.ps1.bak-t03efb867 ] || cp -p /h/disk-guard.ps1 /h/disk-guard.ps1.bak-t03efb867
+            sed "s/\r*\$/\r/" /src/disk-guard.ps1 > /h/disk-guard.ps1
+            ls -la /h/disk-guard.ps1*; grep -n "protect\|SKIP" /h/disk-guard.ps1' || {
+            # DooD: $PWD not visible to daemon -> pipe file via stdin
+            docker run --rm -i -v /run/desktop/mnt/host/d/hermes-runner:/h alpine:3.20 sh -c '
+              [ -f /h/disk-guard.ps1.bak-t03efb867 ] || cp -p /h/disk-guard.ps1 /h/disk-guard.ps1.bak-t03efb867
+              sed "s/\r*\$/\r/" > /h/disk-guard.ps1; ls -la /h/disk-guard.ps1*; grep -n "protect\|SKIP" /h/disk-guard.ps1' < deploy/gpu-pc/host/disk-guard.ps1; }
+      - name: docker events audit (container/image, jsonl on D:, rotate 50MB)
+        run: |
+          docker rm -f docker-audit >/dev/null 2>&1 || true
+          docker run -d --name docker-audit --restart unless-stopped \
+            -v /var/run/docker.sock:/var/run/docker.sock:ro -v /run/desktop/mnt/host/d/hermes-runner:/out \
+            --entrypoint sh docker:cli -c 'f=/out/docker-events.jsonl; docker events --filter type=container --filter type=image --format "{{json .}}" | while IFS= read -r l; do echo "$l" >> $f; [ $(stat -c %s $f) -gt 52428800 ] && mv $f $f.1; done'
+          sleep 3; docker ps --filter name=docker-audit --format '{{.Names}} {{.Status}}'
+          docker run --rm --name audit-probe alpine:3.20 true; sleep 2
+          docker run --rm -v /run/desktop/mnt/host/d/hermes-runner:/h:ro alpine:3.20 sh -c 'wc -l /h/docker-events.jsonl; grep audit-probe /h/docker-events.jsonl | cut -c1-220 | head -3'
