@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """CI-линт обходов гейтов («Повтор = класс», ai-dev-engineering #25).
-FAIL на: continue-on-error: true | `|| true`/`|| :` после теста/гейта/upload/push | actions/upload-artifact.
+FAIL на: setup-buildx-action без `driver: docker` (t_a41372f5) | continue-on-error: true | `|| true`/`|| :` после теста/гейта/upload/push | actions/upload-artifact.
 Разрешение: `# root-cause: t_<id>` (первые два) или `# artifact-ok: <причина>` (upload) в той же строке
 или в непрерывном блоке комментариев прямо над строкой.
 Usage: python3 ci_bypass_lint.py [ROOT]"""
@@ -11,6 +11,8 @@ import sys
 COE = re.compile(r"""^\s*-?\s*continue-on-error:\s*['"]?true['"]?\s*(#.*)?$""", re.I)
 OR_TRUE = re.compile(r"\|\|\s*(?:true|:)(?=$|[\s;)#])")
 GATE = re.compile(r"\b(?:tests?|pytest|unittest|lint|ruff|flake8|mypy|eslint|tsc|check|gate|verify|upload|push|publish)\b", re.I)
+BUILDX = re.compile(r"uses:\s*docker/setup-buildx-action@")
+DRIVER_DOCKER = re.compile(r"^\s*driver:\s*['\"]?docker['\"]?\s*(#.*)?$")
 UPLOAD = re.compile(r"uses:\s*actions/upload-artifact@")
 ROOT_CAUSE = re.compile(r"#\s*root-cause:\s*t_[0-9a-f]{6,}")
 ARTIFACT_OK = re.compile(r"#\s*artifact-ok:\s*\S")
@@ -30,6 +32,13 @@ def _rules(line):
 def lint_text(text):
     lines, out = text.splitlines(), []
     for i, line in enumerate(lines):
+        # t_a41372f5: эфемерный BuildKit (docker-container) качает базу с Docker Hub каждый прогон -> httpReadSeeker EOF
+        if BUILDX.search(line) and not any(DRIVER_DOCKER.match(x) for x in lines[i + 1:i + 6]):
+            ctx, j = [line], i - 1
+            while j >= 0 and lines[j].strip().startswith("#"):
+                ctx.append(lines[j]); j -= 1
+            if not any(ROOT_CAUSE.search(c) for c in ctx):
+                out.append((i + 1, "buildx-driver"))
         for rule, waiver in _rules(line):
             ctx, j = [line], i - 1
             while j >= 0 and lines[j].strip().startswith("#"):
