@@ -150,6 +150,70 @@ def test_render_tiny_scene_both_aspects():
             assert p.stdout.strip() == f"{W},{H}", p.stdout
 
 
+def test_short_windows_20_30_with_fallback():
+    durs = [22.0, 25.0, 18.0, 30.0, 21.0, 24.0, 19.0, 26.0, 23.0, 20.0, 27.0, 12.0, 11.0]
+    w = wf.short_windows(durs, n=3, limit=30.0, floor=20.0)
+    assert len(w) == 3 and len({tuple(x) for x in w}) == 3, w
+    for idx in w:
+        assert 20.0 <= sum(durs[i] for i in idx) <= 30.0, (idx, [durs[i] for i in idx])
+    # все сцены длиннее лимита: выпуск не падает, добор окнами <= SHORT_LIMIT
+    w = wf.short_windows([35.0, 40.0, 33.0, 36.0], n=3, limit=30.0, floor=20.0)
+    assert len(w) == 3 and all(sum([35.0, 40.0, 33.0, 36.0][i] for i in x) <= wf.SHORT_LIMIT for x in w), w
+
+
+def test_settings_from_env_and_rollback():
+    keys = ("WHATIF_HOOK", "WHATIF_SHORT_MAX", "WHATIF_LONG_EVERY", "WHATIF_LEGACY")
+    old = {k: os.environ.pop(k, None) for k in keys}
+    try:
+        d = wf.settings()
+        assert d == {"hook": True, "short_max": 30.0, "short_min": 20.0, "long_every": 2}, d
+        os.environ.update(WHATIF_HOOK="0", WHATIF_SHORT_MAX="58", WHATIF_LONG_EVERY="1")  # откат = старое поведение
+        d = wf.settings()
+        assert d["hook"] is False and d["short_max"] == 58.0 and d["long_every"] == 1, d
+        os.environ.update(WHATIF_HOOK="", WHATIF_SHORT_MAX="junk", WHATIF_LONG_EVERY="0")  # мусор -> дефолт/зажим
+        d = wf.settings()
+        assert d["hook"] is True and d["short_max"] == 30.0 and d["long_every"] == 1, d
+        os.environ["WHATIF_LEGACY"] = "1"  # откат одним repo var
+        assert wf.settings() == {"hook": False, "short_max": wf.SHORT_LIMIT, "short_min": 0.0, "long_every": 1}
+        os.environ.pop("WHATIF_LEGACY")
+    finally:
+        for k, v in old.items():
+            os.environ.pop(k, None)
+            if v is not None:
+                os.environ[k] = v
+
+
+def test_long_due_cadence():
+    assert [wf.long_due(i, 2) for i in range(4)] == [True, False, True, False]
+    assert all(wf.long_due(i, 1) for i in range(5))
+    assert sum(wf.long_due(i, 3) for i in range(9)) == 3
+
+
+def test_hook_first_second_has_question_and_motion():
+    assert wf.hook_text("What if you never felt fear?") == "What if you never felt fear?"
+    assert wf.hook_text("Fear") == "What if Fear?"  # всегда вопрос What if
+    a, b = wf.hook_scale(0.05), wf.hook_scale(0.5)
+    assert 0 < a < b, (a, b)  # движение в 0-1 с
+    assert wf.hook_scale(1.01) == 0  # после 1 с хука нет
+    sc = wf.validate_script(GOOD)["scenes"][0]
+    b2 = [(0.3 * i, 0.3 * i + 0.25, "word") for i in range(60)]
+    tl = wf.timeline(sc, b2)
+    pal = wf.PALETTES[0]
+    bg = wf.backdrop("city", pal, 270, 480, .64)
+    args = (bg, sc, tl, b2)
+    f_hook = wf.draw_frame(*args, 0.5, pal, GOOD["characters"], 270, 480, int(480 * .64), "t", hook="What if?")
+    f_plain = wf.draw_frame(*args, 0.5, pal, GOOD["characters"], 270, 480, int(480 * .64), "t")
+    f_late = wf.draw_frame(*args, 1.2, pal, GOOD["characters"], 270, 480, int(480 * .64), "t", hook="What if?")
+    f_late0 = wf.draw_frame(*args, 1.2, pal, GOOD["characters"], 270, 480, int(480 * .64), "t")
+    box = (0, 120, 270, 300)  # центр кадра
+    assert f_hook.crop(box).tobytes() != f_plain.crop(box).tobytes()
+    assert f_late.tobytes() == f_late0.tobytes()
+
+
+def test_render_workers_capped():
+    assert wf.render_workers(40, cpus=32) <= 6 and wf.render_workers(2, cpus=32) == 2 and wf.render_workers(5, cpus=1) == 1
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

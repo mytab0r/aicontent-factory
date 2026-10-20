@@ -55,6 +55,43 @@ ACTIONS = {"walk", "jump", "shake", "grow", "shrink", "spawn", "pop", "say", "mo
 NEEDS_WHO = {"walk", "jump", "shake", "grow", "shrink", "say", "mood", "hide", "show"}
 
 
+def settings() -> dict:
+    """Параметры выпуска из env (repo vars). WHATIF_LEGACY=1 = откат одним изменением к поведению до t_47c41540."""
+    if os.environ.get("WHATIF_LEGACY", "").strip() == "1":
+        return {"hook": False, "short_max": SHORT_LIMIT, "short_min": 0.0, "long_every": 1}
+    try:
+        short_max = min(SHORT_LIMIT, max(15.0, float(os.environ.get("WHATIF_SHORT_MAX", "30"))))
+    except ValueError:
+        short_max = 30.0
+    try:
+        long_every = max(1, int(os.environ.get("WHATIF_LONG_EVERY", "2")))
+    except ValueError:
+        long_every = 2
+    return {"hook": os.environ.get("WHATIF_HOOK", "1").strip() != "0", "short_max": short_max,
+            "short_min": min(20.0, short_max), "long_every": long_every}
+
+
+def long_due(idx: int, every: int) -> bool:
+    """Long — 1 раз в `every` выпусков (выпуск = 1/день); Shorts выходят каждый день."""
+    return idx % max(1, every) == 0
+
+
+def render_workers(jobs: int, cpus: int | None = None) -> int:
+    # ponytail: потолок 6 процессов (каждый = Pillow + ffmpeg x264); 19.10 32 параллельных рендера на общем
+    # раннере уронили ffmpeg (BrokenPipe). Поднять, если раннер станет выделенным.
+    return max(1, min(jobs, cpus or os.cpu_count() or 2, 6))
+
+
+def hook_text(title: str) -> str:
+    t = title.strip()
+    return t if re.match(r"^What if\b", t, re.I) else f"What if {t.rstrip('?')}?"
+
+
+def hook_scale(t: float, dur: float = 1.0) -> float:
+    """Масштаб хука: наезд 0.7 -> 1.0 за 0.6 с (движение в первую секунду), после `dur` — 0 (хука нет)."""
+    return 0.0 if t > dur else 0.7 + 0.3 * _ease(t / 0.6)
+
+
 def enabled() -> bool:
     return os.environ.get("CODE2D", "").strip().lower() in ("1", "true", "yes", "on")
 
@@ -295,28 +332,33 @@ def caption_at(bounds: list, t: float, chunk: int = 6):
     return [b[2] for b in bounds[s:e]], i - s
 
 
-def short_windows(durs: list, n: int = 3, limit: float = SHORT_LIMIT) -> list:
-    """n разных непрерывных окон сцен <= limit с: подряд с начала, добор — с других стартов."""
-    def win(s):
+def short_windows(durs: list, n: int = 3, limit: float = SHORT_LIMIT, floor: float = 0.0) -> list:
+    """n разных непрерывных окон сцен длиной [floor, limit] с: подряд с начала, добор — с других стартов.
+    Не набралось n: добор окнами без floor, затем окнами <= SHORT_LIMIT (выпуск не падает)."""
+    def win(s, lim):
         tot, e = 0.0, s
-        while e < len(durs) and tot + durs[e] <= limit:
+        while e < len(durs) and tot + durs[e] <= lim:
             tot += durs[e]
             e += 1
         return list(range(s, e)) if e > s else None
-    out, s = [], 0
-    while s < len(durs) and len(out) < n:
-        w = win(s)
-        if w:
-            out.append(w)
-            s = w[-1] + 1
-        else:
-            s += 1
-    for s in range(len(durs)):
+    out = []
+    for lim, fl in ((limit, floor), (limit, 0.0), (max(limit, SHORT_LIMIT), 0.0)):
+        s = 0
+        while s < len(durs) and len(out) < n:  # непересекающиеся подряд
+            w = win(s, lim)
+            if w and sum(durs[i] for i in w) >= fl and not any(set(w) & set(o) for o in out):
+                out.append(w)
+                s = w[-1] + 1
+            else:
+                s += 1
+        for s in range(len(durs)):  # добор с других стартов
+            if len(out) >= n:
+                break
+            w = win(s, lim)
+            if w and sum(durs[i] for i in w) >= fl and w not in out:
+                out.append(w)
         if len(out) >= n:
             break
-        w = win(s)
-        if w and w not in out:
-            out.append(w)
     return out[:n]
 
 
@@ -460,7 +502,30 @@ def draw_char(d, c, st, W, H, gy, u, fg):
         d.text((bx, byy), st["say"], font=f, fill="#111111", anchor="mm")
 
 
-def draw_frame(bg, sc, tl, bounds, t, pal, characters, W, H, gy, banner):
+def draw_hook(d, text, t, W, H, acc):
+    """Хук 0-1 с: вопрос «What if…» крупно по центру, наезд (движение в кадре с первого кадра)."""
+    k = hook_scale(t)
+    if not k:
+        return
+    u = min(W, H)
+    f = _font(max(16, int(u * .11 * k)))
+    lines, cur = [], ""
+    for w in text.split():  # перенос по ширине 86%
+        if cur and d.textlength(f"{cur} {w}", font=f) > W * .86:
+            lines.append(cur)
+            cur = w
+        else:
+            cur = f"{cur} {w}".strip()
+    lines.append(cur)
+    lh = f.size * 1.2
+    y0 = H * .4 - lh * len(lines) / 2
+    tw = max(d.textlength(x, font=f) for x in lines)
+    d.rounded_rectangle([(W - tw) / 2 - 30, y0 - 24, (W + tw) / 2 + 30, y0 + lh * len(lines) + 24], radius=28, fill=acc)
+    for j, x in enumerate(lines):
+        d.text((W / 2, y0 + lh * (j + .5)), x, font=f, fill="#111111", anchor="mm")
+
+
+def draw_frame(bg, sc, tl, bounds, t, pal, characters, W, H, gy, banner, hook=""):
     from PIL import ImageDraw
     im = bg.copy()
     d = ImageDraw.Draw(im, "RGBA")
@@ -493,10 +558,12 @@ def draw_frame(bg, sc, tl, bounds, t, pal, characters, W, H, gy, banner):
         y0 = H * (.06 if W > H else .1)
         d.rounded_rectangle([(W - bw_) / 2 - 24, y0 - u * .035, (W + bw_) / 2 + 24, y0 + u * .035], radius=18, fill=acc)
         d.text((W / 2, y0), banner, font=f, fill="#111111", anchor="mm")
+    if hook:
+        draw_hook(d, hook, t, W, H, acc)
     return im
 
 
-def render_scene(sc, bounds, audio, dur, pal, characters, out, W, H, banner=""):
+def render_scene(sc, bounds, audio, dur, pal, characters, out, W, H, banner="", hook=""):
     """Кадры Pillow -> ffmpeg rawvideo pipe + аудио сцены -> mp4 (h264/aac)."""
     gy = int(H * (.74 if W > H else .64))
     bg = backdrop(sc["place"], pal, W, H, gy / H)
@@ -504,15 +571,22 @@ def render_scene(sc, bounds, audio, dur, pal, characters, out, W, H, banner=""):
     n = max(1, math.ceil(dur * FPS))
     p = subprocess.Popen(["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}",
                           "-r", str(FPS), "-i", "-", "-i", str(audio), "-af", f"apad=whole_dur={dur:.3f}",
-                          "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p",
-                          "-c:a", "aac", "-ar", "44100", "-ac", "2", "-t", f"{dur:.3f}", str(out)], stdin=subprocess.PIPE)
+                          "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p", "-threads", "2",
+                          "-c:a", "aac", "-ar", "44100", "-ac", "2", "-t", f"{dur:.3f}", str(out)],
+                         stdin=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
         for k in range(n):
-            p.stdin.write(draw_frame(bg, sc, tl, bounds, k / FPS, pal, characters, W, H, gy, banner).tobytes())
+            p.stdin.write(draw_frame(bg, sc, tl, bounds, k / FPS, pal, characters, W, H, gy, banner, hook).tobytes())
+    except BrokenPipeError:
+        pass  # ffmpeg умер: причина — в его stderr ниже
     finally:
-        p.stdin.close()
+        try:
+            p.stdin.close()
+        except BrokenPipeError:
+            pass
+    err = p.stderr.read().decode(errors="replace")[-600:]
     if p.wait() != 0:
-        raise RuntimeError(f"ffmpeg scene render failed: {out}")
+        raise RuntimeError(f"ffmpeg scene render failed (rc={p.returncode}): {out}: {err}")
     return out
 
 
@@ -572,24 +646,30 @@ def render(run_dir: Path) -> dict:
         tt = list(ex.map(lambda i: tts(s["scenes"][i]["text"], w / f"{i:02d}.mp3"), range(len(s["scenes"]))))
     durs = [d + 0.45 for _, d in tt]
     (w / "timing.json").write_text(json.dumps([{"dur": d, "bounds": b} for (b, _), d in zip(tt, durs)]))
-    wins = short_windows(durs)
+    cfg = settings()
+    with_long = long_due(int(s.get("plan", {}).get("idx", 0)), cfg["long_every"])
+    wins = short_windows(durs, limit=cfg["short_max"], floor=cfg["short_min"])
+    hook = hook_text(s["title"]) if cfg["hook"] else ""
     jobs = [(sc, tt[i][0], w / f"{i:02d}.mp3", durs[i], pal, s["characters"], w / f"L{i:02d}.mp4", 1920, 1080, "")
-            for i, sc in enumerate(s["scenes"])]
-    vert = sorted({i for win in wins for i in win})
-    jobs += [(s["scenes"][i], tt[i][0], w / f"{i:02d}.mp3", durs[i], pal, s["characters"], w / f"V{i:02d}.mp4", 1080, 1920,
-              s["title"]) for i in vert]
-    with ProcessPoolExecutor(min(len(jobs), os.cpu_count() or 2)) as ex:
+            for i, sc in enumerate(s["scenes"])] if with_long else []
+    firsts = {win[0] for win in wins} if hook else set()
+    vert = sorted({(i, i in firsts and j == 0) for win in wins for j, i in enumerate(win)})
+    vname = lambda i, h: w / f"V{i:02d}{'h' if h else ''}.mp4"  # noqa: E731  h = вариант сцены с хуком
+    jobs += [(s["scenes"][i], tt[i][0], w / f"{i:02d}.mp3", durs[i], pal, s["characters"], vname(i, h), 1080, 1920,
+              s["title"], hook if h else "") for i, h in vert]
+    with ProcessPoolExecutor(render_workers(len(jobs))) as ex:
         list(ex.map(_render_job, jobs))
-    long = concat([w / f"L{i:02d}.mp4" for i in range(len(s["scenes"]))], run_dir / "long.mp4")
-    shorts = [str(concat([w / f"V{i:02d}.mp4" for i in win], run_dir / f"short_{k + 1}.mp4")) for k, win in enumerate(wins)]
+    long = concat([w / f"L{i:02d}.mp4" for i in range(len(s["scenes"]))], run_dir / "long.mp4") if with_long else None
+    shorts = [str(concat([vname(i, j == 0 and i in firsts) for j, i in enumerate(win)], run_dir / f"short_{k + 1}.mp4"))
+              for k, win in enumerate(wins)]
     cover = draw_frame(backdrop(s["scenes"][0]["place"], pal, 1280, 720, .74), s["scenes"][0],
                        timeline(s["scenes"][0], tt[0][0]), [], durs[0] * .6, pal, s["characters"], 1280, 720, int(720 * .74), "")
     d = ImageDraw.Draw(cover)
     d.text((640, 120), s["title"][:44], font=_font(58), fill=pal[3], anchor="mm", stroke_width=4, stroke_fill="#000000")
     cover.save(run_dir / "cover.png")
-    meta = {"long": str(long), "long_sec": probe(long), "shorts": shorts, "short_sec": [probe(x) for x in shorts],
-            "windows": wins}
-    if meta["long_sec"] < 240 or len(shorts) < 3 or max(meta["short_sec"]) > 60:
+    meta = {"long": str(long) if long else None, "long_sec": probe(long) if long else 0.0, "shorts": shorts,
+            "short_sec": [probe(x) for x in shorts], "windows": wins, "settings": cfg, "hook": hook}
+    if (long and meta["long_sec"] < 240) or len(shorts) < 3 or max(meta["short_sec"]) > 60:
         raise SystemExit(f"выпуск вне требований: {meta}")
     (run_dir / "render.json").write_text(json.dumps(meta, indent=2))
     print(json.dumps(meta, indent=2))
@@ -721,7 +801,7 @@ def publish(run_dir: Path) -> dict:
             "kind": "youtube#video", "videoId": vid}}}).execute()
         return f"https://www.youtube.com/watch?v={vid}"
     long_d, _ = descriptions(s)
-    if "long" not in done:  # идемпотентно: повтор шага не дублирует уже залитое
+    if meta.get("long") and "long" not in done:  # long не каждый день (WHATIF_LONG_EVERY)  # идемпотентно: повтор шага не дублирует уже залитое
         done["long"] = up(meta["long"], s["title"], long_d)
         done_f.write_text(json.dumps(done, indent=2))
         try:
@@ -729,7 +809,7 @@ def publish(run_dir: Path) -> dict:
                                media_body=MediaFileUpload(str(run_dir / "cover.png"), mimetype="image/png")).execute()
         except Exception as e:
             print(f"thumbnail skip: {type(e).__name__}")
-    _, short_d = descriptions(s, done["long"])
+    _, short_d = descriptions(s, done.get("long"))  # ponytail: в день без long ссылки нет; ссылать на прошлый long, если понадобится
     for k, path in enumerate(meta["shorts"], 1):
         key = f"short_{k}"
         if key not in done:

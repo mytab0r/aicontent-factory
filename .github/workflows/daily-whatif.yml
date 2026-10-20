@@ -1,5 +1,5 @@
 name: whatif code-2D (S1 ch2)
-# S1 ch2 «What if...»: 1 long (>=4 мин, 1080p) + 3 Shorts (9:16), 2D-анимацию рисует код (pipeline/whatif_channel.py).
+# S1 ch2 «What if...»: 3 Shorts/день (9:16, 20-30 с, хук) + long (>=4 мин, 1080p) раз в WHATIF_LONG_EVERY дней, 2D-анимацию рисует код (pipeline/whatif_channel.py).
 # Флаг: vars.CODE2D == '1' включает режим; снять флаг = откат (все шаги no-op).
 # Публикация: ch1 отдельным плейлистом «What If...» (второго Google-аккаунта нет); квота: 4 videos.insert из 100/сутки.
 on:
@@ -22,6 +22,12 @@ jobs:
       ROUTER_BASE_URL: https://9router.pxbt.app/v1
       ROUTER_API_KEY: ${{ secrets.ROUTER_API_KEY }}
       CODE2D: ${{ vars.CODE2D }}
+      # t_47c41540: хук 0-1 с, Shorts 20-30 с, long 1 раз в N дней. Пусто = дефолты кода (1 / 30 / 2).
+      # Откат одним изменением: repo var WHATIF_LEGACY=1 (без хука, Shorts <=58 с, long каждый день).
+      WHATIF_HOOK: ${{ vars.WHATIF_HOOK }}
+      WHATIF_SHORT_MAX: ${{ vars.WHATIF_SHORT_MAX }}
+      WHATIF_LONG_EVERY: ${{ vars.WHATIF_LONG_EVERY }}
+      WHATIF_LEGACY: ${{ vars.WHATIF_LEGACY }}
     steps:
       - name: flag
         id: flag
@@ -56,7 +62,7 @@ jobs:
         run: |
           mkdir -p .state
           printf '%s' "$YT_CH1_TOKEN_JSON" > .state/youtube_token.json
-      - name: publish (long + 3 Shorts в плейлист)
+      - name: publish (3 Shorts + long по графику, в плейлист)
         if: steps.flag.outputs.go == '1'
         working-directory: pipeline
         run: ../.venv/bin/python whatif_channel.py publish
