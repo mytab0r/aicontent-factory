@@ -11,7 +11,7 @@ on:
         default: "60"
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: ab-refpool
@@ -61,6 +61,24 @@ jobs:
             runs/ab_*/manifest.json
             runs/ab_*/ab_LOCK.json
           retention-days: 14
+
+      - name: deliver via git branch (durable fallback, мимо artifacts/tmpfiles)
+        if: ${{ always() }}
+        run: |
+          set +e
+          D=$(ls -d runs/ab_* 2>/dev/null | tail -1)
+          [ -z "$D" ] && { echo "no ab dir"; exit 0; }
+          git config user.email "bot@users.noreply.github.com"
+          git config user.name "acf-bot"
+          git checkout -B delivery/ab-refpool
+          mkdir -p samples
+          cp "$D"/ab_*.mp3 "$D"/manifest.json samples/ 2>/dev/null
+          git add -f samples
+          git commit -m "ab samples $(date -u +%Y%m%d_%H%M%S)"
+          for i in 1 2 3; do git push -q --force origin delivery/ab-refpool && { echo "PUSHED to delivery/ab-refpool"; break; }; sleep 5; done
+          ls -la samples/
+          echo "branch: delivery/ab-refpool" >> "${GITHUB_STEP_SUMMARY}"
+          exit 0
 
       - name: deliver to Telegram or tmpfiles URLs in step summary
         if: ${{ always() }}
