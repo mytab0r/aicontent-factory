@@ -9,17 +9,12 @@ jobs:
     runs-on: [self-hosted, release]
     timeout-minutes: 15
     steps:
-      - name: host scripts with prune/rmi (C:\Users\magic\tools, C:\dockerlocal, D:\hermes-codex, hermes-ops)
+      - name: v6 runner-disk-guard + hermes-ops/janitor + docker-guard.log window
         run: |
           docker run --rm -v /run/desktop/mnt/host/c:/c:ro -v /run/desktop/mnt/host/d:/d:ro alpine:3.20 sh -c '
-            for d in /c/Users/magic/tools /c/Users/magic/hermes-ops /c/dockerlocal /d/hermes-codex; do
-              echo "=== $d"; ls -la --full-time $d 2>&1 | head -60
-            done
-            echo "=== services.json"; cat /c/Users/magic/tools/admin/services.json 2>&1 | head -80
-            echo "=== grep prune/rmi"
-            grep -rnaiE "prune|rmi |image rm|images? .*remove|docker rm" --include=*.ps1 --include=*.sh --include=*.py --include=*.json \
-              /c/Users/magic/tools /c/Users/magic/hermes-ops /c/dockerlocal /d/hermes-codex 2>/dev/null | grep -v "\.bak" | cut -c1-300 | head -80
-            echo "=== logs around 19.10 01:00-02:00 UTC (04:00-05:00 local MSK)"
-            for f in $(find /c/Users/magic/tools /c/Users/magic/hermes-ops /c/dockerlocal /d/hermes-codex -maxdepth 3 -name "*.log" 2>/dev/null); do
-              n=$(grep -caE "2026-10-19[T ]0[1-5]:|19\.10\.2026 0[1-5]:" $f 2>/dev/null); [ "${n:-0}" -gt 0 ] && { echo "--- $f ($n)"; grep -aE "2026-10-19[T ]0[1-5]:|19\.10\.2026 0[1-5]:" $f | grep -aiE "prune|rm|remov|delet|reclaim|untag|ace|disk|free|clean" | head -40; }
-            done'
+            for f in /d/hermes-runner/disk-guard.ps1 /c/Users/magic/hermes-ops/disk-guard.ps1 /c/dockerlocal/disk-guard.ps1 /c/Users/magic/tools/docker-guard.ps1 /c/dockerlocal/scratch-clean.sh; do echo "===== $f"; cat "$f" 2>&1; echo; done
+            echo "===== ls"; ls -la --full-time /d/hermes-runner /c/Users/magic/hermes-ops/janitor /c/dockerlocal/janitor 2>&1 | head -60
+            for f in /c/Users/magic/hermes-ops/janitor/* /c/dockerlocal/janitor/*; do case "$f" in *.log) continue;; esac; echo "===== $f"; head -c 4000 "$f"; echo; done
+            for f in $(ls /d/hermes-runner/*.log /c/Users/magic/hermes-ops/janitor/*.log /c/dockerlocal/janitor/*.log /c/Users/magic/tools/docker-guard.log /c/Users/magic/hermes-ops/guard.log 2>/dev/null); do
+              echo "===== $f window 18.10 22:00 - 19.10 06:00 (UTC or local)"; grep -aE "2026-10-1(8[T ]2[2-3]|9[T ]0[0-6])|1[89]\.10\.2026" "$f" | head -120
+            done; true'
