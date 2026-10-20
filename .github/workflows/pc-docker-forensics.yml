@@ -9,20 +9,9 @@ jobs:
     runs-on: [self-hosted, release]
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - name: install protected disk-guard.ps1 (backup .bak-t03efb867)
+      - name: verify disk-guard tick after install + audit alive
         run: |
-          test -s deploy/gpu-pc/host/disk-guard.ps1
-          docker run --rm -i -v /run/desktop/mnt/host/d/hermes-runner:/h alpine:3.20 sh -c '
-            [ -s /h/disk-guard.ps1.bak-t03efb867 ] || exit 3
-            sed "s/\r*\$/\r/" > /h/disk-guard.ps1.new && [ -s /h/disk-guard.ps1.new ] && mv /h/disk-guard.ps1.new /h/disk-guard.ps1
-            ls -la /h/disk-guard.ps1*; grep -n "protect\|SKIP" /h/disk-guard.ps1' < deploy/gpu-pc/host/disk-guard.ps1
-      - name: docker events audit (container/image, jsonl on D:, rotate 50MB)
-        run: |
-          docker rm -f docker-audit >/dev/null 2>&1 || true
-          docker run -d --name docker-audit --restart unless-stopped \
-            -v /var/run/docker.sock:/var/run/docker.sock:ro -v /run/desktop/mnt/host/d/hermes-runner:/out \
-            --entrypoint sh docker:cli -c 'f=/out/docker-events.jsonl; docker events --filter type=container --filter type=image --format "{{json .}}" | while IFS= read -r l; do echo "$l" >> $f; [ $(stat -c %s $f) -gt 52428800 ] && mv $f $f.1; done'
-          sleep 3; docker ps --filter name=docker-audit --format '{{.Names}} {{.Status}}'
-          docker run --rm --name audit-probe alpine:3.20 true; sleep 2
-          docker run --rm -v /run/desktop/mnt/host/d/hermes-runner:/h:ro alpine:3.20 sh -c 'wc -l /h/docker-events.jsonl; grep audit-probe /h/docker-events.jsonl | cut -c1-220 | head -3'
+          docker run --rm -v /run/desktop/mnt/host/d/hermes-runner:/h:ro alpine:3.20 sh -c 'tail -8 /h/disk-guard.log; echo; wc -l /h/docker-events.jsonl'
+          docker ps --filter name=docker-audit --format '{{.Names}} {{.Status}}'
+          docker inspect ace-step -f 'ace-step {{.State.Status}} {{.State.Health.Status}}'
+          docker image inspect ghcr.io/ace-step/ace-step-1.5:latest -f 'image ok {{.Id}}'
