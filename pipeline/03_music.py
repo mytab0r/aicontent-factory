@@ -534,6 +534,21 @@ def prep_segments(paths, log=print):
     return edge_match(paths, log=log)
 
 
+FADE_END_SEC = 6.0  # A16 (quality_gate.END_DROP 12 дБ): эталоны затухают, ACE-Step/loudnorm обрывают хвост
+
+
+def fade_end(path, sec: float = FADE_END_SEC) -> None:
+    """Затухание последних sec с на месте, длительность не меняется (run 39395729278: резкий конец -9.7 дБ)."""
+    import subprocess
+
+    d = _probe_sec(path)
+    tmp = str(path) + ".fade.mp3"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(path), "-af",
+                    f"afade=t=out:st={max(0.0, d - sec):.3f}:d={sec}", "-c:a", "libmp3lame", "-b:a", "192k", tmp],
+                   check=True)
+    os.replace(tmp, path)
+
+
 def concat_tracks(paths: list[str], out_path, xfade: float = XFADE) -> None:
     """Склеивает треки цепочкой acrossfade (tri/tri, xfade с): без разрыва громкости и щелчка на стыке."""
     import shutil
@@ -662,6 +677,7 @@ def main() -> None:
     # loudnorm выравнивает громкость часа; этот файл целиком меряют 03c и 04b (гейт выпуска).
     if bestof_meta is None:  # победитель best-of уже отмастерен
         mastering.master(out_path, out_path, genre=genre_name)
+    fade_end(out_path)  # после мастеринга: loudnorm подтягивает тихий хвост обратно
     (run_dir / "music_meta.json").write_text(
         json.dumps({"genre": genre_name, "prompt": prompt, "seed": seed, "duration": duration,
                     "chapters": chaps, "seams": seams, "bestof": bestof_meta},

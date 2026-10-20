@@ -307,6 +307,23 @@ def test_trim_fade_tails_cuts_quiet_end_and_respects_last():
     tail = _m.edge_rms(fs[0], "r", sec=5)
     assert abs(tail - body) < 6, (body, tail)
 
+def test_fade_end_passes_a16_after_loudnorm():
+    """run 39395729278 (20.10): 03c FAIL «резкий конец: последние 0.5 с -25.6 дБ при треке -15.8 (затухание -9.7 < 12)».
+    Хвост последнего сегмента ACE-Step обрывается, loudnorm его подтягивает. fade_end после мастеринга -> A16 проходит."""
+    import subprocess as sp
+    import tempfile
+    import quality_gate as qg
+    d = Path(tempfile.mkdtemp())
+    f = d / "end.mp3"
+    sp.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=30", "-ac", "2",
+            "-af", "loudnorm=I=-14:TP=-2:LRA=11", "-c:a", "libmp3lame", "-b:a", "192k", str(f)], check=True)
+    assert qg.end_why(str(f)), "фикстура должна обрываться (RED-условие)"
+    dur = music._probe_sec(f)
+    music.fade_end(f)
+    assert qg.end_why(str(f)) == [], qg.end_why(str(f))
+    assert abs(music._probe_sec(f) - dur) < 0.1, "длительность не меняется (главы/стыки)"
+
+
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"):
