@@ -117,3 +117,11 @@ jobs:
           trap "docker rmi -f $T >/dev/null 2>&1 || true" EXIT
           docker build -q -f test/e2e/Dockerfile -t $T .
           docker run --rm --ipc=host $T
+  ci-bypass-lint:
+    runs-on: [self-hosted, pc]
+    steps:
+      - uses: actions/checkout@v4
+      - name: ci-bypass-lint («Повтор = класс»)
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/mytab0r/hermes-scripts/main/ci-bypass-lint/ci_bypass_lint.py -o ci_bypass_lint.py
+          python3 ci_bypass_lint.py .

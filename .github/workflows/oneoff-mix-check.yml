@@ -73,7 +73,7 @@ jobs:
 
       - name: 03b animate cover (Wan2.2 ZeroGPU, сбой -> статика)
         if: steps.guard.outputs.published != '1'
-        continue-on-error: true
+        continue-on-error: true  # root-cause: t_f95a06da
         timeout-minutes: 15
         working-directory: pipeline
         run: ../.venv/bin/python 03b_animate.py
@@ -91,7 +91,7 @@ jobs:
 
       - name: reference audio (cache)
         if: steps.guard.outputs.published != '1'
-        continue-on-error: true
+        continue-on-error: true  # root-cause: t_f95a06da
         run: |
           [ -s "$ACE15_REF_AUDIO" ] && exit 0
           mkdir -p /tmp/acf-ref && python3 -m venv /tmp/acf-ref/v && /tmp/acf-ref/v/bin/pip install -q -U yt-dlp
@@ -123,7 +123,7 @@ jobs:
           ffmpeg -loglevel error -y -ss "$ss" -t 60 -i "$d/track.mp3" -codec:a libmp3lame -b:a 192k out/transition_60s.mp3
           ffmpeg -loglevel error -y -t 60 -i "$d/track.mp3" -codec:a libmp3lame -b:a 192k out/start_60s.mp3
           ffmpeg -hide_banner -i "$d/track.mp3" -af silencedetect=n=-50dB:d=1,ebur128=peak=true -f null - 2>&1 | grep -E 'silence_|I:|Peak:' | tail -12
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4  # artifact-ok: логи прогона; доставка результата вне артефактов
         with:
           name: mix-check
           path: out/

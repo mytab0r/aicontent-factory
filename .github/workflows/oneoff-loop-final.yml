@@ -160,7 +160,7 @@ jobs:
           PY
       - name: upload artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4  # artifact-ok: логи прогона; доставка результата вне артефактов
         with:
           name: loop-final
           path: |

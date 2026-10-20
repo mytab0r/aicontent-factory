@@ -99,7 +99,7 @@ jobs:
             2>&1 | tee runs/loopgen/encode_seam.log
       - name: upload loopgen artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4  # artifact-ok: логи прогона; доставка результата вне артефактов
         with:
           name: loopgen
           path: |
@@ -111,7 +111,7 @@ jobs:
           if-no-files-found: warn
       - name: upload full frames (fallback, big)
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4  # artifact-ok: логи прогона; доставка результата вне артефактов
         with:
           name: loopgen-frames-full
           path: runs/loopgen/

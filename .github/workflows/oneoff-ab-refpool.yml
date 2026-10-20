@@ -52,8 +52,8 @@ jobs:
           ../.venv/bin/python ab_samples.py --n "${{ inputs.n || 4 }}" --seg-sec "${{ inputs.seg_sec || 60 }}" --out ../runs/ab_$(date -u +%Y%m%d_%H%M%S)
 
       - name: upload A/B artifact
-        continue-on-error: true  # квота storage может быть исчерпана — доставка идёт через TG
-        uses: actions/upload-artifact@v4
+        continue-on-error: true  # квота storage может быть исчерпана — доставка идёт через TG  # root-cause: t_f95a06da
+        uses: actions/upload-artifact@v4  # artifact-ok: логи прогона; доставка результата вне артефактов
         with:
           name: ab-refpool-${{ github.run_id }}
           path: |
