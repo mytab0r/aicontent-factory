@@ -52,44 +52,50 @@ def eq_af(gains):
 
 def master(src: str, dst: str, genre: str = "chill phonk") -> dict:
     phonk = "phonk" in genre
-    if not phonk:
-        # t_ffa7ff01: сегменты 180 с тянут в разные стороны (seed 101 мутная середина, 202 тёмный верх) —
-        # статичная EQ гейт полос не проходит (exp/lofi-eq). Мерим полосы каждого файла и тянем к REF['lofi'].
-        from quality_gate import REF, bands
-        s = src
-        for _ in range(EQ_PASSES):
-            af = f"highpass=f=28,{eq_af(eq_gains(bands(s), REF['lofi']['bands']))},loudnorm=I=-14:TP=-2:LRA=11"
-            tmp = f"{dst}.tmp.mp3"
-            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(s), "-af", af,
-                            "-c:a", "libmp3lame", "-b:a", "192k", tmp], check=True)
-            os.replace(tmp, dst)
-            s = dst
-    af = LOFI_AF if not phonk else ("highpass=f=28,bass=g=3:f=55,equalizer=f=300:t=q:w=1.2:g=-2,"
-          "treble=g=2:f=10000,"
-          "acompressor=threshold=-18dB:ratio=2.5:attack=20:release=250:makeup=2,"
-          "extrastereo=m=1.2,"
-          "loudnorm=I=-14:TP=-2:LRA=8,"
-          "aresample=48000,"
-          "acompressor=threshold=-18dB:ratio=4:attack=10:release=150:makeup=1.5,"
-          "acompressor=threshold=-15dB:ratio=6:attack=5:release=100:makeup=2,"
-          "alimiter=limit=0.79:level=disabled,"
-          "loudnorm=I=-14:TP=-2:LRA=8")
-    def run(s: str, d: str) -> None:
+    # t_ffa7ff01 / 20.10 (39370096994): сегменты тянут полосы в разные стороны у ОБОИХ жанров —
+    # статичная цепочка phonk дала 0/15 прошедших гейт (ср. |откл| 5.2 дБ в 20-60 и 150-400 Гц).
+    # Мерим полосы и тянем к REF жанра; для phonk EQ идёт ПОСЛЕ одобренной цепочки — до неё
+    # цепочка сносит тон обратно (тест: phonk adaptive EQ).
+    from quality_gate import REF, bands
+
+    PHONK_AF = ("highpass=f=28,bass=g=3:f=55,equalizer=f=300:t=q:w=1.2:g=-2,"
+                "treble=g=2:f=10000,"
+                "acompressor=threshold=-18dB:ratio=2.5:attack=20:release=250:makeup=2,"
+                "extrastereo=m=1.2,"
+                "loudnorm=I=-14:TP=-2:LRA=8,"
+                "aresample=48000,"
+                "acompressor=threshold=-18dB:ratio=4:attack=10:release=150:makeup=1.5,"
+                "acompressor=threshold=-15dB:ratio=6:attack=5:release=100:makeup=2,"
+                "alimiter=limit=0.79:level=disabled,"
+                "loudnorm=I=-14:TP=-2:LRA=8")
+
+    def run(s: str, d: str, chain: str) -> None:
         # пишем во временный файл: ffmpeg не может писать в свой же вход (src == dst)
         tmp = f"{d}.tmp.mp3"  # d бывает Path (03_music)
-        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", s, "-af", af,
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", s, "-af", chain,
                         "-c:a", "libmp3lame", "-b:a", "192k", tmp], check=True)
         os.replace(tmp, d)
 
     if phonk:
-        run(src, dst)
+        run(src, dst, PHONK_AF)  # одобренная владельцем 14.10 динамика/лимитер
+        # повторные проходы ПОСЛЕ цепочки: только тон+громкость, цепочку не повторять (снесёт тон)
+        for _ in range(EQ_PASSES):
+            run(dst, dst, f"{eq_af(eq_gains(bands(dst), REF['phonk']['bands']))},loudnorm=I=-14:TP=-2:LRA=8")
+    else:
+        s = src
+        for _ in range(EQ_PASSES):
+            run(s, dst, f"highpass=f=28,{eq_af(eq_gains(bands(s), REF['lofi']['bands']))},loudnorm=I=-14:TP=-2:LRA=11")
+            s = dst
+        run(dst, dst, LOFI_AF)
     m = measure(dst)
     # ponytail: экстремальная динамика (длинные паузы) ломает LRA одним проходом —
-    # повторные полные проходы сходятся (LRA 15.6->6.5->2.5); 3 прохода, дальше гейт.
+    # повторные проходы сходятся (LRA 15.6->6.5->2.5); 3 прохода, дальше гейт.
+    # Повтор = loudnorm-only для обоих жанров: полная цепочка/LOFI слали бы тон заново.
+    rerun = "loudnorm=I=-14:TP=-2:LRA=8" if phonk else LOFI_AF
     for _ in range(2):
         if -15 <= m["i"] <= -13 and (m["lra"] <= 8 or not phonk) and m["tp"] <= -1:
             break
-        run(dst, dst)
+        run(dst, dst, rerun)
         m = measure(dst)
     assert -15 <= m["i"] <= -13, f"гейт I: {m}"
     assert m["lra"] <= 8 or not phonk, f"гейт LRA: {m}"
