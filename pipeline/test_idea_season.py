@@ -78,11 +78,6 @@ def test_off_season_markers_stripped():
     assert "🎃" not in p and "halloween" not in p.lower(), "пример формулы не должен тянуть 🎃 вне сезона"
 
 
-if __name__ == "__main__":
-    for name, fn in list(globals().items()):
-        if name.startswith("test_"):
-            fn()
-            print("ok", name)
 
 
 def test_title_formula_has_genre_word():
@@ -114,3 +109,10 @@ def test_m1_duplicate_scene_titles_blocked():
         idea.remember_title("A", date(2026, 10, 1), Path(t))
         idea.remember_title("B", date(2026, 10, 20), Path(t))
         assert [r["title"] for r in idea.recent_titles(Path(t))] == ["A", "B"]
+
+
+if __name__ == "__main__":
+    for name, fn in list(globals().items()):
+        if name.startswith("test_"):
+            fn()
+            print("ok", name)
