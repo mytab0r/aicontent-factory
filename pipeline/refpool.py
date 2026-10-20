@@ -17,6 +17,7 @@
 import datetime as dt
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 POOL = [
@@ -110,7 +111,10 @@ def ensure_ref(entry=None, out_dir=None) -> Path:
     raw_prefix = out_dir / ("raw_%s" % entry["yt_id"])
     if not list(out_dir.glob(raw_prefix.name + ".*")):
         url = "https://www.youtube.com/watch?v=" + entry["yt_id"]
-        subprocess.run(["yt-dlp", "-q", "-f", "bestaudio", "-o", raw_prefix.name + ".%(ext)s", url],
+        # модуль того же интерпретатора, что исполняет pipeline: на раннере
+        # бинарника yt-dlp в PATH нет (run 39391131570, FileNotFoundError)
+        subprocess.run([sys.executable, "-m", "yt_dlp", "-q", "-f", "bestaudio",
+                        "-o", raw_prefix.name + ".%(ext)s", url],
                        check=True, capture_output=True, cwd=str(out_dir))
     raw = next(iter(out_dir.glob(raw_prefix.name + ".*")))
     subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-ss", str(REF_START_SEC),

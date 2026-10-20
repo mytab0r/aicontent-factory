@@ -32,7 +32,7 @@ jobs:
         run: |
           command -v ffmpeg || { sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg; }
           uv venv .venv
-          uv pip install --python .venv/bin/python pillow gradio_client numpy
+          uv pip install --python .venv/bin/python pillow gradio_client numpy yt-dlp
 
       - name: reference pool (download missing refs)
         run: |
