@@ -363,7 +363,7 @@ def mix_raw(run_dir, prompt, seed, ref, genre_name):
 
 
 def plan_mix(target_sec, gen, dur, budget_sec=1800, max_tracks=12, now=None, min_sec=900,
-             max_drops=3):
+             max_drops=5):
     """Час-микс из цельных треков 1.5 (модель отдаёт ~482 с вместо 600 — считаем по факту).
     Стоп: набрали target, max_tracks, следующий трек не влезает в бюджет времени шага,
     или max_drops сегментов подряд выбраковал гейт (None). Уже набранное не трогаем.
@@ -376,12 +376,14 @@ def plan_mix(target_sec, gen, dur, budget_sec=1800, max_tracks=12, now=None, min
         i += 1
         if p is None:
             drops += 1  # сегмент выбракован: микс дозаполняют другие, порог проверится в конце
-            continue
-        drops = 0
-        paths.append(p)
-        durs.append(dur(p))
+        else:
+            drops = 0
+            paths.append(p)
+            durs.append(dur(p))
+        # 20.10 run 39353766781: 3 провала подряд обрывали микс на 55-й из 120 мин бюджета.
+        # Стоп по бюджету считает ВСЕ попытки (и выбракованные): следующая не влезет -> стоп.
         elapsed = now() - start
-        if elapsed + elapsed / len(paths) > budget_sec:
+        if elapsed + elapsed / i > budget_sec:
             break
     if sum(durs) < min_sec:
         raise RuntimeError(f"микс {int(sum(durs))} с < {min_sec} с (15 мин) после выбраковки "
