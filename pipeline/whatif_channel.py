@@ -695,6 +695,7 @@ def sse_content(lines) -> str:
 
 def router_stream(model: str, prompt: str, max_tokens: int, timeout: int = 600) -> str:
     """stream=True: длинный ответ не упирается в 100 с Cloudflare (HTTP 524 на non-stream, 19.10)."""
+    import http.client
     import urllib.error
     import urllib.request
     from common import router_api_key, router_base_url
@@ -707,8 +708,8 @@ def router_stream(model: str, prompt: str, max_tokens: int, timeout: int = 600) 
             return sse_content(r)
     except urllib.error.HTTPError as e:
         raise RuntimeError(f"9router HTTP {e.code}: {e.read()[:300]!r}") from None
-    except (urllib.error.URLError, OSError) as e:
-        raise RuntimeError(f"9router network: {e}") from None
+    except (urllib.error.URLError, OSError, http.client.HTTPException) as e:  # обрыв SSE = IncompleteRead
+        raise RuntimeError(f"9router network: {type(e).__name__}: {e}") from None
 
 
 def idea(models=None) -> Path:

@@ -214,6 +214,32 @@ def test_render_workers_capped():
     assert wf.render_workers(40, cpus=32) <= 6 and wf.render_workers(2, cpus=32) == 2 and wf.render_workers(5, cpus=1) == 1
 
 
+def test_router_stream_broken_stream_is_runtime_error():
+    """19.10/20.10: обрыв SSE (IncompleteRead) ронял весь idea вместо перехода к следующей модели."""
+    import http.client
+    import urllib.request
+    os.environ.setdefault("ROUTER_API_KEY", "x")
+
+    class Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def __iter__(self):
+            raise http.client.IncompleteRead(b"")
+    orig = urllib.request.urlopen
+    urllib.request.urlopen = lambda *a, **k: Resp()
+    try:
+        wf.router_stream("m", "p", 10)
+        raise AssertionError("должно быть RuntimeError")
+    except RuntimeError as e:
+        assert "IncompleteRead" in str(e), e
+    finally:
+        urllib.request.urlopen = orig
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):
