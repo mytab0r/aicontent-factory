@@ -119,6 +119,32 @@ def test_mix_gate_objective_fail_regenerates_and_critic_error_propagates():
         assert "критик" in str(e)
 
 
+def test_mix_survives_streak_of_drops_within_budget():
+    """20.10 run 39353766781: сегмент 0 OK, 1-3 выбракованы гейтом -> plan_mix встал после
+    3 провалов подряд на 55-й минуте из 120 бюджета, выпуск lofi сорван (180 с < 900 с).
+    Серия провалов внутри бюджета не повод сдаваться: нужен потолок 5 подряд + бюджет."""
+    ok = {0, 4, 5, 6, 7}
+    gen = lambda i: f"t{i}" if i in ok else None
+    paths, durs = music.plan_mix(3600, gen, lambda p: 180.0, max_tracks=22, min_sec=900)
+    assert paths == ["t0", "t4", "t5", "t6", "t7"], paths
+
+
+def test_mix_drops_bounded_by_time_budget():
+    """Провалы тоже тратят бюджет: сплошной брак останавливается по времени, а не крутится."""
+    t = iter(range(0, 10**6, 1000))
+    calls = []
+    def gen(i):
+        calls.append(i)
+        return None
+    try:
+        music.plan_mix(3600, gen, lambda p: 180.0, budget_sec=2500, max_drops=99,
+                       max_tracks=99, min_sec=900, now=lambda: next(t))
+        raise SystemExit("должен был упасть: микс пуст")
+    except RuntimeError:
+        pass
+    assert len(calls) <= 4, calls
+
+
 def test_daily_video_sets_bestof():
     import re
     wf = (Path(__file__).resolve().parent.parent / ".github/workflows/daily-video.yml").read_text(encoding="utf-8")
