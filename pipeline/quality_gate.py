@@ -49,6 +49,11 @@ SUB_MAX = -20.0
 # Замер 19.10: одобренные миксы ref-style6 15 мин 1.5, ref-style4 MIX 0.8, MIX 85-95-105 1.0, voice-in-transitions 0.2.
 # Блок 30 с непригоден: ref1 внутри 2-мин трека прыгает на 8.8 (штатная динамика), 60 с сглаживает её.
 JUMP_BLOCK, JUMP_MAX = 60.0, 4.0
+# A19: строй плывёт между частями микса (аудит 11.10 4HB26c4yow0: куски +0.05..+0.40 полутона = «фальшивые ноты»).
+# Строй окна TUNE_WIN с = круговое среднее отклонения пиков спектра 100-2000 Гц от сетки A440 (центы, вес = амплитуда).
+# Разброс строя между окнами > TUNE_MAX центов = FAIL. Замер 19.10 (окна 30 с): ref1 1.8, ref2 1.1, ref3 2.5,
+# одобренный 15-мин микс ref-style6 6.6, MIX 85-95-105 4.2, two-formats S1-U2 0.7-2.5; брак ref1 + та же часть +40 центов = 42.
+TUNE_WIN, TUNE_MAX = 30.0, 20.0
 MIN_CE = 6.5  # ниже худшего рефа ниши (7.07), сильно выше брака (<=3.6)
 
 
@@ -347,6 +352,45 @@ def loudjump_why(f):
             f"(> {JUMP_MAX})" for i, (a, b) in enumerate(zip(blk, blk[1:])) if abs(b - a) > JUMP_MAX]
 
 
+def tunings(f, sr=11025, n=8192):
+    """A19: строй (центы от A440, -50..50) по окнам TUNE_WIN с; окна без тональных пиков пропускаются."""
+    import numpy as np
+    x = np.frombuffer(subprocess.run(["ffmpeg", "-v", "error", "-i", str(f), "-ac", "1", "-ar", str(sr), "-f", "f32le", "-"],
+                                     capture_output=True).stdout, np.float32)
+    fq, win, out = np.fft.rfftfreq(n, 1 / sr), int(TUNE_WIN * sr), []
+    for i in range(0, len(x) - win // 2, win):
+        seg = x[i:i + win]
+        fr = np.array([seg[j:j + n] * np.hanning(n) for j in range(0, len(seg) - n, n)])
+        if not len(fr):
+            continue
+        S = np.abs(np.fft.rfft(fr, axis=1))
+        S[:, (fq < 100) | (fq > 2000)] = 0
+        z = 0j
+        for s in S:
+            k = np.where((s[1:-1] > s[:-2]) & (s[1:-1] > s[2:]) & (s[1:-1] > s.max() * 0.1))[0] + 1
+            if s.max() <= 0 or not len(k):
+                continue
+            a, b, c = s[k - 1], s[k], s[k + 1]
+            hz = (k + 0.5 * (a - c) / np.where(a - 2 * b + c == 0, -1e-12, a - 2 * b + c)) * sr / n
+            z += np.sum(b * np.exp(2j * np.pi * 12 * np.log2(hz / 440.0)))
+        if abs(z) > 0:
+            out.append(float(np.angle(z) * 50 / np.pi))
+    return out
+
+
+def tuning_why(f):
+    """A19: [причина], если строй между окнами расходится больше TUNE_MAX центов (круговой разброс)."""
+    import cmath
+    t = tunings(f)
+    if len(t) < 2:
+        return []
+    m = cmath.phase(sum(cmath.exp(2j * cmath.pi * v / 100) for v in t)) * 50 / cmath.pi
+    dev = [(v - m + 50) % 100 - 50 for v in t]
+    spread = max(dev) - min(dev)
+    return [f"строй плывёт: разброс {spread:.0f} центов между окнами {TUNE_WIN:.0f} с > {TUNE_MAX:.0f} "
+            f"(окно {dev.index(max(dev)) * TUNE_WIN:.0f} с против {dev.index(min(dev)) * TUNE_WIN:.0f} с)"] if spread > TUNE_MAX else []
+
+
 def target(d, final):
     """--final: финальный файл после 04 assemble (то, что заливается), иначе трек после 03."""
     return d / ("video.mp4" if final else "track.mp3")
@@ -371,6 +415,7 @@ def main(argv):
     why += stereo_why(f)  # A9
     why += sub_why(f)  # A17
     why += loudjump_why(f)  # A18
+    why += tuning_why(f)  # A19
     why += end_why(f)  # A16: только целый трек/финальный mp4, не сегменты best-of (их хвосты режет склейка)
     if "--final" in argv:
         why += integrity_why(f, expect) + black_why(f)

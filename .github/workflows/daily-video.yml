@@ -177,7 +177,7 @@ jobs:
         id: qg
         if: steps.guard.outputs.published != '1'
         working-directory: pipeline
-        run: python3 quality_gate.py
+        run: ../.venv/bin/python quality_gate.py
 
       # t_e39908b1 (спец t_b4006a6e п.3): chroma-схожесть с треками, опубликованными за 14 дней (.state/antirepeat).
       # FAIL -> регенерация трека (03 music + 03c) внутри шага; повтор и после неё -> exit 1, не публиковать.
@@ -199,7 +199,7 @@ jobs:
         id: qgfinal
         if: steps.guard.outputs.published != '1'
         working-directory: pipeline
-        run: python3 quality_gate.py --final
+        run: ../.venv/bin/python quality_gate.py --final
 
       - name: 05 publish (skips if no YouTube token secret)
         id: publish

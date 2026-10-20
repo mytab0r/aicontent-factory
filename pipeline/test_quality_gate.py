@@ -168,3 +168,18 @@ with tempfile.TemporaryDirectory() as td:
     assert any("скачок громкости" in w for w in qg.loudjump_why(jump)), qg.loudjump_why(jump)
     assert qg.JUMP_MAX == 4.0 and qg.JUMP_BLOCK == 60.0
 print("test_quality_gate A18 loudness jump OK")
+
+# A19 (каталог): строй плывёт между частями микса (аудит 11.10: куски +0.05..+0.40 полутона = «фальшивые ноты»).
+# Регресс: та же часть +40 центов (452.4 Гц против 440) = FAIL; ровный строй и сдвиг всего трека целиком = PASS.
+with tempfile.TemporaryDirectory() as td:
+    tone = lambda hz: f"0.3*sin(2*PI*{hz}*t)+0.2*sin(2*PI*{hz}*1.5*t)+0.1*sin(2*PI*{hz}*2*t)"
+    for name, hz in (("ok", 440), ("shifted", 452.4)):
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", f"aevalsrc={tone(hz)}:d=120:s=44100",
+                        f"{td}/{name}.wav"], check=True)
+    ok, shifted, bad = f"{td}/ok.wav", f"{td}/shifted.wav", f"{td}/bad.wav"
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-t", "60", "-i", ok, "-t", "60", "-i", shifted, "-filter_complex",
+                    "[0:a][1:a]concat=n=2:v=0:a=1", bad], check=True)
+    assert qg.tuning_why(ok) == [] and qg.tuning_why(shifted) == [], (qg.tunings(ok), qg.tunings(shifted))
+    assert any("строй плывёт" in x for x in qg.tuning_why(bad)), qg.tunings(bad)
+    assert qg.TUNE_MAX == 20.0 and qg.TUNE_WIN == 30.0
+print("test_quality_gate A19 tuning drift OK")
