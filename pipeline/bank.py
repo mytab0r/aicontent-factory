@@ -54,16 +54,26 @@ def _sh(*a):
     return subprocess.run(list(a), check=True, capture_output=True, text=True).stdout
 
 
-def release_busy(repo=None, token=None) -> bool:
+def release_busy(repo=None, token=None, sleep=time.sleep, tries=3) -> bool:
+    """Идёт/ждёт ли daily-video. Сеть к GitHub API недоступна после повторов -> True (уступаем GPU,
+    следующий прогон продолжит): падение банка из-за RemoteDisconnected — не ошибка генерации."""
     repo = repo or os.environ["GITHUB_REPOSITORY"]
     token = token or os.environ["GH_TOKEN"]
     for st in ("in_progress", "queued", "pending", "waiting"):
         req = urllib.request.Request(
             f"https://api.github.com/repos/{repo}/actions/workflows/daily-video.yml/runs?status={st}&per_page=1",
             headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"})
-        with urllib.request.urlopen(req, timeout=30) as r:
-            if json.load(r).get("total_count", 0):
-                return True
+        for k in range(tries):
+            try:
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    if json.load(r).get("total_count", 0):
+                        return True
+                break
+            except OSError as e:  # URLError/RemoteDisconnected/timeout
+                print(f"банк: проверка выпуска {type(e).__name__}, попытка {k + 1}/{tries}")
+                sleep(10 * (k + 1))
+        else:
+            return True
     return False
 
 

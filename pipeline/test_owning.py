@@ -108,7 +108,27 @@ def test_count_today():
     assert oc.count_today(ts, dt.date(2026, 10, 18)) == 2
 
 
+def test_tts_retries_transient_failure():
+    """run 39659160544: edge_tts NoAudioReceived (сбой сервиса) уронил выпуск — повтор, не падение."""
+    import subprocess as sp
+    n = {"tts": 0}
+
+    def fake(cmd, **k):
+        if "edge_tts" in cmd:
+            n["tts"] += 1
+            if n["tts"] < 3:
+                raise sp.CalledProcessError(1, cmd)
+            return sp.CompletedProcess(cmd, 0, "", "")
+        return sp.CompletedProcess(cmd, 0, "1.5\n", "")
+    orig, oc.subprocess.run = oc.subprocess.run, fake
+    try:
+        assert oc.tts("hi", Path("x.mp3"), sleep=lambda s: None) == 1.5 and n["tts"] == 3
+    finally:
+        oc.subprocess.run = orig
+
+
 if __name__ == "__main__":
+    test_tts_retries_transient_failure()
     test_count_today()
     test_rotation_varies_topic_hook_structure()
     test_prompt_carries_plan()
