@@ -16,7 +16,9 @@ with tempfile.TemporaryDirectory() as td:
     w_cr, m_cr = qg.objective(crushed, "anime lofi")
     print("live", m_live, "crushed", m_cr)
     assert not any("LRA" in w for w in w_live), w_live
-    assert any("LRA" in w for w in w_cr), w_cr
+    # Калибровка t_ef393676: min_lra 3.5 (одобренный ab_1 = 3.7); crushed (LRA 4.4) больше
+    # не ловится по LRA, но бракуется полосами (150-400/400-1000 Гц +12.6/+5.9) — см. ниже.
+    assert w_cr and any("полоса" in w for w in w_cr), w_cr
     mastered = f"{td}/m.mp3"
     mastering.master(live, mastered, genre="anime lofi")
     w_m, m_m = qg.objective(mastered, "anime lofi")
@@ -28,11 +30,22 @@ with tempfile.TemporaryDirectory() as td:
 PUB = [-23.8, -23.0, -29.3, -26.8, -32.6, -36.3, -34.2, -35.8]
 why = qg.judge(PUB, 1.0, "phonk")
 assert any("баланс" in w for w in why), why
-assert any("2500-5000" in w for w in why), why
+# Калибровка t_ef393676: у p-kkEmLGviU жёсткий провал полос (+8..+11), а у этой замеренной жалобы
+# (отрезок 300-420 с) отклонения по полосам ≤3.1 — ловится балансом мелодия/муть -4.7 (PUB-замер).
+assert len(why) >= 1 and any("баланс" in w for w in why)
 # эталоны (полный файл, абсолютные RMS дБ по 8 полосам) проходят свой гейт
 assert qg.judge([-26.3, -23.0, -29.6, -28.9, -33.2, -39.9, -40.2, -44.1], 10.9, "anime lofi") == []
 assert qg.judge([-23.1, -22.3, -31.3, -28.3, -30.3, -33.2, -34.2, -38.2], 1.5, "phonk") == []
-assert len(qg.BANDS) == 8 and qg.BAND_TOL == 2.0
+assert len(qg.BANDS) == 8 and qg.BAND_TOL == 3.0 and qg.BAND_MAX == 5.0
+# правило калибровки: мягкие полосы бракуют только при сумме >8.0 (одобренный versija_1 4.7+3.0=7.7)
+# либо одной полосой >5.0; жалобы p-kk (+11.0) и tIJK (+9.7) — жёсткие.
+assert qg.judge([-26.3, -23.0, -29.6, -28.9, -33.2, -39.9, -40.2, -44.1], 3.6, "anime lofi") == []
+assert qg.judge([-26.8, -22.8, -27.8, -26.3, -32.7, -38.7, -39.3, -43.8], 3.7, "anime lofi") == []
+assert qg.judge([-21.6, -23.0, -29.8, -27.9, -32.1, -38.4, -38.7, -41.2], 4.8, "anime lofi") == []
+_c1 = [0.3, 0.0, 2.0, 2.1, -2.9, -7.4, -5.1, -10.2]
+assert any("полоса" in w for w in qg.judge(_c1, 1.0, "phonk"))
+_c2 = [-2.0, 0.0, 3.1, -3.0, -12.5, -18.0, -19.5, -24.0]
+assert qg.judge(_c2, 4.2, "anime lofi")
 # true peak (A5): клиппинг ловится, эталоны (ref1 TP -1.6, v2 -2.9) проходят
 with tempfile.TemporaryDirectory() as td:
     hot = f"{td}/hot.wav"
