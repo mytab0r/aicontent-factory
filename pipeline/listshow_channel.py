@@ -182,8 +182,8 @@ def idea(models=None) -> Path:
     plan = next_plan()
     prompt = script_prompt(plan)
     s = None
-    for attempt in range(3):
-        err = None
+    err = None
+    for round_ in range(3):  # роутер/модели бывают недоступны короткими окнами: 3 круга по списку
         for m in models:
             try:
                 s = parse_json(wf.router_stream(m, prompt, 8000))
@@ -191,14 +191,25 @@ def idea(models=None) -> Path:
             except (RuntimeError, ValueError) as e:
                 print(f"model {m}: {e}"[:300])
                 err = e
-        if s is None:
-            raise SystemExit(f"нет валидного ответа LLM: {err}")
+        if s is not None:
+            break
+    if s is None:
+        raise SystemExit(f"нет валидного ответа LLM: {err}")
+    for attempt in range(3):
         try:
             s = validate_script(json.loads(json.dumps(s)))
             break
         except ValueError as e:
             print(f"script attempt {attempt + 1}: {e}")
             s = None
+            for m in models:  # перевалидация не удалась: новый ответ
+                try:
+                    s = parse_json(wf.router_stream(m, prompt, 8000))
+                    break
+                except (RuntimeError, ValueError) as e:
+                    print(f"model {m}: {e}"[:300])
+            if s is None:
+                raise SystemExit("нет валидного ответа LLM")
     if s is None:
         raise SystemExit("сценарий не прошёл валидацию 3 раза")
     s.update(channel="listshow", plan=plan, topic=plan["topic"])
