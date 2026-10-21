@@ -122,7 +122,8 @@ jobs:
           docker build -q -f test/e2e/Dockerfile -t $T .
           docker run --rm --ipc=host $T
   ci-bypass-lint:
-    runs-on: [self-hosted, pc]
+    # лёгкий линт: не ждать занятый GPU-раннер pc-acf
+    runs-on: [self-hosted, release]
     steps:
       - uses: actions/checkout@v4
       - name: ci-bypass-lint («Повтор = класс»)
