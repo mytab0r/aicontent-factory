@@ -63,6 +63,9 @@ jobs:
       # chunk_plan() в 03_music.py на куски <=240с под лимит ACE-Step.
       TRACK_DURATION_SEC: "3600"  # >600 -> час-микс из цельных треков 1.5 + треклист-главы (ресёрч 13.10: хиты ниши 1-4 ч)
       GENRE: ${{ matrix.genre }}
+      # 21.10 run 39576809258: сегмент = 3 кандидата ~28 мин (5 кандидатов ~47), 7200 с давали 2 сегмента = 360 с < 900.
+      # 9600 с вмещают >= 5 сегментов (900 с) и укладываются в timeout-minutes 240 (test_workflow_budget).
+      ACE15_MIX_BUDGET_SEC: "9600"
       ACE15_ENDPOINT: http://ace-step:8001  # ACE-Step 1.5 REST на ПК (comfynet)
       # Эталон стиля, одобрен владельцем 13.10 (сэмпл ref1): 90с K/DA Seraphine.
       # Кэш на раннере; нет файла -> 03_music генерирует без эталона.
@@ -104,7 +107,7 @@ jobs:
           command -v ffmpeg || { sudo dpkg --configure -a || true; for i in 1 2 3; do sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg && break; sleep 20; done; }
           command -v ffmpeg
           uv venv .venv
-          uv pip install --python .venv/bin/python pillow gradio_client numpy
+          uv pip install --python .venv/bin/python pillow gradio_client numpy yt-dlp  # refpool.ensure_ref (21.10: FileNotFoundError yt-dlp -> fallback)
 
       - name: 01 idea
         id: idea
