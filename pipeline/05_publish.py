@@ -104,12 +104,24 @@ def title_with_length(title: str, duration_sec) -> str:
     h = int((duration_sec or 0) // 3600)
     claim = re.search(r"(\d+)\s*hours?\b", title, re.I)
     if claim and int(claim.group(1)) == h:
-        return title[:100]
+        return fit_title(title)
     title = re.sub(r"\s*\|?\s*\d+\s*hours?\b", "", title, flags=re.I).strip()
     if h < 1:
-        return title[:100]
+        return fit_title(title)
     tag = f" | {h} Hour" + ("s" if h > 1 else "")
-    return title[:100 - len(tag)].rstrip() + tag
+    return fit_title(title, TITLE_MAX - len(tag)) + tag
+
+
+# V12 (аудит 20.10): лента/мобильный обрезают заголовок после ~70 символов — «| 1 Hour» и use-case уходили
+# за обрез (лимит был 100). Режем хвост use-case по границе слова, жанр/сцена в начале остаются.
+TITLE_MAX = 70
+
+
+def fit_title(title: str, limit: int = TITLE_MAX) -> str:
+    if len(title) <= limit:
+        return title
+    cut = title[:limit + 1].rsplit(" ", 1)[0] if " " in title[:limit + 1] else title[:limit]
+    return re.sub(r"(\s+(to|and|&|for|\||-))+$", "", cut.rstrip(" |&-,"), flags=re.I)
 
 
 def build_body(idea: dict, meta: dict) -> dict:

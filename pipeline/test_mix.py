@@ -5,6 +5,7 @@
 Запуск: python3 pipeline/test_mix.py
 """
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
@@ -185,7 +186,21 @@ def test_title_gets_real_length_label():
     assert pub.title_with_length("Cafe Lofi | 1 Hour", 3700) == "Cafe Lofi | 1 Hour"
     assert pub.title_with_length("Cafe Lofi | 2 Hours", 3700) == "Cafe Lofi | 1 Hour"
     long = "x" * 99
-    assert len(pub.title_with_length(long, 3700)) <= 100
+    assert len(pub.title_with_length(long, 3700)) <= 70
+
+
+def test_title_fits_feed_70():
+    """V12: заголовок <= 70 символов вместе с «| 1 Hour», обрез по слову, начало (сцена+жанр) цело."""
+    pub = _load("pub_v12", "05_publish.py")
+    t = "Rainy Tokyo Pumpkin Caf\u00e9 \U0001f383 Cozy Lofi Beats to Study and Relax to Tonight"
+    for d in (3856, 7300, 482, 3375):
+        r = pub.title_with_length(t, d)
+        assert len(r) <= 70, (len(r), r)
+        assert r.startswith("Rainy Tokyo Pumpkin Caf\u00e9 \U0001f383 Cozy Lofi"), r
+        assert not re.search(r"\b(to|and|&)$", r.split(" | ")[0]), r
+    assert pub.title_with_length(t, 3856).endswith(" | 1 Hour")
+    short = "Cafe Lofi Beats"
+    assert pub.title_with_length(short, 3700) == short + " | 1 Hour"
 
 
 def test_mix_segment_mastered_before_gate():
