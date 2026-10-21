@@ -1,5 +1,7 @@
 name: oneoff-mirror-playwright
 on:
+  push:
+    branches: [t_ef393676-gate-calib]
   workflow_dispatch:
 jobs:
   mirror:
