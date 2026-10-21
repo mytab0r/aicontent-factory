@@ -190,6 +190,8 @@ ACE15_MAX_SEC = 600
 # t_fe1fcf66: 600 с генерация ACE-Step даёт raw LRA 2.3-4.7 LU (плоско), 120 с — 6-9 LU (эталон 5.1).
 # Поэтому час-микс собирается из коротких сегментов.
 MIX_SEG_SEC = int(os.environ.get("ACE15_MIX_SEG_SEC") or 180)
+# сегмент 180 с генерируется ~2 мин; 15 мин без ответа = зависание (21.10), не ждём 40 мин
+MIX_TASK_TIMEOUT = int(os.environ.get("ACE15_MIX_TASK_TIMEOUT") or 900)
 ACE15_KEYS = ["C major", "F major", "G major", "D major", "A major", "E major"]
 
 
@@ -359,15 +361,18 @@ def mix_raw(run_dir, prompt, seed, ref, genre_name):
     def raw(i, k):
         p = Path(run_dir) / f"mix_{i:02d}_{k}.mp3"
         try:
-            generate_track_v15(prompt, MIX_SEG_SEC, seed + i * 100 + k, p, ref_audio=ref)
+            generate_track_v15(prompt, MIX_SEG_SEC, seed + i * 100 + k, p, ref_audio=ref,
+                               timeout_sec=MIX_TASK_TIMEOUT)
         except RuntimeError as e:
             # t_ffa7ff01: stage=failed = CUDA illegal memory access в LM (лог ace-step 18.10, run 39154188022);
             # контекст CUDA испорчен -> все следующие задачи падают за секунды. Рестарт + 1 повтор.
-            if "failed" not in str(e):
+            # 21.10 run 39536019351: задача висела status=0 40 мин (норма ~2 мин) -> тот же рестарт.
+            if "failed" not in str(e) and "timeout" not in str(e):
                 raise
             print(f"сегмент {i}/{k}: {str(e)[:160]} -> docker restart ace-step, повтор", flush=True)
             ace_restart()
-            generate_track_v15(prompt, MIX_SEG_SEC, seed + i * 100 + k, p, ref_audio=ref)
+            generate_track_v15(prompt, MIX_SEG_SEC, seed + i * 100 + k, p, ref_audio=ref,
+                               timeout_sec=MIX_TASK_TIMEOUT)
         mastering.master(p, p, genre=genre_name)
         return str(p)
     return raw
