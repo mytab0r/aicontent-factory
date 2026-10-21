@@ -16,6 +16,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import * as adminPage from '../../functions/admin/index.js';
 import * as adminConfig from '../../functions/api/admin/config.js';
+import * as addressApi from '../../functions/api/address.js';
 import * as claimNonce from '../../functions/api/claim/nonce.js';
 import * as claimVerify from '../../functions/api/claim/verify.js';
 import * as invoiceCreate from '../../functions/api/invoice/create.js';
@@ -144,6 +145,9 @@ export function makeServer({ dataDir, ownerEmail, apiToken, accessTeam, accessAu
       const h = { GET: invoiceApi.onRequestGet, POST: invoiceApi.onRequestPost, PUT: invoiceApi.onRequestPut }[m];
       return h ? h(ctx({ id: mm[1] })) : json({ error: 'method' }, 405);
     }
+
+    // публичное: адрес из реестра для агентов (t_705becfe)
+    if (p === '/api/address' && m === 'GET') return addressApi.onRequestGet(ctx());
 
     // Zoraxy SSO (логин/пароль) перед админкой: Zoraxy добавляет секретный заголовок только после входа
     const viaSso = !!proxySecret && safeEq(request.headers.get('x-pay-proxy-auth') || '', proxySecret);

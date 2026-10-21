@@ -60,6 +60,10 @@ KV = `$DATA_DIR/kv.json`. CI: `ci` (тесты + smoke образа) → на ma
    policy = email владельца. Сервер сам проверяет JWT Access (RS256, aud, iss, exp, email);
    без настроенных `CF_ACCESS_*` админка закрыта (403).
 
+Реестр адресов для агентов: `curl 'https://pay.pxbt.app/api/address?chain=evm|tron|solana'`
+-> `{ chain, address }`; адреса нет — HTTP 404 с явной ошибкой (агент обязан упасть, не брать
+дефолт). Единственный источник — тот же KV `config`, что наполняется подписанным claim в `/admin`.
+
 Создать счёт: `curl -X POST https://pay.pxbt.app/api/invoice -H "authorization: Bearer $PAY_API_TOKEN" -d '{"amount":1}'`.
 
 Сопоставление оплаты: адрес у всех счетов общий, поэтому сумма счёта уникальна —

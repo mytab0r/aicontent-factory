@@ -116,6 +116,19 @@ try {
   assert.ok(!page.includes('<script>alert(1)'), 'memo экранирован');
   assert.strictEqual((await req('/i/nope')).status, 404);
   assert.strictEqual((await req('/healthz')).status, 200);
+
+  // реестр адресов для агентов (t_705becfe): публичное чтение, явная ошибка при отсутствии
+  {
+    let j = await (await req('/api/address?chain=tron')).json();
+    assert.strictEqual(j.address, 'TQrY8try6YCHAEuZGB9puHKiQWy6iRfnCw', 'tron из реестра');
+    j = await (await req('/api/address?chain=evm')).json();
+    assert.strictEqual(j.address, '0xabc', 'evm из реестра');
+    r = await req('/api/address?chain=solana');
+    assert.strictEqual(r.status, 404, 'нет адреса -> 404, не дефолт');
+    assert.match((await r.json()).error, /no solana address in registry/);
+    r = await req('/api/address?chain=btc');
+    assert.strictEqual(r.status, 400, 'неизвестная цепочка -> 400');
+  }
   // секрет из файла DATA_DIR, если env не задан
   {
     const d2 = fs.mkdtempSync(path.join(os.tmpdir(), 'pay-ps-'));
