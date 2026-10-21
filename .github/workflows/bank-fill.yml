@@ -1,0 +1,50 @@
+name: bank fill
+# t_ba72c7aa R1: фоновое наполнение банка сегментов, прошедших гейт. Выпуск только собирает (R2).
+# Уступает GPU выпуску (pipeline/bank.py release_busy), ace-step не рестартит.
+on:
+  schedule:
+    - cron: "20 */2 * * *"
+  workflow_dispatch:
+concurrency:
+  group: bank-fill
+  cancel-in-progress: false
+permissions:
+  contents: read
+  actions: read
+jobs:
+  fill:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 170
+    env:
+      GENRE: anime lofi
+      BANK_TARGET: "30"
+      ACE15_ENDPOINT: http://ace-step:8001  # ACE-Step 1.5 REST на ПК (comfynet)
+      ACE15_REF_AUDIO: /tmp/acf-ref/ref1.wav
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+      - uses: astral-sh/setup-uv@v3
+      - name: install deps
+        run: |
+          command -v ffmpeg
+          uv venv .venv
+          uv pip install --python .venv/bin/python pillow gradio_client numpy yt-dlp
+      - name: ACE-Step up (start only, wait health)
+        run: |
+          docker start ace-step >/dev/null 2>&1 || true
+          for i in $(seq 1 100); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step 2>/dev/null)" = healthy ] && { echo "ace-step healthy"; exit 0; }
+            sleep 6
+          done
+          echo "::error::ace-step не healthy за 10 мин"; exit 1
+      - name: reference audio (cache)
+        run: |
+          [ -s "$ACE15_REF_AUDIO" ] && exit 0
+          mkdir -p /tmp/acf-ref
+          .venv/bin/yt-dlp -q -f bestaudio -o '/tmp/acf-ref/raw1.%(ext)s' https://youtu.be/CYZeAfaj3pc || exit 0
+          ffmpeg -loglevel error -y -ss 30 -t 90 -i /tmp/acf-ref/raw1.* -ac 2 -ar 48000 "$ACE15_REF_AUDIO" || true
+      - name: fill bank
+        working-directory: pipeline
+        run: PATH="$PWD/../.venv/bin:$PATH" ../.venv/bin/python bank.py
