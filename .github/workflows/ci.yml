@@ -115,6 +115,10 @@ jobs:
           set -e
           T=pay-e2e:$GITHUB_RUN_ID
           trap "docker rmi -f $T >/dev/null 2>&1 || true" EXIT
+          # 20-21.10: TLS handshake timeout к mcr.microsoft.com валил CI дважды. Базовый образ тянем
+          # отдельно с 4 попытками (слои докачиваются, не дублируются); 4 провала = падение шага.
+          B=$(sed -n 's/^FROM //p' test/e2e/Dockerfile | head -1)
+          for n in 1 2 3 4; do docker pull -q "$B" && break; [ $n = 4 ] && exit 1; echo "pull $B: попытка $n не удалась, повтор через $((n*20)) с"; sleep $((n*20)); done
           docker build -q -f test/e2e/Dockerfile -t $T .
           docker run --rm --ipc=host $T
   ci-bypass-lint:

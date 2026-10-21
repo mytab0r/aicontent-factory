@@ -195,7 +195,7 @@ def test_mix_segment_mastered_before_gate():
     d = Path(tempfile.mkdtemp())
     calls = []
     orig = music.generate_track_v15, music.mastering.master
-    music.generate_track_v15 = lambda prompt, sec, seed, out, ref_audio=None: (
+    music.generate_track_v15 = lambda prompt, sec, seed, out, ref_audio=None, **k: (
         calls.append(("gen", Path(out).name)), Path(out).write_bytes(b"x"))
     music.mastering.master = lambda s, d_, genre="": calls.append(("master", Path(s).name, genre))
     try:
@@ -222,7 +222,7 @@ def test_mix_raw_restarts_ace_on_failed_task():
     calls = []
     orig = music.generate_track_v15, music.mastering.master, music.ace_restart
 
-    def gen(prompt, sec, seed, out, ref_audio=None):
+    def gen(prompt, sec, seed, out, ref_audio=None, **k):
         calls.append("gen")
         if calls.count("gen") == 1:
             raise RuntimeError("ACE-Step 1.5 task x failed: stage failed")
@@ -232,12 +232,12 @@ def test_mix_raw_restarts_ace_on_failed_task():
     try:
         assert Path(music.mix_raw(d, "p", 1, None, "anime lofi")(0, 0)).exists()
         assert calls == ["gen", "restart", "gen"], calls
-        music.generate_track_v15 = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("timeout"))
+        music.generate_track_v15 = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
         try:
             music.mix_raw(d, "p", 1, None, "anime lofi")(1, 0)
-            raise AssertionError("timeout должен уйти наверх")
+            raise AssertionError("прочая ошибка должна уйти наверх")
         except RuntimeError as e:
-            assert "timeout" in str(e)
+            assert "boom" in str(e)
     finally:
         music.generate_track_v15, music.mastering.master, music.ace_restart = orig
 
@@ -342,8 +342,31 @@ def test_mix_segment_extra_candidates_only_when_all_fail():
     assert gen0(1) is None
 
 
+def test_mix_raw_hung_task_restarts_with_short_timeout():
+    """21.10 run 39536019351: задача сегмента висела status=0 40 мин (норма ~2 мин) при
+    timeout 2400 с -> весь выпуск упал, 2 готовых сегмента потеряны. Сегмент ждёт
+    MIX_TASK_TIMEOUT (<=900 с), зависание = restart ace-step + 1 повтор."""
+    import tempfile
+    d = Path(tempfile.mkdtemp())
+    calls, tmo = [], []
+    orig = music.generate_track_v15, music.mastering.master, music.ace_restart
+
+    def gen(prompt, sec, seed, out, ref_audio=None, timeout_sec=2400, **k):
+        calls.append("gen"); tmo.append(timeout_sec)
+        if calls.count("gen") == 1:
+            raise RuntimeError("ACE-Step 1.5 task abc timeout")
+        Path(out).write_bytes(b"x")
+    music.generate_track_v15, music.mastering.master = gen, lambda *a, **k: None
+    music.ace_restart = lambda: calls.append("restart")
+    try:
+        assert Path(music.mix_raw(d, "p", 1, None, "anime lofi")(0, 0)).exists()
+    finally:
+        music.generate_track_v15, music.mastering.master, music.ace_restart = orig
+    assert calls == ["gen", "restart", "gen"], calls
+    assert all(x <= 900 for x in tmo), tmo
+
+
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"):
             f(); print("ok", n)
-
