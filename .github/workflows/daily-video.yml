@@ -256,6 +256,13 @@ jobs:
             echo "skip: нет YouTube токена"
           fi
 
+      - name: M13 cascade (public-шортс на скрытый long-form -> private)
+        if: always()
+        working-directory: pipeline
+        env:
+          YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
+        run: python3 cascade_private.py || echo "::warning::каскад не отработал, повтор в watchdog 10:00"
+
       - name: TG report (ролик + шортсы)
         id: report
         if: steps.guard.outputs.published != '1'
