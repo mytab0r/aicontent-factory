@@ -22,6 +22,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from time import sleep as time_sleep
 
 from common import tg_send
 
@@ -91,7 +92,25 @@ def report_text(rows, ctr_note) -> str:
 
 
 # ---------- сеть ----------
+def with_retry(fn, tries=3, pause=20):
+    """P17: сетевой сбой (URLError/5xx/таймаут) -> повтор; 4xx (нет scope/токен) — сразу наружу."""
+    for i in range(1, tries + 1):
+        try:
+            return fn()
+        except urllib.error.HTTPError as e:
+            if e.code < 500 or i == tries:
+                raise
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
+            if i == tries:
+                raise
+        time_sleep(pause * i)
+
+
 def access_token() -> str:
+    return with_retry(_token_raw)
+
+
+def _token_raw() -> str:
     t = json.loads(os.environ["YOUTUBE_TOKEN_JSON"])
     body = urllib.parse.urlencode({"client_id": t["client_id"], "client_secret": t["client_secret"],
                                    "refresh_token": t["refresh_token"],
@@ -207,15 +226,21 @@ def probe() -> int:
     зелёный в каждом прогоне), а Reporting API требует строго yt-analytics.readonly -> 403.
     До перевыпуска токена CTR в отчёте = «н/д» (мягкая деградация в collect()); чинится
     только новым consent-токеном с yt-analytics.readonly — вне рамок этой карточки."""
-    at = access_token()
+    try:
+        at = with_retry(_token_raw)
+    except Exception as e:  # noqa: BLE001 — P17: сбой без алерта = слепой цикл улучшений
+        print("PROBE FAIL (token):", type(e).__name__, e)
+        tg_send("⚠️ G1zm0: пост-аналитика не собралась (нет токена/сети) — чиню, детали в логе CI")
+        return 1
     q = urllib.parse.urlencode({"ids": "channel==MINE", "startDate": "2026-10-01",
                                 "endDate": dt.date.today().isoformat(),
                                 "metrics": "views,averageViewPercentage"})
     try:
         print("PROBE granted scopes:", granted_scopes(at))
-        print("PROBE analytics:", api(YTA + q, at).get("rows"))
-    except urllib.error.HTTPError as e:
-        print("PROBE FAIL (analytics):", _http_err(e))
+        print("PROBE analytics:", with_retry(lambda: api(YTA + q, at)).get("rows"))
+    except Exception as e:  # noqa: BLE001
+        print("PROBE FAIL (analytics):", _http_err(e) if isinstance(e, urllib.error.HTTPError) else repr(e))
+        tg_send("⚠️ G1zm0: пост-аналитика не собралась (YouTube Analytics недоступен) — чиню, детали в логе CI")
         return 1
     try:
         print("PROBE reporting jobs:", [j.get("reportTypeId") for j in api(REPTR + "jobs", at).get("jobs") or []])
