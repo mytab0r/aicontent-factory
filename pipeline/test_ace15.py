@@ -50,6 +50,17 @@ def test_single_generation_pinned_key_tempo():
     assert body["thinking"] is True                    # LM планирует структуру трека
 
 
+def test_prompt_bpm_key_pinned():
+    """t_ef393676: ACE-Step темп берёт из поля bpm; «NN BPM, X major» из промпта -> в поле."""
+    api = FakeApi()
+    with tempfile.TemporaryDirectory() as d:
+        music.generate_track_v15("lofi, glockenspiel, 89 BPM, F major, no vocals", 60, 9021,
+                                 Path(d) / "t.mp3", api=api, poll_sec=0)
+    body = api.calls[0][1]
+    assert (body["bpm"], body["key_scale"]) == (89, "F major"), body
+    assert music.prompt_bpm("chill phonk, instrumental") is None  # без BPM -> seed-формула
+
+
 def test_duration_capped_at_model_limit():
     api = FakeApi()
     with tempfile.TemporaryDirectory() as d:

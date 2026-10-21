@@ -23,6 +23,7 @@ ponytail: HF Space — бесплатный общий ресурс без SLA (
 интерфейсом generate_track(), или self-host на домашнем GPU через туннель.
 """
 import os
+import re
 import random
 import urllib.error
 from pathlib import Path
@@ -195,6 +196,18 @@ MIX_TASK_TIMEOUT = int(os.environ.get("ACE15_MIX_TASK_TIMEOUT") or 900)
 ACE15_KEYS = ["C major", "F major", "G major", "D major", "A major", "E major"]
 
 
+def prompt_bpm(prompt: str) -> int | None:
+    """t_ef393676: темп задаёт поле bpm, текст «NN BPM» модель игнорирует (ab_1: текст 76,
+    поле 89, звучит ~86). Текст промпта = источник истины, иначе seed-формула."""
+    m = re.search(r"\b(\d{2,3}) BPM\b", prompt)
+    return int(m.group(1)) if m else None
+
+
+def prompt_key(prompt: str) -> str | None:
+    m = re.search(r"\b([A-G][#b]? (?:major|minor))\b", prompt)
+    return m.group(1) if m else None
+
+
 class _Http:
     def __init__(self, base):
         self.base = base.rstrip("/")
@@ -261,7 +274,8 @@ def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=
     api = api or _Http(os.environ["ACE15_ENDPOINT"])
     body = {"prompt": prompt, "lyrics": "[Instrumental]",
             "audio_duration": min(int(duration_sec), ACE15_MAX_SEC),
-            "bpm": 70 + seed % 21, "key_scale": ACE15_KEYS[seed % len(ACE15_KEYS)],
+            "bpm": prompt_bpm(prompt) or 70 + seed % 21,
+            "key_scale": prompt_key(prompt) or ACE15_KEYS[seed % len(ACE15_KEYS)],
             "time_signature": "4", "batch_size": 1, "thinking": True,
             "use_random_seed": False, "seed": seed, "audio_format": "mp3"}
     # t_d53850f6: переделка мелодий чужих треков (cover/repaint/lego) запрещена —

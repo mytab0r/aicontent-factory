@@ -38,24 +38,22 @@ REF_LEN_SEC = 90
 REF_START_SEC = 90  # не с 0:00: интро трека — самый fingerprint-узнаваемый кусок
 REF_DIR = Path(__file__).resolve().parent.parent / ".state" / "refpool"
 
-# Промпт-варианты внутри одобренного «anime lofi»-звука (bright, clean, major,
-# без noise-слов и без vocals — правило music prompt hygiene).
+# Промпт-варианты = семейство ab_1/ab_3 (t_ef393676, вердикт владельца 20.10).
+# Одобрены ab_1 (glockenspiel) и ab_3 (celesta); ab_0 (music box) и ab_2 (harp) без
+# оценки -> из ротации убраны. BPM/тональность в тексте = РЕАЛЬНЫЕ параметры одобренных
+# генераций: ACE-Step берёт темп из поля bpm, а не из текста (замер librosa 21.10: ab_1
+# ~86 при bpm=89 и «76 BPM» в тексте, ab_2 ~76 при bpm=75 и «92 BPM»). 03_music теперь
+# берёт bpm/key из текста промпта -> вариант воспроизводит одобренный звук.
+# 10 и 2 взаимно просты -> пара (эталон, промпт) не повторяется 20 дней.
 PROMPT_VARIANTS = [
-    "dreamy lofi chillout instrumental, bright lush synth pads, sparkling bells and plucks, "
-    "soft piano lead melody, warm major seventh chords, gentle laid back beat, deep round bass, "
-    "clean polished studio mix, wide stereo, harmonious, uplifting, 82 BPM, C major, no vocals",
-    "dreamy anime lofi instrumental, airy music box motif over warm synth pad bed, "
-    "twinkling arpeggios, mellow groove with soft rimshots, round sub bass, "
-    "clean polished mix, wide stereo, tender and hopeful, 88 BPM, F major, no vocals",
+    # ab_1: seed 9007 -> bpm 89, F major (эталон U00146agWgg)
     "dreamy lofi chillout instrumental, mellow electric piano chords, glockenspiel highlights, "
     "soft brushed drums, warm bassline, gentle swing, polished clean mix, "
-    "wide stereo, serene and bright, 76 BPM, D major, no vocals",
-    "dreamy anime lofi instrumental, lush synth strings and harp flourishes, "
-    "soft felt piano lead, cozy shuffling beat, deep warm bass, major seventh colors, "
-    "clean studio polish, wide stereo, wistful yet uplifting, 92 BPM, G major, no vocals",
+    "wide stereo, serene and bright, 89 BPM, F major, no vocals",
+    # ab_3: seed 9021 -> bpm 82, D major (эталон qS1wrF4XHtc)
     "dreamy lofi chillout instrumental, glassy synth pads with celesta melody, "
     "light fingerstyle guitar accents, mellow laid back drums, round bass, "
-    "polished airy mix, wide stereo, heartwarming, 80 BPM, A major, no vocals",
+    "polished airy mix, wide stereo, heartwarming, 82 BPM, D major, no vocals",
 ]
 
 
@@ -82,8 +80,8 @@ def _day_epoch(now=None) -> int:
 
 
 def pick(now=None) -> dict:
-    """Детерминированная пара (эталон, промпт) на день. 10 и 5 взаимно просты,
-    поэтому пары (эталон, промпт) не повторяются 50 дней, а соседние дни
+    """Детерминированная пара (эталон, промпт) на день. 10 и 2 взаимно просты,
+    поэтому пары (эталон, промпт) не повторяются 20 дней, а соседние дни
     различаются хотя бы одним компонентом."""
     day = _day_epoch(now) + _offset()
     e = POOL[day % len(POOL)]
@@ -93,7 +91,7 @@ def pick(now=None) -> dict:
         "author": e[1],
         "title": e[2],
         "ref_path": str(REF_DIR / ("ref_%s.wav" % e[0])),
-        # 10 и 5 взаимно просты: пара (эталон, промпт) не повторяется 50 дней
+        # 10 и 2 взаимно просты: пара (эталон, промпт) не повторяется 20 дней
         "prompt": PROMPT_VARIANTS[day % len(PROMPT_VARIANTS)],
     }
 

@@ -51,6 +51,18 @@ def test_prompt_hygiene_no_noise_words_no_vocals():
         assert "no vocals" in low, f"нет 'no vocals': {p!r}"
 
 
+def test_prompts_are_owner_approved_family():
+    """t_ef393676: ротация = только семейство ab_1/ab_3 (одобрены 20.10). music box (ab_0)
+    и harp (ab_2) без оценки владельца -> не в ротации; темп = одобренный (82/89)."""
+    import re
+    for p in rp.PROMPT_VARIANTS:
+        low = p.lower()
+        assert low.startswith("dreamy lofi chillout instrumental"), p
+        assert "glockenspiel" in low or "celesta" in low, f"нет колокольчиков: {p!r}"
+        assert not any(w in low for w in ("music box", "harp", "anime lofi")), p
+        assert int(re.search(r"(\d+) BPM", p).group(1)) in (82, 89), p
+
+
 def test_ref_fragment_not_from_zero():
     assert rp.REF_START_SEC >= 60, "фрагмент с 0:00 = самый fingerprint-опасный кусок"
 
@@ -72,6 +84,7 @@ if __name__ == "__main__":
     test_pick_deterministic_and_rotates_daily()
     test_prompt_rotates_and_differs()
     test_prompt_hygiene_no_noise_words_no_vocals()
+    test_prompts_are_owner_approved_family()
     test_ref_fragment_not_from_zero()
     test_claim_bumps_refpool_offset()
     print("ok test_refpool")
