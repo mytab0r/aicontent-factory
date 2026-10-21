@@ -49,7 +49,24 @@ def test_workflow_never_restarts_gpu_and_no_artifacts():
     assert "group: daily-video" not in WF, "общая concurrency-группа с выпуском отменяет pending-выпуск"
 
 
+def test_release_check_network_error_yields_not_crash():
+    """run 39652298264: RemoteDisconnected в release_busy уронил банк. Сеть недоступна -> уступаем."""
+    import http.client
+    calls = []
+
+    def boom(*a, **k):
+        calls.append(1)
+        raise http.client.RemoteDisconnected("Remote end closed connection without response")
+    orig, bank.urllib.request.urlopen = bank.urllib.request.urlopen, boom
+    try:
+        assert bank.release_busy("o/r", "t", sleep=lambda s: None) is True
+    finally:
+        bank.urllib.request.urlopen = orig
+    assert len(calls) >= 3, calls
+
+
 if __name__ == "__main__":
+    test_release_check_network_error_yields_not_crash()
     test_fill_stops_at_target_and_skips_rejects()
     test_fill_yields_to_release()
     test_failure_during_release_is_yield_not_error()

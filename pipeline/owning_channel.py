@@ -177,9 +177,18 @@ def card(path: Path, title: str, big: str, label: str, say: str, pal, step: int,
     im.save(path)
 
 
-def tts(text: str, out: Path) -> float:
-    subprocess.run([sys.executable, "-m", "edge_tts", "--voice", VOICE, "--rate", "+6%",
-                    "--text", text, "--write-media", str(out)], check=True)
+def tts(text: str, out: Path, sleep=None, tries=4) -> float:
+    import time
+    sleep = sleep or time.sleep
+    for k in range(tries):  # edge_tts NoAudioReceived = сбой сервиса, повтор с паузой (run 39659160544)
+        try:
+            subprocess.run([sys.executable, "-m", "edge_tts", "--voice", VOICE, "--rate", "+6%",
+                            "--text", text, "--write-media", str(out)], check=True)
+            break
+        except subprocess.CalledProcessError:
+            if k == tries - 1:
+                raise
+            sleep(15 * (k + 1))
     dur = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(out)],
                          capture_output=True, text=True, check=True).stdout
     return float(dur)
