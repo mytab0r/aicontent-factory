@@ -9,7 +9,7 @@
 --final (шаг 04b) = целостность mp4 (V2/V3: потоки, длительность, синхрон) + тот же объективный гейт и CE по окнам/стыкам ФИНАЛЬНОГО video.mp4 (AAC после 04 assemble):
    17.10 YouTube-копия p-kkEmLGviU дала TP +1.3..+1.9 dBTP — перекодирование добавляет пики, мерить надо то, что уходит.
 """
-import json, re, subprocess, sys, tempfile
+import json, os, re, subprocess, sys, tempfile
 
 BANDS = [(20, 60), (60, 150), (150, 400), (400, 1000), (1000, 2500), (2500, 5000), (5000, 10000), (10000, 16000)]
 # Абсолютные RMS дБ по полосам (двойные фильтры), сняты с одобренных эталонов целиком:
@@ -307,6 +307,27 @@ def black_why(f):
             re.findall(r"black_start:([\d.]+) black_end:[\d.]+ black_duration:([\d.]+)", e)]
 
 
+# V9: обложка (кадр ролика и миниатюра) слишком тёмная/пересвеченная = не читается в ленте. YAVG по signalstats
+# (limited range: чистый чёрный 16, чистый белый 235). Замер 21.10, 20 миниатюр канала: 28.9..66.3 (самая тёмная —
+# «Rainy Night in Tokyo», ночные phonk 32-55) — все проходят; брак = почти чёрный кадр (сбой генерации) или засвет.
+COVER_YMIN, COVER_YMAX = 24, 220
+
+
+def cover_why(png):
+    """V9: [причина], если средняя яркость обложки вне [COVER_YMIN, COVER_YMAX]. Нет файла = [] (это integrity)."""
+    if not os.path.exists(str(png)):
+        return []
+    e = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", str(png), "-vf", "signalstats,metadata=print",
+                        "-frames:v", "1", "-f", "null", "-"], capture_output=True, text=True).stderr
+    m = re.findall(r"signalstats\.YAVG=([\d.]+)", e)
+    if not m:
+        return []
+    y = float(m[-1])
+    if y < COVER_YMIN:
+        return [f"обложка тёмная: яркость {y:.0f} < {COVER_YMIN} из 255 (не читается в ленте)"]
+    return [f"обложка пересвечена: яркость {y:.0f} > {COVER_YMAX} из 255"] if y > COVER_YMAX else []
+
+
 # V3: шортс = вертикаль 9:16, <= 60 с, есть видео+звук; иначе YouTube не кладёт его в ленту Shorts.
 SHORT_MAX, SHORT_AR, SHORT_AR_TOL = 60.0, 9 / 16, 0.01
 
@@ -429,6 +450,7 @@ def main(argv):
     why += end_why(f)  # A16: только целый трек/финальный mp4, не сегменты best-of (их хвосты режет склейка)
     if "--final" in argv:
         why += integrity_why(f, expect) + black_why(f)
+        why += cover_why(os.path.join(os.path.dirname(str(f)), "cover.png"))  # V9
     if "--no-ce" not in argv:  # R4: окна CE/дрейф/стыки и на финальном mp4 (04b) — мерим то, что заливается
         w, rep = full_ce_why(f, seams)
         why += w
