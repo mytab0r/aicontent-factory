@@ -608,6 +608,7 @@ def main() -> None:
     run_dir = latest_run_dir()
     idea = json.loads((run_dir / "idea.json").read_text(encoding="utf-8"))
     mood = idea.get("mood", "cozy lofi")
+    ref_override = None  # dd-ветка эталон дня не выбирает
 
     # Канал-эксперимент (DECISIONS.md п.8): сцена из idea.json -> промпт сцены
     if idea.get("channel") == "dd":
