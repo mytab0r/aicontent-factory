@@ -42,6 +42,17 @@ def test_failure_without_release_raises():
     raise AssertionError("сбой без выпуска должен ронять прогон")
 
 
+def test_ace_hang_without_release_stops_clean():
+    """run 39725738564: зависшая задача ACE -> ace_restart запрещён -> весь прогон упал (банк 15/30).
+    Отказ рестарта = выйти чисто с сохранённым банком, не ронять прогон."""
+    def make(i):
+        if i == 1:
+            raise bank.BankYield("ace-step завис, рестарт запрещён")
+        return f"s{i}"
+    put = []
+    assert bank.fill(5, lambda: 0, make, put.append, lambda: False, log=Q) == 1 and put == ["s0"]
+
+
 def test_workflow_never_restarts_gpu_and_no_artifacts():
     assert "docker restart" not in WF, "банк не рестартит ace-step: убьёт задачу выпуска"
     assert "upload-artifact" not in WF
@@ -72,4 +83,5 @@ if __name__ == "__main__":
     test_failure_during_release_is_yield_not_error()
     test_failure_without_release_raises()
     test_workflow_never_restarts_gpu_and_no_artifacts()
+    test_ace_hang_without_release_stops_clean()
     print("ok test_bank")
