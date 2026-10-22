@@ -60,24 +60,22 @@ jobs:
         if: steps.flag.outputs.go == '1'
         working-directory: pipeline
         run: ../.venv/bin/python quality_gate.py --video
-      - name: launch gate (NO-GO = выпуск без публикации)
+      # t_f807dc99: без GO гейта запуска ch2 — выход без upload (рендер/QA остаются, токен не пишется).
+      - name: launch gate (NO-GO = без upload)
+        id: gate
         if: steps.flag.outputs.go == '1'
         run: |
-          if python3 scripts/launch_gate.py ch2-whatif; then
-            echo "gate: GO"
-          else
-            echo "::error::launch gate NO-GO: публикация ch2 заблокирована (см. /opt/data/reports/products/ch2-whatif.launch.md)"
-            exit 1
-          fi
+          if python3 scripts/launch_gate.py ch2-whatif; then echo "go=1" >> "$GITHUB_OUTPUT"
+          else echo "::warning::launch gate NO-GO: upload ch2 пропущен (reports/products/ch2-whatif.launch.md)"; fi
       - name: token
-        if: steps.flag.outputs.go == '1'
+        if: steps.gate.outputs.go == '1'
         env:
           YT_CH1_TOKEN_JSON: ${{ secrets.YT_CH1_TOKEN_JSON }}
         run: |
           mkdir -p .state
           printf '%s' "$YT_CH1_TOKEN_JSON" > .state/youtube_token.json
       - name: publish (3 Shorts + long по графику, в плейлист)
-        if: steps.flag.outputs.go == '1'
+        if: steps.gate.outputs.go == '1'
         working-directory: pipeline
         run: ../.venv/bin/python whatif_channel.py publish
       - name: commit rotation state

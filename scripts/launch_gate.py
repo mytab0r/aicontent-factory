@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Launch gate: GO only if /opt/data/reports/products/<product>.launch.md has every required section,
 was updated within MAX_AGE_H, and ends with a critic line 'ВЕРДИКТ: GO'. Usage: launch_gate.py <product>"""
-import os, re, sys, time
+import os, re, subprocess, sys, time
 from pathlib import Path
 
 REQUIRED = ["Счётчик открытий", "Премортем", "Симуляция", "Сухой прогон", "Критик"]
@@ -14,7 +14,9 @@ def gate(path):
     missing = [s for s in REQUIRED if not re.search(r"^#+ .*" + s, text, re.M)]
     if missing:
         return f"NO-GO: нет разделов {missing}"
-    age_h = (time.time() - os.path.getmtime(path)) / 3600
+    ts = subprocess.run(["git", "log", "-1", "--format=%ct", "--", os.path.basename(path)], cwd=os.path.dirname(path),
+                        capture_output=True, text=True).stdout.strip()  # CI checkout сбрасывает mtime
+    age_h = (time.time() - (int(ts) if ts else os.path.getmtime(path))) / 3600
     if age_h > MAX_AGE_H:
         return f"NO-GO: отчёт старше {MAX_AGE_H} ч ({age_h:.0f} ч) — повторить гейт"
     verdicts = re.findall(r"ВЕРДИКТ:\s*(GO|NO-GO)", text)

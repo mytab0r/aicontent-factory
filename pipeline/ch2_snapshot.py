@@ -47,6 +47,8 @@ def snapshot(at) -> str:
     vids, ctr_note = pa.collect(at)
     if not vids:
         return "канал пуст: снапшотить нечего"
+    ids, s0 = [v["id"] for v in vids], min(v["published"] for v in vids).date().isoformat()
+    views, subs = (pa.metric(at, ids, s0, m) for m in ("views", "subscribersGained"))
     lines = [f"# ch2 снапшот {dt.datetime.now(dt.timezone.utc):%Y-%m-%d %H:%M}Z ({len(vids)} роликов)", ""]
     for v in vids:
         start = v["published"].date().isoformat()
@@ -55,7 +57,8 @@ def snapshot(at) -> str:
         imp, ctr = (v["ctr"] or (None, None)) if v["ctr"] else (None, None)
         ret = v["retention"]
         lines.append(
-            f"- {v['title']} ({v['id']}, {start}): показы={imp if imp is not None else 'н/д'}, "
+            f"- {v['title']} ({v['id']}, {start}): просмотры={int(views.get(v['id'], 0))}, "
+            f"подписки={int(subs.get(v['id'], 0))}, показы={imp if imp is not None else 'н/д'}, "
             f"CTR={f'{ctr:.1f}%' if ctr is not None else 'н/д'}, "
             f"удержание={f'{ret:.1f}%' if ret is not None else 'н/д'}; трафик: {top_ts or 'нет данных'}")
     if ctr_note:
