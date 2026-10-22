@@ -328,6 +328,18 @@ def cover_why(png):
     return [f"обложка пересвечена: яркость {y:.0f} > {COVER_YMAX} из 255"] if y > COVER_YMAX else []
 
 
+def fallback_why(d):
+    """V14: [причина], если 02_cover поставил градиент-заглушку (image API упал) — пустая картинка не публикуется."""
+    f = os.path.join(str(d), "cover_fallback.json")
+    if not os.path.exists(f):
+        return []
+    try:
+        r = json.load(open(f, encoding="utf-8")).get("reason", "")
+    except ValueError:
+        r = "маркер повреждён"
+    return [f"обложка-заглушка без арта (image API: {r[:120]})"]
+
+
 # V3: шортс = вертикаль 9:16, <= 60 с, есть видео+звук; иначе YouTube не кладёт его в ленту Shorts.
 SHORT_MAX, SHORT_AR, SHORT_AR_TOL = 60.0, 9 / 16, 0.01
 
@@ -451,6 +463,7 @@ def main(argv):
     if "--final" in argv:
         why += integrity_why(f, expect) + black_why(f)
         why += cover_why(os.path.join(os.path.dirname(str(f)), "cover.png"))  # V9
+        why += fallback_why(os.path.dirname(str(f)))  # V14
     if "--no-ce" not in argv:  # R4: окна CE/дрейф/стыки и на финальном mp4 (04b) — мерим то, что заливается
         w, rep = full_ce_why(f, seams)
         why += w

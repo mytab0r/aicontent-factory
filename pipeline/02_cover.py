@@ -63,6 +63,8 @@ def main() -> None:
     except (RuntimeError, KeyError, IndexError, ValueError) as e:
         print(f"image API недоступен ({e}); фолбэк-обложка"[:300])
         fallback_cover(idea["cover_prompt"], out_path)
+        # V14: маркер для 04b — заглушка без арта не публикуется
+        (run_dir / "cover_fallback.json").write_text(json.dumps({"reason": str(e)[:300]}, ensure_ascii=False), encoding="utf-8")
     print(f"cover -> {out_path}")
 
 
