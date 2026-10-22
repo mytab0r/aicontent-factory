@@ -272,12 +272,37 @@ def test_edge_match_levels_seam_rms():
     assert len(gains) == 3 and gains[0] == 0.0, gains
     dl = [abs(music.edge_rms(fs[i], "l") - music.edge_rms(fs[i - 1], "r")) for i in (1, 2)]
     assert dl[0] <= 3.0 and dl[1] <= 3.0, dl
-    # клэмп: сегмент тише края на 40 дБ -> максимум 3 прохода по 6 дБ, без бесконечного цикла
+    # клэмп: сегмент тише края на 40 дБ -> максимум 3 прохода по 12 дБ, без бесконечного цикла
     f = d / "deep.mp3"
     sp.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=30",
             "-af", "volume=0.0056", "-c:a", "libmp3lame", "-b:a", "192k", str(f)], check=True)
     g2 = music.edge_match([fs[0], str(f)], log=lambda *x: None)
-    assert g2[1] == 18.0, g2
+    assert g2[1] == 36.0, g2
+
+
+def test_edge_match_loud_start_within_r3():
+    """21.10 run 39670128584: старт сегмента на ~23 дБ громче края предыдущего; клэмп
+    3 x 6 = 18 дБ оставлял разрыв 4.3 дБ -> R3 стык 1445.5 с FAIL, выпуск не состоялся.
+    Клэмп поднят до 12 дБ/проход (3 прохода = 36 дБ): самый громкий старт проходит R3,
+    прежний случай 40 дБ тише по-прежнему ограничен 3 проходами без вечного цикла."""
+    import subprocess as sp
+    import tempfile
+    d = Path(tempfile.mkdtemp())
+    fs = []
+    for k, v in enumerate((0.28, 4.0)):  # старт ~+23 дБ к краю предыдущего
+        f = d / f"{k}.mp3"
+        sp.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=30",
+                "-af", f"volume={v}", "-c:a", "libmp3lame", "-b:a", "192k", str(f)], check=True)
+        fs.append(str(f))
+    gains = music.edge_match(fs, log=lambda *x: None)
+    dl = abs(music.edge_rms(fs[1], "l") - music.edge_rms(fs[0], "r"))
+    assert dl <= 3.0, (gains, dl)
+    # тишёный сегмент: клэмп режет и вверх — 3 прохода по 12, дальше цикл не идёт
+    f = d / "deep.mp3"
+    sp.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=30",
+            "-af", "volume=0.00056", "-c:a", "libmp3lame", "-b:a", "192k", str(f)], check=True)
+    g2 = music.edge_match([fs[0], str(f)], log=lambda *x: None)
+    assert g2[1] == 36.0, g2
 
 
 def test_prep_segments_trims_fade_before_edge_match():

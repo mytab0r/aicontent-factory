@@ -474,11 +474,12 @@ def edge_rms(path, side, sec=5.0) -> float:
     return float(re.findall(r"RMS level dB: (-?[\d.]+|-inf)", out)[-1].replace("-inf", "-120"))
 
 
-def edge_match(paths, max_gain=6.0, log=print):
+def edge_match(paths, max_gain=12.0, log=print):
     """t_ffa7ff01: acrossfade сглаживает кривые, но не громкость материала: сегмент с тихим хвостом
     и следующий с громким началом давали R3-скачки RMS 4-5 дБ (run 39155227095, 4 стыка из 8).
     Левый край сегмента i подгоняется константным gain к правому краю i-1, клэмп ±max_gain на проход;
-    3 прохода: gain копится (клэмп на проход, как у adaptive EQ)."""
+    3 прохода: gain копится (клэмп на проход, как у adaptive EQ). 21.10 run 39670128584: старт на
+    ~23 дБ громче края давил клэмпом 3x6=18 -> R3 FAIL; клэмп 12 дБ/проход (36 за 3 прохода)."""
     import os
     import subprocess
     gains = [0.0]
