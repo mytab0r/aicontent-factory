@@ -277,7 +277,29 @@ def test_edge_match_levels_seam_rms():
     sp.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=30",
             "-af", "volume=0.0056", "-c:a", "libmp3lame", "-b:a", "192k", str(f)], check=True)
     g2 = music.edge_match([fs[0], str(f)], log=lambda *x: None)
-    assert g2[1] == 18.0, g2
+    assert g2[1] == music.EDGE_MAX_GAIN, g2  # клэмп, без бесконечного цикла
+
+
+def test_edge_match_no_chain_drift():
+    """run 39670128584: каждый сегмент ACE-Step громче в начале, чем в конце (~6 дБ). Старый edge_match
+    тянул ВЕСЬ сегмент к краю предыдущего -> gain копился по цепочке -3.8..-18 дБ, упирался в клэмп,
+    стык 1445 с -14.5 -> -18.1 дБ = R3 FAIL. Нужно: каждый стык <= 3 дБ при любой длине цепочки,
+    тело сегментов не уезжает (середина каждого сегмента в пределах 1 дБ от исходной)."""
+    import subprocess as sp
+    import tempfile
+    d = Path(tempfile.mkdtemp())
+    fs = []
+    for k in range(7):
+        f = d / f"ch{k}.mp3"
+        sp.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=90",
+                "-af", "volume='0.5*pow(10,-6*t/90/20)':eval=frame", "-c:a", "libmp3lame", "-b:a", "192k", str(f)],
+               check=True)
+        fs.append(str(f))
+    mid0 = music.edge_rms(fs[3], "r", sec=50.0)
+    music.edge_match(fs, log=lambda *x: None)
+    jumps = [abs(music.edge_rms(fs[i], "l") - music.edge_rms(fs[i - 1], "r")) for i in range(1, len(fs))]
+    assert max(jumps) <= 3.0, jumps
+    assert abs(music.edge_rms(fs[3], "r", sec=50.0) - mid0) <= 1.0
 
 
 def test_prep_segments_trims_fade_before_edge_match():
