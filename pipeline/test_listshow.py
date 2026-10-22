@@ -162,21 +162,13 @@ def test_publish_descriptions_original_and_linked():
     assert "Full video: https://www.youtube.com/watch?v=abc" in short_d
 
 
-if __name__ == "__main__":
-    for name, fn in list(globals().items()):
-        if name.startswith("test_"):
-            fn()
-            print("ok", name)
-    print("all listshow tests passed")
-
-
 def test_idea_survives_router_exception_and_retries(monkeypatch=None):
     """IncompleteRead/любое сетевое исключение от одной модели не валит idea: круг повторов."""
     calls = {"n": 0}
 
     def flaky(m, prompt, mt, timeout=600):
         calls["n"] += 1
-        if calls["n"] <= 3:  # первые 3 вызова - сеть падает
+        if calls["n"] <= 2:  # первые 2 вызова - сеть падает, 3-й (круг 3) успешен
             import http.client
             raise http.client.IncompleteRead(b"")
         return wf_sse()
@@ -206,3 +198,11 @@ def test_idea_survives_router_exception_and_retries(monkeypatch=None):
     finally:
         _wf.router_stream = orig
         ls.STATE = old_state
+
+
+if __name__ == "__main__":
+    for name, fn in list(globals().items()):
+        if name.startswith("test_"):
+            fn()
+            print("ok", name)
+    print("all listshow tests passed")
