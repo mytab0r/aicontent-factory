@@ -76,16 +76,6 @@ def test_release_check_network_error_yields_not_crash():
     assert len(calls) >= 3, calls
 
 
-if __name__ == "__main__":
-    test_release_check_network_error_yields_not_crash()
-    test_fill_stops_at_target_and_skips_rejects()
-    test_fill_yields_to_release()
-    test_failure_during_release_is_yield_not_error()
-    test_failure_without_release_raises()
-    test_workflow_never_restarts_gpu_and_no_artifacts()
-    test_ace_hang_without_release_stops_clean()
-    print("ok test_bank")
-
 
 def test_critic_on_release_start_is_clean_yield():
     """run 39800222017: выпуск стартовал -> scores() кинул RuntimeError, повторный busy() в fill
@@ -107,3 +97,16 @@ def test_daily_state_commit_survives_parallel_matrix_conflict():
     dv = (Path(__file__).resolve().parent.parent / ".github/workflows/daily-video.yml").read_text(encoding="utf-8")
     step = dv.split("name: commit mood rotation state", 1)[1].split("- name:", 1)[0]
     assert "pull --rebase -X theirs" in step and "|| true\n          git push\n" not in step, step
+
+
+if __name__ == "__main__":
+    test_release_check_network_error_yields_not_crash()
+    test_fill_stops_at_target_and_skips_rejects()
+    test_fill_yields_to_release()
+    test_failure_during_release_is_yield_not_error()
+    test_failure_without_release_raises()
+    test_workflow_never_restarts_gpu_and_no_artifacts()
+    test_ace_hang_without_release_stops_clean()
+    test_critic_on_release_start_is_clean_yield()
+    test_daily_state_commit_survives_parallel_matrix_conflict()
+    print("ok test_bank")
