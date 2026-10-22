@@ -23,6 +23,10 @@ BANK_ROOT = "/app/output/bank"
 CAP_FILES = 400  # ~4 МБ/сегмент -> ~1.6 ГБ, ниже лимита 15 ГБ спецификации
 
 
+class BankYield(Exception):
+    """ace-step завис, а рестарт банку запрещён: выйти чисто, банк сохранён, следующий прогон продолжит."""
+
+
 def slug(genre: str) -> str:
     return genre.replace(" ", "-")
 
@@ -37,6 +41,9 @@ def fill(target, have, make, put, busy, log=print, max_iter=40):
             break
         try:
             p = make(i)
+        except BankYield as e:
+            log(f"банк: {e} — выхожу чисто (в банке {n})")
+            break
         except Exception as e:
             if busy():
                 log(f"банк: сбой {type(e).__name__} во время выпуска — выхожу (в банке {n})")
@@ -92,7 +99,7 @@ def main():
     spec.loader.exec_module(music)
 
     def no_restart(*a, **k):
-        raise RuntimeError("банк не рестартит ace-step (приоритет выпуска)")
+        raise BankYield("ace-step не ответил, рестарт банку запрещён (приоритет выпуска)")
     music.ace_restart = no_restart
 
     from quality_gate import ce_windows_batch, objective
