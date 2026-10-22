@@ -162,6 +162,14 @@ def test_publish_descriptions_original_and_linked():
     assert "Full video: https://www.youtube.com/watch?v=abc" in short_d
 
 
+def test_upload_limit_detected():
+    """run 39727033513: long вышел, 1-й Short упал 400 uploadLimitExceeded -> весь выпуск exit 1."""
+    e = Exception('<HttpError 400 returned "The user has exceeded the number of videos they may upload.". '
+                  "Details: \"[{'reason': 'uploadLimitExceeded'}]\">")
+    assert ls.upload_limit_hit(e)
+    assert not ls.upload_limit_hit(Exception("HttpError 500 backendError"))
+
+
 def test_idea_survives_router_exception_and_retries(monkeypatch=None):
     """IncompleteRead/любое сетевое исключение от одной модели не валит idea: круг повторов."""
     calls = {"n": 0}
