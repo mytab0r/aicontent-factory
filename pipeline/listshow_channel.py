@@ -343,6 +343,11 @@ def _playlist(y) -> str:
         "status": {"privacyStatus": "public"}}).execute()["id"]
 
 
+def upload_limit_hit(e: Exception) -> bool:
+    """Суточный лимит загрузок YouTube (400 uploadLimitExceeded): не ошибка выпуска long."""
+    return "uploadLimitExceeded" in str(e)
+
+
 def publish(run_dir: Path) -> dict:
     import importlib.util
     from googleapiclient.http import MediaFileUpload
@@ -383,7 +388,14 @@ def publish(run_dir: Path) -> dict:
     for k, path in enumerate(meta["shorts"], 1):
         key = f"short_{k}"
         if key not in done:
-            done[key] = up(path, f"{s['title'][:80]} (part {k}) #Shorts", short_d)
+            try:
+                done[key] = up(path, f"{s['title'][:80]} (part {k}) #Shorts", short_d)
+            except Exception as e:
+                if not upload_limit_hit(e):
+                    raise
+                # ponytail: суточный лимит загрузок канала; long уже вышел, Shorts пропускаем до завтра
+                print(f"shorts stop: uploadLimitExceeded after {k - 1} shorts")
+                break
             done_f.write_text(json.dumps(done, indent=2))
     print(json.dumps(done, indent=2))
     return done
