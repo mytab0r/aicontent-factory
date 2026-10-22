@@ -12,6 +12,8 @@ jobs:
     timeout-minutes: 300
     steps:
       - uses: actions/checkout@v4
+      - name: relay bloblist regression (t_d80ff074)
+        run: python3 deploy/gpu-pc/test_ace_relay.py
       - name: ensure ace-step
         timeout-minutes: 280
         env:

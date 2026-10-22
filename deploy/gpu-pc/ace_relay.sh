@@ -14,6 +14,9 @@ amd=$(echo "$mf" | python3 -c 'import json,sys;m=json.load(sys.stdin);print([x["
 man=$(curl -fsSL -H "Authorization: Bearer $GH_TOK" -H "Accept: application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json" $API/manifests/$amd)
 echo "$man" > "$RELAY/manifest.json"
 echo "$man" | python3 -c 'import json,sys;m=json.load(sys.stdin);print(m["config"]["digest"],m["config"]["size"]);[print(l["digest"],l["size"]) for l in m["layers"]]' > "$RELAY/bloblist.txt"
+# root-cause t_d80ff074: config line once lacked size -> size="" -> "[: Illegal number" -> "download ... incomplete".
+# Every line must be "<sha256:hex> <bytes>"; fail before any download otherwise.
+awk 'NF!=2 || $1!~/^sha256:[0-9a-f]{64}$/ || $2!~/^[0-9]+$/ {print "::error::bad bloblist line " NR ": " $0; bad=1} END{exit bad}' "$RELAY/bloblist.txt"
 TOTAL=$(awk '{s+=$2}END{print s}' "$RELAY/bloblist.txt")
 n=0
 while read -r dg size; do

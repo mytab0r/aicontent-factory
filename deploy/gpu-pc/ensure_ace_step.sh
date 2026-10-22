@@ -41,6 +41,10 @@ else
     else
       echo "=== pull.log tail ==="; tail -5 /tmp/pull.log 2>/dev/null; pkill -f "docker pull" || true; sleep 3; rm -f /tmp/pull.done
       # HF relay: download runs inside hermes-runner (D: mount), tar loaded by this runner
+      # run the checked-out scripts, not a stale hand-copied version on D: (t_d80ff074)
+      docker exec hermes-runner mkdir -p /work/dockerlocal/ace-relay
+      docker cp deploy/gpu-pc/oci_pack.py hermes-runner:/work/dockerlocal/ace-relay/oci_pack.py
+      docker cp deploy/gpu-pc/ace_relay.sh hermes-runner:/work/dockerlocal/ace-relay/ace_relay.sh
       docker exec hermes-runner sh /work/dockerlocal/ace-relay/ace_relay.sh || { echo "::error::hf relay download failed"; exit 1; }
       # stream tar (no cp copy: D: peak stays 1x image)
       docker exec hermes-runner cat /work/dockerlocal/ace-relay/ace-step-oci.tar | docker load || { echo "::error::docker load failed"; exit 1; }
