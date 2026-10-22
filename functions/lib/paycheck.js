@@ -5,7 +5,7 @@
  * сравнение ТОЧНОЕ в 6-знаковых микроюнитах: чужой перевод на другую сумму счёт не закрывает.
  * Повторное использование tx отсекает вызывающий (KV paidtx:<chain>:<tx>), здесь — все совпадения.
  *
- * TRON: Tronscan token_trc20/transfers. EVM: eth_getLogs Transfer(to=адрес) на publicnode.com.
+ * TRON: TronGrid v1 trc20 transfers (env TRON_API, по умолчанию mainnet). EVM: eth_getLogs Transfer(to=адрес) на publicnode.com.
  * Возврат: [{ tx, amount }] — подходящие переводы, новые сверху.
  */
 const RPC = {
@@ -30,24 +30,31 @@ export function toMicro(quantRaw, decimals) {
   return q * 10n ** BigInt(6 - decimals);
 }
 
-async function tronMatches(pair, address, dueMicro, createdMs) {
-  const url =
-    'https://apilist.tronscanapi.com/api/token_trc20/transfers?limit=50&start=0&sort=-timestamp' +
-    '&relatedAddress=' + encodeURIComponent(address) +
-    '&filterToken=' + pair.token;
-  const r = await fetch(url, { headers: { 'User-Agent': 'pay.pxbt.app' } });
-  if (!r.ok) throw new Error('tronscan ' + r.status);
-  const j = await r.json();
+// TronGrid v1: официальный API Tron, тот же формат на mainnet и Nile (база — env TRON_API).
+// only_confirmed=true: в выдаче только подтверждённые; TRC20 Transfer эмитится лишь успешной tx.
+const TRON_API = () => (globalThis.process?.env?.TRON_API || 'https://api.trongrid.io').replace(/\/+$/, '');
+
+/** Чистый матчер по ответу TronGrid /v1/accounts/<a>/transactions/trc20 (для replay-теста). */
+export function tronMatchesFromTronGrid(j, pair, address, dueMicro, createdMs) {
   const out = [];
-  for (const t of j.token_transfers || []) {
-    if (t.to_address !== address) continue;
-    if (t.tokenInfo?.tokenId !== pair.token) continue;
-    if (t.confirmed !== true || t.finalResult !== 'SUCCESS') continue;
-    if ((t.block_ts || 0) < createdMs - 60_000) continue; // до создания счёта — не наш платёж
-    const micro = toMicro(t.quant, t.tokenInfo?.tokenDecimal ?? pair.decimals);
+  for (const t of j.data || []) {
+    if (t.to !== address || t.type !== 'Transfer') continue;
+    if (t.token_info?.address !== pair.token) continue;
+    if ((t.block_timestamp || 0) < createdMs - 60_000) continue; // до создания счёта — не наш платёж
+    const micro = toMicro(t.value, t.token_info?.decimals ?? pair.decimals);
     if (micro === BigInt(dueMicro)) out.push({ tx: t.transaction_id, amount: Number(micro) / 1e6 });
   }
   return out;
+}
+
+async function tronMatches(pair, address, dueMicro, createdMs) {
+  const url =
+    TRON_API() + '/v1/accounts/' + encodeURIComponent(address) + '/transactions/trc20' +
+    '?limit=50&only_to=true&only_confirmed=true&order_by=block_timestamp,desc' +
+    '&contract_address=' + pair.token + '&min_timestamp=' + Math.max(createdMs - 60_000, 0);
+  const r = await fetch(url, { headers: { 'User-Agent': 'pay.pxbt.app' } });
+  if (!r.ok) throw new Error('trongrid ' + r.status);
+  return tronMatchesFromTronGrid(await r.json(), pair, address, dueMicro, createdMs);
 }
 
 async function evmMatches(pair, address, dueMicro, createdSec) {
