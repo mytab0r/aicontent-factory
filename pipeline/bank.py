@@ -84,6 +84,66 @@ def release_busy(repo=None, token=None, sleep=time.sleep, tries=3) -> bool:
     return False
 
 
+def stats_record(genre: str, prompt: str, seed: int, ok: bool, why: str = "", docker_sh=None) -> None:
+    """t_ba72c7aa R4: статистика отказов по промптам/сидам в stats.jsonl рядом с банком."""
+    import json as _json
+    import time as _time
+    row = _json.dumps({"prompt": prompt, "seed": seed, "ok": bool(ok), "why": why,
+                       "ts": int(_time.time())}, ensure_ascii=False).replace("'", "'\''")
+    d = f"{BANK_ROOT}/{slug(genre)}"
+    _sh("docker", "exec", "ace-step", "sh", "-c", f"echo '{row}' >> {d}/stats.jsonl")
+
+
+def _stats_rows(lines):
+    for x in lines:
+        try:
+            r = json.loads(x)
+            if isinstance(r, dict):
+                yield r
+        except Exception:
+            continue
+
+
+def fail_rate(stats_lines: list, prompt: str, window: int = 20):
+    """Доля брака среди последних window записей промпта; None = данных нет."""
+    rows = [r for r in _stats_rows(stats_lines) if r.get("prompt") == prompt][-window:]
+    if not rows:
+        return None
+    return sum(1 for r in rows if not r.get("ok")) / len(rows)
+
+
+def prompt_enabled(stats_lines: list, prompt: str, window: int = 20, max_fail: float = 0.5,
+                   min_n: int = 6) -> bool:
+    """R4: доля брака > max_fail на окне = промпт выключен; мало данных = включен."""
+    rows = [r for r in _stats_rows(stats_lines) if r.get("prompt") == prompt][-window:]
+    if len(rows) < min_n:
+        return True
+    return fail_rate(stats_lines, prompt, window) <= max_fail
+
+
+def pick_prompt(enabled=lambda lines, p: True) -> str:
+    """R4: выбор промпта генерации: первый включённый из вариантов дня; все выключены ->
+    fallback на pick() без фильтра (генерация не останавливается)."""
+    import refpool
+    pair = refpool.pick()
+    lines = []
+    d = f"{BANK_ROOT}/{slug(os.environ.get('GENRE', 'anime lofi'))}"
+    try:
+        lines = _sh("docker", "exec", "ace-step", "sh", "-c",
+                    f"cat {d}/stats.jsonl 2>/dev/null || true").splitlines()
+    except Exception:
+        pass
+    if not enabled(lines, pair["prompt"]):
+        start = refpool.PROMPT_VARIANTS.index(pair["prompt"]) if pair["prompt"] in refpool.PROMPT_VARIANTS else 0
+        for k in range(1, len(refpool.PROMPT_VARIANTS)):
+            cand = refpool.PROMPT_VARIANTS[(start + k) % len(refpool.PROMPT_VARIANTS)]
+            if enabled(lines, cand):
+                print(f"bank: промпт дня выключен статистикой брака, беру вариант {k}")
+                return cand
+        print("bank: все варианты выключены статистикой — fallback промпт дня без фильтра")
+    return pair["prompt"]
+
+
 def main():
     genre = os.environ.get("GENRE", "anime lofi")
     target = int(os.environ.get("BANK_TARGET", "30"))
