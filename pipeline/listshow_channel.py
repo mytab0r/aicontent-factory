@@ -186,7 +186,7 @@ def idea(models=None) -> Path:
     for round_ in range(3):  # роутер/модели бывают недоступны короткими окнами: 3 круга по списку
         for m in models:
             try:
-                s = parse_json(wf.router_stream(m, prompt, 8000))
+                s = parse_json(wf.router_stream(m, prompt, 12000))
                 break
             except Exception as e:  # router: HTTP/525/429, обрыв SSE (IncompleteRead), битый JSON
                 print(f"model {m}: {type(e).__name__}: {e}"[:300])
@@ -204,7 +204,7 @@ def idea(models=None) -> Path:
             s = None
             for m in models:  # перевалидация не удалась: новый ответ
                 try:
-                    s = parse_json(wf.router_stream(m, prompt, 8000))
+                    s = parse_json(wf.router_stream(m, prompt, 12000))
                     break
                 except Exception as e:
                     print(f"model {m}: {type(e).__name__}: {e}"[:300])
