@@ -6,3 +6,4 @@ __pycache__/
 *.log
 .worktrees/
 node_modules/
+.pr-body.md
