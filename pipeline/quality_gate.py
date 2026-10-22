@@ -357,6 +357,22 @@ def short_why(f):
     return why + ([f"шортс {d:.1f} с > {SHORT_MAX:.0f} с"] if d > SHORT_MAX else [])
 
 
+# A24: шортс режется из середины трека; без фейдов старт/конец = щелчок в ленте Shorts. 07 накладывает SHORT_FADES,
+# гейт проверяет края: первые/последние EDGE_WIN с тише всего шортса минимум на EDGE_DROP дБ.
+SHORT_FADE_IN, SHORT_FADE_OUT = 0.5, 1.5
+SHORT_FADES = "afade=t=in:d=0.5,afade=t=out:st={st:.2f}:d=1.5"
+EDGE_WIN, EDGE_DROP = 0.05, 12.0
+
+
+def short_edge_why(f):
+    """A24: [причины], если шортс начинается/кончается скачком (нет фейда)."""
+    d = duration(f)
+    whole = rms_db(f, 0, d)
+    head, tail = rms_db(f, 0, EDGE_WIN) - whole, rms_db(f, d - EDGE_WIN, EDGE_WIN) - whole
+    why = [f"шортс: резкое начало {head:+.1f} дБ к шортсу (нужно < -{EDGE_DROP})"] if head > -EDGE_DROP else []
+    return why + ([f"шортс: резкий конец {tail:+.1f} дБ к шортсу (нужно < -{EDGE_DROP})"] if tail > -EDGE_DROP else [])
+
+
 def end_why(f):
     """A16: [причина], если последние END_WIN с не тише всего трека на END_DROP дБ (обрыв без затухания)."""
     d = duration(f)

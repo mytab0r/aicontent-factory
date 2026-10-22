@@ -196,3 +196,13 @@ with tempfile.TemporaryDirectory() as td:
     assert any("строй плывёт" in x for x in qg.tuning_why(bad)), qg.tunings(bad)
     assert qg.TUNE_MAX == 20.0 and qg.TUNE_WIN == 30.0
 print("test_quality_gate A19 tuning drift OK")
+
+# A24 (каталог): шортс из середины трека без фейда = щелчок на старте/конце в ленте Shorts; с фейдами 07 проходит
+with tempfile.TemporaryDirectory() as td:
+    raw, faded = f"{td}/raw.wav", f"{td}/faded.wav"
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=20", "-ac", "2", raw], check=True)
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", raw, "-af", qg.SHORT_FADES.format(st=20 - qg.SHORT_FADE_OUT), faded], check=True)
+    assert any("резкое начало" in w for w in qg.short_edge_why(raw)), qg.short_edge_why(raw)
+    assert any("резкий конец" in w for w in qg.short_edge_why(raw)), qg.short_edge_why(raw)
+    assert qg.short_edge_why(faded) == [], qg.short_edge_why(faded)
+print("test_quality_gate A24 short-edges OK")

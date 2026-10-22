@@ -109,6 +109,9 @@ def analyze(track: Path) -> list[tuple[float, float]]:
     return pick_windows(rms, sr / hop, onsets, len(y) / sr)
 
 
+from quality_gate import SHORT_FADES, SHORT_FADE_OUT  # A24: фейды и их проверка из одного места
+
+
 def render(image: Path, track: Path, start: float, end: float, out: Path) -> None:
     # blur-фон считаем один раз в PNG: per-frame boxblur 1080x1920 + x264 на всех ядрах ловил OOM-kill
     frame = out.with_suffix(".png")
@@ -120,7 +123,8 @@ def render(image: Path, track: Path, start: float, end: float, out: Path) -> Non
     subprocess.run([
         "ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-r", "30", "-i", str(frame),
         "-ss", f"{start:.2f}", "-t", dur, "-i", str(track), "-map", "0:v", "-map", "1:a",
-        "-af", "loudnorm=I=-14:TP=-1.5:LRA=11", "-ar", "48000",
+        "-af", "loudnorm=I=-14:TP=-1.5:LRA=11," + SHORT_FADES.format(st=end - start - SHORT_FADE_OUT),  # A24
+        "-ar", "48000",
         "-c:v", "libx264", "-preset", "veryfast", "-tune", "stillimage", "-pix_fmt", "yuv420p", "-threads", "4",
         "-c:a", "aac", "-b:a", "192k", "-t", dur, str(out),
     ], check=True)
@@ -162,7 +166,8 @@ def main() -> None:
         out = run_dir / f"short_{i}.mp4"
         render(image, track, s, e, out)
         from quality_gate import short_why  # V3: формат проверяется до заливки, брак не грузим
-        why = short_why(out)
+        from quality_gate import short_edge_why
+        why = short_why(out) + short_edge_why(out)  # A24: щелчок на краях
         if why:
             sys.exit("ERROR: шортс не прошёл гейт: " + "; ".join(why))
         outs.append(out)
