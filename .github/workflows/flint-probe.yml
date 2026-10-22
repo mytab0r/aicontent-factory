@@ -1,0 +1,67 @@
+name: flint-probe
+# t_2ca44c81: Flint 40B (MoE, 2.5B active) GGUF Q4 на ПК: веса через disk_gate.sh -> llama.cpp b11803 cu12.8
+# в Docker, MoE-эксперты на CPU -> OpenAI endpoint (comfynet, alias flint) -> eval 5 задач -> stop (GPU нужен daily-video).
+on:
+  workflow_dispatch:
+  push:
+    branches: ['wt/t_2ca44c81-*']
+    paths: ['.github/workflows/flint-probe.yml', 'deploy/gpu-pc/flint/**']
+concurrency:
+  group: daily-video
+  cancel-in-progress: false
+jobs:
+  probe:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 300
+    env:
+      M: /run/desktop/mnt/host/c/dockerlocal/flint/models
+      GGUF: flint-UD-Q4_K_XL.gguf
+      SIZE: "25054688704"
+      IMG: flint-llama:b11803
+      EP: http://flint:8080
+      CURL: docker run --rm --network comfynet curlimages/curl:8.10.1
+    steps:
+      - uses: actions/checkout@v4
+      - name: weights (gate C:)
+        run: |
+          set -e
+          if docker run --rm -v $M:/m alpine:3.20 sh -c "test \$(stat -c %s /m/$GGUF 2>/dev/null || echo 0) -eq $SIZE"; then echo HAVE; exit 0; fi
+          sh deploy/gpu-pc/disk_gate.sh c 26
+          docker run --rm -v $M:/m curlimages/curl:8.10.1 -sSfL --retry 20 --retry-all-errors -C - \
+            -o /m/$GGUF "https://huggingface.co/unsloth/flint-GGUF/resolve/main/$GGUF"
+          docker run --rm -v $M:/m alpine:3.20 sh -c "ls -la /m; test \$(stat -c %s /m/$GGUF) -eq $SIZE"
+      - name: image (gate D:)
+        working-directory: deploy/gpu-pc/flint
+        run: |
+          set -e
+          docker image inspect $IMG >/dev/null 2>&1 && { echo HAVE; exit 0; }
+          sh ../disk_gate.sh d 8
+          curl -sSfL -o llama-b11803-bin-ubuntu-cuda-12.8-x64.tar.gz \
+            https://github.com/ggml-org/llama.cpp/releases/download/b11803/llama-b11803-bin-ubuntu-cuda-12.8-x64.tar.gz
+          docker build -q -t $IMG .
+      - name: serve (MoE experts on CPU)
+        run: |
+          set -e
+          docker rm -f flint 2>/dev/null || true
+          docker run -d --name flint --gpus all --network comfynet -v $M:/models:ro $IMG \
+            -m /models/$GGUF -a flint --host 0.0.0.0 --port 8080 -ngl 99 --cpu-moe -c 32768 -np 1 --jinja
+          for i in $(seq 1 120); do
+            $CURL -sf -m 5 $EP/health && break
+            docker inspect -f '{{.State.Running}}' flint | grep -q true || break; sleep 10
+          done
+          docker logs --tail 80 flint 2>&1 | grep -iE 'CUDA|offload|buffer size|model size|error|listening|n_ctx' || true
+          $CURL -sf -m 600 $EP/v1/chat/completions -H 'Content-Type: application/json' \
+            -d '{"model":"flint","messages":[{"role":"user","content":"Say OK"}],"max_tokens":256}'
+          echo; docker stats --no-stream flint
+      - name: eval 5 tasks
+        run: |
+          docker run --rm --network comfynet -v "$PWD/deploy/gpu-pc/flint:/e" python:3.12-slim \
+            python3 /e/flint_eval.py $EP/v1 flint | tee flint_eval_local.jsonl
+          docker logs flint 2>&1 | grep -E 'eval time' | tail -30
+          docker stats --no-stream flint
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: flint-eval, path: flint_eval_local.jsonl}
+      - name: stop (free GPU/RAM for daily-video)
+        if: always()
+        run: docker stop flint 2>/dev/null || true
