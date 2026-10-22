@@ -200,6 +200,29 @@ def test_idea_survives_router_exception_and_retries(monkeypatch=None):
         ls.STATE = old_state
 
 
+def test_idea_retries_after_short_plan_then_broken_json():
+    """Run 39713369774: короткий план (562 с), затем битый JSON у всех - не SystemExit, а новый круг."""
+    import json as _json
+    import tempfile
+    from pathlib import Path as _P
+    import whatif_channel as _wf
+
+    def script(words):
+        return _json.dumps({"title": "Things That Will Be Banned In Your Lifetime", "description": "d", "tags": ["t"],
+                            "items": [{"title": f"P{k}", "text": " ".join(["fact"] * words) + ".",
+                                       "place": ["city", "nature", "space"][k % 3]} for k in range(13)]})
+    answers = iter([script(100), '{"title": "Things', script(110)])
+    orig, old_state = _wf.router_stream, ls.STATE
+    _wf.router_stream = lambda m, prompt, mt, timeout=600: next(answers)
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            ls.STATE = _P(td)
+            out = ls.idea(models=["m1"])
+            assert out.exists()
+    finally:
+        _wf.router_stream, ls.STATE = orig, old_state
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):
