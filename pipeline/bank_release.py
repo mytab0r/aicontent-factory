@@ -161,12 +161,20 @@ def used_cleanup(now: float, state_path: Path | None = None, docker_sh=None) -> 
     return removed
 
 
-def assemble(paths: list[Path], run_dir: Path, metas: list[dict], genre: str, out: str = "track.mp3") -> dict:
-    """Склейка сегментов банка тем же кодом, что час-микс (prep_segments + concat_tracks)."""
+def _music_mod():
+    """03_music одним экземпляром: тесты патчат sys.modules["acf_music03"]."""
+    if "acf_music03" in sys.modules:
+        return sys.modules["acf_music03"]
     spec = importlib.util.spec_from_file_location("acf_music03", HERE / "03_music.py")
     m = importlib.util.module_from_spec(spec)
     sys.modules["acf_music03"] = m
     spec.loader.exec_module(m)
+    return m
+
+
+def assemble(paths: list[Path], run_dir: Path, metas: list[dict], genre: str, out: str = "track.mp3") -> dict:
+    """Склейка сегментов банка тем же кодом, что час-микс (prep_segments + concat_tracks)."""
+    m = _music_mod()
 
     seg = [{"name": e.get("name"), "seed": e.get("seed"), "prompt": e.get("prompt")} for e in metas]
     prompts = " | ".join(dict.fromkeys(str(e.get("prompt")) for e in metas))

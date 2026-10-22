@@ -29,10 +29,11 @@ class FakeDocker:
     def __call__(self, *a):
         cmd = a[-1] if a else ""
         self.ops.append((a, cmd))
-        for path, data in self.files.items():
-            if path in cmd:
-                return data if isinstance(data, str) else data.decode()
-        return ""
+        best = max((pth for pth in self.files if pth in cmd), key=len, default=None)
+        if best is None:
+            return ""
+        data = self.files[best]
+        return data if isinstance(data, str) else data.decode()
 
 
 def test_group_key_uses_prompt_text():
@@ -74,11 +75,16 @@ def test_entries_skips_missing_meta():
 def test_take_copies_each_segment_or_none():
     now = time.time()
     ents = [meta("a", 89, "F major"), meta("b", 89, "F major")]
-    dk = FakeDocker({f"/app/output/bank/anime-lofi/{e['name']}.mp3": b"x" for e in ents})
+    names = "\n".join(e["name"] + ".mp3" for e in ents) + "\n"
+    metas = {f"/app/output/bank/anime-lofi/{e['name']}.json": json.dumps(
+        {"prompt": e["prompt"], "seed": e["seed"]}) for e in ents}
+    dk = FakeDocker({**{f"/app/output/bank/anime-lofi/{e['name']}.mp3": b"x" for e in ents},
+                     **metas, "/app/output/bank/anime-lofi": names})
     with tempfile.TemporaryDirectory() as td:
         got = bank_release.take("anime lofi", 2, td, docker_sh=dk, now=now, rng=random.Random(1))
         assert got is not None and len(got) == 2
-        assert dk.ops and all(op[0][-1].startswith("cp") or "cp" in op[1] for op in dk.ops), dk.ops
+        cps = [op for op in dk.ops if op[0][0] == "cp"]
+        assert len(cps) == 2 and all(".mp3" in op[0][1] for op in cps), dk.ops
         assert bank_release.take("anime lofi", 5, td, docker_sh=dk, now=now, rng=random.Random(1)) is None
 
 
@@ -104,9 +110,9 @@ def test_assemble_writes_music_meta_and_concat():
     """Критерий 5/6: сборка из банка без генерации; meta с chapters/seams для гейта 03c/04b."""
     import importlib.util
     spec = importlib.util.spec_from_file_location(
-        "m03", next(Path(__file__).parent.glob("03_music.py")))
+        "acf_music03", Path(__file__).parent / "03_music.py")
     m = importlib.util.module_from_spec(spec)
-    sys.modules["m03"] = m
+    sys.modules["acf_music03"] = m
     spec.loader.exec_module(m)
     calls = {}
     m.prep_segments = lambda ps, log=print: calls.setdefault("prep", ps)
@@ -119,7 +125,7 @@ def test_assemble_writes_music_meta_and_concat():
             p.write_bytes(b"x")
         metas = [meta("a", 89, "F major", seed=11), meta("b", 89, "F major", seed=22)]
         mm = bank_release.assemble(paths, rd, metas, "anime lofi")
-        assert calls["paths"] == paths and calls["out"].endswith("track.mp3")
+        assert calls["paths"] == [str(x) for x in paths] and calls["out"].endswith("track.mp3")
         assert mm["genre"] == "anime lofi" and "89 BPM" in mm["prompt"]
         assert mm["seed"] == 11 and len(mm["segments"]) == 2
         assert mm["chapters"] and len(mm["seams"]) == 1
@@ -136,7 +142,7 @@ def test_fail_rate_and_prompt_enabled():
     """Критерий 9: статистика отказов; промпт с браком >50% выключается автоматически."""
     lines = [json.dumps({"prompt": "p1", "seed": i, "ok": i % 2 == 0, "ts": i}) for i in range(20)]
     assert bank.fail_rate(lines, "p1") == 0.5
-    lines_bad = lines[:-8] + [json.dumps({"prompt": "p1", "seed": i, "ok": False, "ts": i}) for i in range(8)]
+    lines_bad = lines[:-12] + [json.dumps({"prompt": "p1", "seed": i, "ok": False, "ts": i}) for i in range(12)]
     assert bank.fail_rate(lines_bad, "p1") == 0.8
     assert bank.fail_rate(["{broken"], "p1") is None          # битая строка не роняет
     assert bank.fail_rate([], "p1") is None                   # нет данных

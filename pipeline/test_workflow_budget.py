@@ -13,7 +13,7 @@ def test_no_generation_env_in_daily_video():
         assert var not in WF, f"{var} остался в daily-video — генерация в слоте не удалена (R5)"
     assert "bank_release.py" in WF, "03 music не собирает из банка (R2)"
     # пустой банк -> скип слота: все шаги после music гейтятся nobank
-    after = WF.split("03 music (ACE-Step)", 1)[1]
+    after = WF.split("- name: 03 music", 1)[1]
     for step in ("03c quality gate", "03d anti-repeat", "04 assemble", "04b quality gate final",
                  "05 publish", "05b anti-repeat record", "07 shorts", "TG report"):
         block = after.split(f"- name: {step}", 1)
@@ -37,6 +37,7 @@ def test_refpool_ytdlp_in_venv():
 
 
 if __name__ == "__main__":
-    test_mix_budget_fits_min_release_and_job_timeout()
+    test_no_generation_env_in_daily_video()
+    test_bank_fill_generator_budget()
     test_refpool_ytdlp_in_venv()
     print("ok")

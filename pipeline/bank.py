@@ -91,7 +91,11 @@ def stats_record(genre: str, prompt: str, seed: int, ok: bool, why: str = "", do
     row = _json.dumps({"prompt": prompt, "seed": seed, "ok": bool(ok), "why": why,
                        "ts": int(_time.time())}, ensure_ascii=False).replace("'", "'\''")
     d = f"{BANK_ROOT}/{slug(genre)}"
-    _sh("docker", "exec", "ace-step", "sh", "-c", f"echo '{row}' >> {d}/stats.jsonl")
+    cmd = f"echo '{row}' >> {d}/stats.jsonl"
+    if docker_sh is not None:
+        docker_sh("exec", "ace-step", "sh", "-c", cmd)
+    else:
+        _sh("docker", "exec", "ace-step", "sh", "-c", cmd)
 
 
 def _stats_rows(lines):
