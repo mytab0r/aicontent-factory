@@ -488,26 +488,34 @@ def edge_rms(path, side, sec=5.0) -> float:
     return float(re.findall(r"RMS level dB: (-?[\d.]+|-inf)", out)[-1].replace("-inf", "-120"))
 
 
-def edge_match(paths, max_gain=6.0, log=print):
-    """t_ffa7ff01: acrossfade сглаживает кривые, но не громкость материала: сегмент с тихим хвостом
-    и следующий с громким началом давали R3-скачки RMS 4-5 дБ (run 39155227095, 4 стыка из 8).
-    Левый край сегмента i подгоняется константным gain к правому краю i-1, клэмп ±max_gain на проход;
-    3 прохода: gain копится (клэмп на проход, как у adaptive EQ)."""
+EDGE_RAMP_SEC = 30.0  # gain только на начале сегмента, к телу спадает до 0: без накопления по цепочке
+EDGE_MAX_GAIN = 18.0  # 3 прохода x клэмп 6 дБ
+
+
+def edge_match(paths, max_gain=6.0, ramp=EDGE_RAMP_SEC, log=print):
+    """t_ffa7ff01: acrossfade сглаживает кривые, но не громкость материала: тихий хвост сегмента и громкое
+    начало следующего давали R3-скачки RMS 4-5 дБ (run 39155227095).
+    run 39670128584: прежний константный gain на ВЕСЬ сегмент копился по цепочке (-3.8 .. -18 дБ, клэмп),
+    правый край каждого следующего сегмента уезжал -> стык 1445 с -14.5 -> -18.1 дБ = R3 FAIL.
+    Теперь gain -- рампа на первые ramp секунд (g -> 0), тело и правый край сегмента не меняются,
+    поэтому стыки независимы. 3 прохода, клэмп ±max_gain на проход."""
     import os
     import subprocess
     gains = [0.0]
     for i in range(1, len(paths)):
         tot = 0.0
+        r = max(6.0, min(ramp, _probe_sec(paths[i]) * 0.4))
         for _ in range(3):
             g = max(-max_gain, min(max_gain, edge_rms(paths[i - 1], "r") - edge_rms(paths[i], "l")))
             if abs(g) > 0.1:
                 tmp = f"{paths[i]}.g.mp3"
-                subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", paths[i], "-af", f"volume={g:.2f}dB",
+                af = f"volume='pow(10,{g:.3f}*max(0,1-t/{r:.1f})/20)':eval=frame"
+                subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", paths[i], "-af", af,
                                 "-c:a", "libmp3lame", "-b:a", "192k", tmp], check=True)
                 os.replace(tmp, paths[i])
                 tot += g
-        gains.append(tot)
-        log(f"edge_match {i}: суммарный gain {tot:+.2f} дБ")
+        gains.append(round(tot, 2))
+        log(f"edge_match {i}: gain начала {tot:+.2f} дБ (рампа {r:.0f} с)")
     return gains
 
 
