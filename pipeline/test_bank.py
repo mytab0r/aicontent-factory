@@ -99,6 +99,20 @@ def test_daily_state_commit_survives_parallel_matrix_conflict():
     assert "pull --rebase -X theirs" in step and "|| true\n          git push\n" not in step, step
 
 
+def test_generator_completes_largest_open_group():
+    """run 39800343057: банк 22+ сегмента, но промпт генератора вращался по дню (89 F / 82 D / старые
+    варианты) -> ни одной совместимой группы из 20 -> nobank, слот пропущен. Генератор добивает
+    самую большую незакрытую группу, ротация дня — только когда открытых групп нет."""
+    f, d = "x, 89 BPM, F major, y", "x, 82 BPM, D major, y"
+    key = lambda p: (int(p.split(" BPM")[0].split()[-1]), p.split(", ")[2])  # noqa: E731
+    assert bank.choose_prompt([f, d], {(89, "F major"): 12, (82, "D major"): 3}, 20, d, key) == f
+    assert bank.choose_prompt([f, d], {(89, "F major"): 20, (82, "D major"): 3}, 20, f, key) == d
+    assert bank.choose_prompt([f, d], {(89, "F major"): 20, (82, "D major"): 25}, 20, d, key) == d
+    assert bank.choose_prompt([f, d], {}, 20, d, key) == d
+    src = (Path(__file__).resolve().parent / "bank.py").read_text(encoding="utf-8")
+    assert "choose_prompt(" in src.split("def main", 1)[1], "main() обязан выбирать промпт через choose_prompt"
+
+
 if __name__ == "__main__":
     test_release_check_network_error_yields_not_crash()
     test_fill_stops_at_target_and_skips_rejects()
@@ -109,4 +123,5 @@ if __name__ == "__main__":
     test_ace_hang_without_release_stops_clean()
     test_critic_on_release_start_is_clean_yield()
     test_daily_state_commit_survives_parallel_matrix_conflict()
+    test_generator_completes_largest_open_group()
     print("ok test_bank")

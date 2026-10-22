@@ -157,6 +157,31 @@ def pick_prompt(enabled=lambda lines, p: True) -> str:
     return pair["prompt"]
 
 
+def choose_prompt(variants, counts, need, day_prompt, key):
+    """Выпуск берёт need сегментов одной группы (bpm, key). Ротация промпта по дню размазывала банк
+    по группам -> ни одной полной (run 39800343057, nobank). Добиваем самую большую незакрытую группу;
+    все закрыты/пусто -> промпт дня (разнообразие следующего выпуска)."""
+    open_ = [v for v in variants if 0 < counts.get(key(v), 0) < need]
+    return max(open_, key=lambda v: counts[key(v)]) if open_ else day_prompt
+
+
+def group_counts(genre, docker_sh, now=None):
+    """Свободные (не использованные 14 дней) сегменты банка по группам (bpm, key)."""
+    import bank_release as br
+    used = []
+    try:
+        used = (br.ROOT / ".state/bank_used.jsonl").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        pass
+    skip = br._used_filter(used, now or time.time())
+    out = {}
+    for e in br.entries(genre, docker_sh=docker_sh):
+        if e["name"] not in skip:
+            k = br.group_key(e)
+            out[k] = out.get(k, 0) + 1
+    return out
+
+
 def main():
     genre = os.environ.get("GENRE", "anime lofi")
     target = int(os.environ.get("BANK_TARGET", "30"))
@@ -180,7 +205,15 @@ def main():
     try:
         import refpool
         pair = refpool.pick()
-        prompt = pair["prompt"]
+        need = -(-int(os.environ.get("TRACK_DURATION_SEC", "3600")) // 180)
+        try:
+            counts = group_counts(genre, lambda *a: _sh("docker", *a))
+            prompt = choose_prompt(refpool.PROMPT_VARIANTS, counts, need, pair["prompt"],
+                                   lambda v: (music.prompt_bpm(v), music.prompt_key(v)))
+            print(f"bank: группы {counts}, нужно {need} -> промпт {prompt[-30:]}")
+        except Exception as e:  # листинг банка недоступен -> промпт дня
+            print(f"bank: группы не прочитаны ({type(e).__name__}: {e}); промпт дня")
+            prompt = pair["prompt"]
         refpool.ensure_ref(pair)
         ref = pair["ref_path"]
     except Exception as e:  # как в 03_music: эталон дня недоступен -> ref1
