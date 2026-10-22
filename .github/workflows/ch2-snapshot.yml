@@ -1,0 +1,29 @@
+name: ch2 snapshot (analytics)
+
+# Снапшот по роликам канала @OwningItMath (ch2 живёт плейлистами на нём): показы/CTR/удержание/
+# источник трафика. Ручной запуск (или cron позже — отдельное решение). Только чтение, публикации нет.
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: [self-hosted, release]
+    timeout-minutes: 5
+    env:
+      YT_CH1_TOKEN_JSON: ${{ secrets.YT_CH1_TOKEN_JSON }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: snapshot
+        working-directory: pipeline
+        run: python3 ch2_snapshot.py
+      - name: upload snapshot
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: ch2-snapshot-${{ github.run_id }}
+          path: reports/ch2_snapshot/*.md
+          retention-days: 30

@@ -54,6 +54,15 @@ jobs:
         if: steps.flag.outputs.go == '1'
         working-directory: pipeline
         run: ../.venv/bin/python quality_gate.py --video
+      - name: launch gate (NO-GO = выпуск без публикации)
+        if: steps.flag.outputs.go == '1'
+        run: |
+          if python3 scripts/launch_gate.py ch2-whatif; then
+            echo "gate: GO"
+          else
+            echo "::error::launch gate NO-GO: публикация ch2 заблокирована (см. /opt/data/reports/products/ch2-whatif.launch.md)"
+            exit 1
+          fi
       - name: token
         if: steps.flag.outputs.go == '1'
         env:
