@@ -146,11 +146,12 @@ def test_mix_drops_bounded_by_time_budget():
     assert len(calls) <= 4, calls
 
 
-def test_daily_video_sets_bestof():
+def test_bank_fill_sets_bestof():
+    """t_ba72c7aa R5: отбор best-of остался в ГЕНЕРАТОРЕ (bank-fill), из daily-video удалён."""
     import re
-    wf = (Path(__file__).resolve().parent.parent / ".github/workflows/daily-video.yml").read_text(encoding="utf-8")
-    m = re.search(r'ACE15_BESTOF:\s*"?(\d+)', wf)
-    assert m and int(m.group(1)) >= 2, "ACE15_BESTOF не задан в daily-video: отбор в проде не работает"
+    bf = (Path(__file__).resolve().parent.parent / ".github/workflows/bank-fill.yml").read_text(encoding="utf-8")
+    m = re.search(r'ACE15_BESTOF:\s*"?(\d+)', bf)
+    assert m and int(m.group(1)) >= 2, "ACE15_BESTOF не задан в bank-fill: отбор в генераторе банка не работает"
 
 
 def test_chapters_start_at_zero_and_format_hours():

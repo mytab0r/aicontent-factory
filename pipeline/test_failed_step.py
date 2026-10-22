@@ -8,7 +8,7 @@ WF = (Path(__file__).parent.parent / ".github/workflows/daily-video.yml").read_t
 steps = {"guard": {"outcome": "success", "conclusion": "success"},
          "music": {"outcome": "failure", "conclusion": "failure"},
          "ref": {"outcome": "failure", "conclusion": "success"}}  # continue-on-error не считается
-assert failed_step(steps, [], WF) == "03 music (ACE-Step)", failed_step(steps, [], WF)
+assert failed_step(steps, [], WF) == "03 music (сборка из банка, t_ba72c7aa)", failed_step(steps, [], WF)
 # API догнал — тоже годится; пусто везде — честное «не определён»
 jobs = [{"steps": [{"name": "05 publish", "conclusion": "failure"}]}]
 assert failed_step({}, jobs, WF) == "05 publish"

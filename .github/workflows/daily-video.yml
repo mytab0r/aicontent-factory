@@ -49,33 +49,13 @@ jobs:
             ref: ""  # phonk v1-v3 одобрены БЕЗ эталона (noref) — ref-трек не подмешивать
     # pc-acf-release: setup-uv падает EACCES (spawn uv, 16.10) — выпуск на проверенном pc-acf
     runs-on: [self-hosted, release]
-    # 16.10 run 38886770624: music 40 мин + аплоад часа >34 мин -> 75 обрезал 05 publish.
-    # t_187762da: гейт сегментов (ACE15_BESTOF=3) до x3 генераций на сегмент -> worst ~90 мин music.
+    # 16.10 run 38886770624: аплоад часа >34 мин -> 75 обрезал 05 publish; music теперь = сборка из банка (<15 мин).
     timeout-minutes: 240
     env:
       ROUTER_BASE_URL: https://9router.pxbt.app/v1
       ROUTER_API_KEY: ${{ secrets.ROUTER_API_KEY }}
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
-      # DECISIONS.md п.5: конкурентный анализ показал — никто не публикует
-      # 45-секундные видео, формат 10-20 мин "сигнатурный" ролик. Решение
-      # было записано, но не применено в workflow — баг, видео от 2 окт
-      # ушло в паблик 45-секундным. Фикс: 15 минут (900с), дробится
-      # chunk_plan() в 03_music.py на куски <=240с под лимит ACE-Step.
-      TRACK_DURATION_SEC: "3600"  # >600 -> час-микс из цельных треков 1.5 + треклист-главы (ресёрч 13.10: хиты ниши 1-4 ч)
-      GENRE: ${{ matrix.genre }}
-      # 21.10 run 39576809258: сегмент = 3 кандидата ~28 мин (5 кандидатов ~47), 7200 с давали 2 сегмента = 360 с < 900.
-      # 9600 с вмещают >= 5 сегментов (900 с) и укладываются в timeout-minutes 240 (test_workflow_budget).
-      ACE15_MIX_BUDGET_SEC: "9600"
       ACE15_ENDPOINT: http://ace-step:8001  # ACE-Step 1.5 REST на ПК (comfynet)
-      # Эталон стиля, одобрен владельцем 13.10 (сэмпл ref1): 90с K/DA Seraphine.
-      # Кэш на раннере; нет файла -> 03_music генерирует без эталона.
-      # phonk: пусто (noref-звук, Content ID и A/Bapproval без чужого стиля).
-      ACE15_REF_AUDIO: ${{ matrix.ref }}
-      # t_187762da: best-of-N на КАЖДОМ сегменте час-микса (до 3 seed'ов, max CE среди прошедших
-      # quality_gate); 0 прошедших = сегмент выбрасывается, микс < 15 мин = FAIL. Пороги не снижены.
-      ACE15_BESTOF: "3"
-      # t_f0794976: сегмент с 0/3 прошедших получает ещё 2 seed'а (3->5) вместо выброса; порог 6.5 не трогаем.
-      ACE15_SEG_EXTRA: "2"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -165,41 +145,46 @@ jobs:
           done
           echo "::error::ace-step не healthy за 18 мин"; docker inspect -f 'status={{.State.Status}} health={{.State.Health.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}} restarts={{.RestartCount}} image={{.Config.Image}}' ace-step 2>&1 || echo "ace-step: контейнер отсутствует (t_50f1fc9b)"; docker logs --tail 40 ace-step 2>&1 || echo "ace-step: логов нет"; exit 1
 
-      - name: reference audio (cache)
-        id: ref
-        if: steps.guard.outputs.published != '1' && env.ACE15_REF_AUDIO != ''
-        continue-on-error: true  # root-cause: t_f95a06da
-        run: |
-          [ -s "$ACE15_REF_AUDIO" ] && exit 0
-          mkdir -p /tmp/acf-ref && python3 -m venv /tmp/acf-ref/v && /tmp/acf-ref/v/bin/pip install -q -U yt-dlp
-          /tmp/acf-ref/v/bin/yt-dlp -q -f bestaudio -o '/tmp/acf-ref/raw1.%(ext)s' https://youtu.be/CYZeAfaj3pc
-          ffmpeg -loglevel error -y -ss 30 -t 90 -i /tmp/acf-ref/raw1.* -ac 2 -ar 48000 "$ACE15_REF_AUDIO"
-
-      - name: 03 music (ACE-Step)
+      - name: 03 music (сборка из банка, t_ba72c7aa)
         id: music
         if: steps.guard.outputs.published != '1'
         working-directory: pipeline
-        run: ../.venv/bin/python 03_music.py
+        env:
+          TRACK_DURATION_SEC: "3600"
+          GENRE: ${{ matrix.genre }}
+          ACF_RUN_DIR: ${{ github.workspace }}/runs/${{ github.run_id }}
+        run: |
+          set +e
+          ../.venv/bin/python bank_release.py
+          rc=$?
+          if [ "$rc" = 2 ]; then
+            echo "nobank=1" >> "$GITHUB_OUTPUT"   # банк пуст: слот пропущен, брак не публикуем
+            echo "::warning::банк пуст/несовместим — слот пропущен"
+            exit 0
+          fi
+          exit "$rc"
 
       # 16.10: на канал ушла «каша» (LRA 1.4), проверялись только тишина/LUFS. Критик: эталон жанра + audiobox CE.
       # FAIL = выпуск не публикуется (TG alert ниже); следующий слот жанра генерирует заново.
       - name: 03c quality gate (критик, FAIL = не публиковать)
         id: qg
-        if: steps.guard.outputs.published != '1'
+        if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1'
         working-directory: pipeline
         run: ../.venv/bin/python quality_gate.py
 
       # t_e39908b1 (спец t_b4006a6e п.3): chroma-схожесть с треками, опубликованными за 14 дней (.state/antirepeat).
       # FAIL -> регенерация трека (03 music + 03c) внутри шага; повтор и после неё -> exit 1, не публиковать.
-      - name: 03d anti-repeat (chroma vs 14 дней, FAIL = регенерация)
+      - name: 03d anti-repeat (chroma vs 14 дней, FAIL = другая выборка банка)
         id: antirepeat
-        if: steps.guard.outputs.published != '1'
+        if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1'
         working-directory: pipeline
+        env:
+          ACF_BANK: "1"  # t_ba72c7aa: повтор = другая выборка из банка, не генерация
         run: ../.venv/bin/python antirepeat.py
 
       - name: 04 assemble (ffmpeg)
         id: assemble
-        if: steps.guard.outputs.published != '1'
+        if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1'
         working-directory: pipeline
         run: ../.venv/bin/python 04_assemble.py
 
@@ -207,13 +192,13 @@ jobs:
       # Гейт по звуку финального video.mp4 (то, что заливается). FAIL = не публиковать.
       - name: 04b quality gate final (звук video.mp4, FAIL = не публиковать)
         id: qgfinal
-        if: steps.guard.outputs.published != '1'
+        if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1'
         working-directory: pipeline
         run: ../.venv/bin/python quality_gate.py --final
 
       - name: 05 publish (skips if no YouTube token secret)
         id: publish
-        if: steps.guard.outputs.published != '1'
+        if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1'
         working-directory: pipeline
         env:
           YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
@@ -239,14 +224,14 @@ jobs:
 
       - name: 05b anti-repeat record (отпечаток опубликованного трека в .state)
         id: arrecord
-        if: steps.guard.outputs.published != '1'
+        if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1'
         continue-on-error: true  # видео уже на канале; потеря отпечатка не валит выпуск  # root-cause: t_f95a06da
         working-directory: pipeline
         run: ../.venv/bin/python antirepeat.py --record
 
       - name: 07 shorts (2 x 9:16 из long-form, ссылка на него)
         id: shorts
-        if: steps.guard.outputs.published != '1'
+        if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1'
         working-directory: pipeline
         run: |
           if [ -f ../.state/youtube_token.json ]; then
@@ -265,7 +250,7 @@ jobs:
 
       - name: TG report (ролик + шортсы)
         id: report
-        if: steps.guard.outputs.published != '1'
+        if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1'
         working-directory: pipeline
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
@@ -282,6 +267,7 @@ jobs:
           git add -f .state/*_idx.txt 2>/dev/null || true  # mood + scene + fallback ротации
           git add -f .state/titles.json 2>/dev/null || true  # M1: заголовки 14 дней против дублей сцен
           git add -f .state/antirepeat 2>/dev/null || true  # отпечатки анти-повтора (t_e39908b1), удаления старше 14 дней тоже
+          git add -f .state/bank_used.jsonl 2>/dev/null || true  # t_ba72c7aa: использованные сегменты банка (анти-повтор 14д)
           git diff --cached --quiet || git commit -m "chore: advance mood rotation [skip ci]"
           git pull --rebase -q || true
           git push
