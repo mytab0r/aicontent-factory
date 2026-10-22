@@ -181,9 +181,10 @@ def main():
     run_dir = Path(tempfile.mkdtemp(prefix="bank_"))
     seed = random.randrange(2**31)
     def scores(paths):
-        # критик чистит общий /app/output/qg в ace-step: при выпуске он чужой -> не запускаем
+        # критик чистит общий /app/output/qg в ace-step: при выпуске он чужой -> не запускаем.
+        # t_ba72c7aa (run 39800222017): гонка с очередью выпуска = чистый выход, не падение прогона.
         if release_busy():
-            raise RuntimeError("выпуск стартовал — критик банка не запускаю")
+            raise BankYield("выпуск стартовал — критик банка не запускаю")
         return ce_windows_batch(paths)
 
     gen = music.gated_gen(music.mix_raw(run_dir, prompt, seed, ref, genre),
