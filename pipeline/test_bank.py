@@ -85,3 +85,25 @@ if __name__ == "__main__":
     test_workflow_never_restarts_gpu_and_no_artifacts()
     test_ace_hang_without_release_stops_clean()
     print("ok test_bank")
+
+
+def test_critic_on_release_start_is_clean_yield():
+    """run 39800222017: выпуск стартовал -> scores() кинул RuntimeError, повторный busy() в fill
+    вернул False (гонка статусов API) -> весь банк упал. Старт выпуска = BankYield, без гонки."""
+    def busy():
+        return True
+    try:
+        bank.guarded_scores(["a.mp3"], busy=busy, batch=lambda p: [7.0])
+    except bank.BankYield:
+        pass
+    else:
+        raise AssertionError("ожидался BankYield")
+    assert bank.guarded_scores(["a"], busy=lambda: False, batch=lambda p: [7.0]) == [7.0]
+
+
+def test_daily_state_commit_survives_parallel_matrix_conflict():
+    """run 39800343057: две джобы матрицы правили .state/titles.json -> rebase CONFLICT -> выпуск failure.
+    Push состояния = повтор с -X theirs (своя версия файла поверх), не падение."""
+    dv = (Path(__file__).resolve().parent.parent / ".github/workflows/daily-video.yml").read_text(encoding="utf-8")
+    step = dv.split("name: commit mood rotation state", 1)[1].split("- name:", 1)[0]
+    assert "pull --rebase -X theirs" in step and "|| true\n          git push\n" not in step, step
