@@ -186,7 +186,7 @@ def idea(models=None) -> Path:
     for round_ in range(3):  # роутер/модели бывают недоступны короткими окнами: 3 круга по списку
         for m in models:  # битый JSON, обрыв SSE и короткий план - одна и та же попытка: следующая модель
             try:
-                s = validate_script(parse_json(wf.router_stream(m, prompt, 8000)))
+                s = validate_script(parse_json(wf.router_stream(m, prompt, 12000)))
                 break
             except Exception as e:  # router: HTTP/525/429, IncompleteRead, битый JSON, ValueError валидации
                 print(f"model {m}: {type(e).__name__}: {e}"[:300])
