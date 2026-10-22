@@ -188,8 +188,8 @@ def idea(models=None) -> Path:
             try:
                 s = parse_json(wf.router_stream(m, prompt, 8000))
                 break
-            except (RuntimeError, ValueError) as e:
-                print(f"model {m}: {e}"[:300])
+            except Exception as e:  # router: HTTP/525/429, обрыв SSE (IncompleteRead), битый JSON
+                print(f"model {m}: {type(e).__name__}: {e}"[:300])
                 err = e
         if s is not None:
             break
@@ -206,8 +206,8 @@ def idea(models=None) -> Path:
                 try:
                     s = parse_json(wf.router_stream(m, prompt, 8000))
                     break
-                except (RuntimeError, ValueError) as e:
-                    print(f"model {m}: {e}"[:300])
+                except Exception as e:
+                    print(f"model {m}: {type(e).__name__}: {e}"[:300])
             if s is None:
                 raise SystemExit("нет валидного ответа LLM")
     if s is None:

@@ -168,3 +168,41 @@ if __name__ == "__main__":
             fn()
             print("ok", name)
     print("all listshow tests passed")
+
+
+def test_idea_survives_router_exception_and_retries(monkeypatch=None):
+    """IncompleteRead/любое сетевое исключение от одной модели не валит idea: круг повторов."""
+    calls = {"n": 0}
+
+    def flaky(m, prompt, mt, timeout=600):
+        calls["n"] += 1
+        if calls["n"] <= 3:  # первые 3 вызова - сеть падает
+            import http.client
+            raise http.client.IncompleteRead(b"")
+        return wf_sse()
+
+    def wf_sse():
+        import json as _json
+        payload = _json.dumps({"title": "Things That Will Be Banned In Your Lifetime",
+                               "description": "d", "tags": ["t"],
+                               "items": [{"title": f"P{k}", "text": " ".join(["fact"] * 110) + ".",
+                                          "place": ["city", "nature", "space"][k % 3]} for k in range(13)]})
+        import whatif_channel as _wf
+        return _wf.sse_content([f'data: {{"choices":[{{"delta":{{"content":{_json.dumps(payload)}}}}}]}}'.encode(),
+                                b"data: [DONE]"])
+
+    import whatif_channel as _wf
+    orig = _wf.router_stream
+    _wf.router_stream = flaky
+    import tempfile
+    from pathlib import Path as _P
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            old_state = ls.STATE
+            # подменяем STATE на временную папку, чтобы не трогать репо-состояние
+            ls.STATE = _P(td)
+            out = ls.idea(models=["m1"])
+        assert out.exists()
+    finally:
+        _wf.router_stream = orig
+        ls.STATE = old_state
