@@ -13,9 +13,8 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/login-action@v3
+      - uses: mytab0r/hermes-scripts/.github/actions/ghcr-login@main  # t_0deb6ad8: без daemon login
         with:
-          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
       - uses: docker/build-push-action@v6

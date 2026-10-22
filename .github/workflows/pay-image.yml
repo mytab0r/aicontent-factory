@@ -19,14 +19,15 @@ jobs:
       # root-cause t_a41372f5: docker-container драйвер = пустой BuildKit на каждый прогон, база node:22-alpine
       # каждый раз заново с CloudFront Docker Hub (обрывы -> httpReadSeeker unexpected EOF). docker-драйвер
       # берёт слои из store демона ПК, где ci/pay-image-smoke уже собрал этот Dockerfile.
+      # root-cause t_0deb6ad8: docker/login-action = daemon /auth -> 15s пинг ghcr.io/v2/ -> context deadline exceeded.
+      # Креды в config.json клиента; до setup-buildx (builder живёт в $DOCKER_CONFIG).
+      - uses: mytab0r/hermes-scripts/.github/actions/ghcr-login@main  # t_0deb6ad8: без daemon login
+        with:
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/setup-buildx-action@v3
         with:
           driver: docker
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/build-push-action@v6
         with:
           context: .

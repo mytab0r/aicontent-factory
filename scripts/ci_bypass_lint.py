@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """CI-линт обходов гейтов («Повтор = класс», ai-dev-engineering #25).
-FAIL на: setup-buildx-action без `driver: docker` (t_a41372f5) | continue-on-error: true | `|| true`/`|| :` после теста/гейта/upload/push | actions/upload-artifact.
+FAIL на: docker/login-action и `docker login` (daemon /auth, t_0deb6ad8) | setup-buildx-action без `driver: docker` (t_a41372f5) | continue-on-error: true | `|| true`/`|| :` после теста/гейта/upload/push | actions/upload-artifact.
 Разрешение: `# root-cause: t_<id>` (первые два) или `# artifact-ok: <причина>` (upload) в той же строке
 или в непрерывном блоке комментариев прямо над строкой.
 Usage: python3 ci_bypass_lint.py [ROOT]"""
@@ -15,6 +15,9 @@ BUILDX = re.compile(r"uses:\s*docker/setup-buildx-action@")
 DRIVER_DOCKER = re.compile(r"^\s*driver:\s*['\"]?docker['\"]?\s*(#.*)?$")
 UPLOAD = re.compile(r"uses:\s*actions/upload-artifact@")
 ROOT_CAUSE = re.compile(r"#\s*root-cause:\s*t_[0-9a-f]{6,}")
+# t_0deb6ad8: логин через демон = пинг ghcr.io/v2/ с жёстким 15s таймаутом -> context deadline exceeded.
+# Замена: mytab0r/hermes-scripts/.github/actions/ghcr-login@main (креды в config.json клиента).
+DAEMON_LOGIN = re.compile(r"uses:\s*docker/login-action@|\bdocker\s+login\b")
 ARTIFACT_OK = re.compile(r"#\s*artifact-ok:\s*\S")
 
 
@@ -24,6 +27,8 @@ def _rules(line):
     m = OR_TRUE.search(line)
     if m and GATE.search(line[:m.start()]):
         yield "or-true", ROOT_CAUSE
+    if DAEMON_LOGIN.search(line) and not line.lstrip().startswith("#"):
+        yield "daemon-login", ROOT_CAUSE
     if UPLOAD.search(line):
         yield "upload-artifact", ARTIFACT_OK
 

@@ -9,5 +9,9 @@ assert lint_text("      - uses: docker/setup-buildx-action@v3\n      - uses: x")
 assert lint_text("      - uses: docker/setup-buildx-action@v3\n        with:\n          driver: docker\n") == []
 assert lint_text("      - uses: docker/setup-buildx-action@v3\n        with:\n          driver: docker-container\n") == [(1, "buildx-driver")]
 assert lint_text("      # root-cause: t_a41372f5\n      - uses: docker/setup-buildx-action@v3\n") == []
+# t_0deb6ad8: daemon login (docker/login-action, `docker login`) = 15s пинг ghcr.io/v2/ -> context deadline exceeded
+assert lint_text("      - uses: docker/login-action@v3") == [(1, "daemon-login")]
+assert lint_text("        run: docker login ghcr.io -u x --password-stdin") == [(1, "daemon-login")]
+assert lint_text("      - uses: mytab0r/hermes-scripts/.github/actions/ghcr-login@main") == []
 assert main(str(ROOT)) == 0
 print("ok")
