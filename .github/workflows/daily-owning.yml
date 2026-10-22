@@ -58,6 +58,11 @@ jobs:
         if: steps.guard.outputs.go == '1'
         working-directory: pipeline
         run: ../.venv/bin/python spokes.py
+      # P19: гейт до заливки (целостность, чёрный кадр, формат шортса, обложка). FAIL = не публиковать.
+      - name: quality gate video (FAIL = не публиковать)
+        if: steps.guard.outputs.go == '1'
+        working-directory: pipeline
+        run: ../.venv/bin/python quality_gate.py --video
       - name: 05 publish (только после sample gate)
         if: steps.guard.outputs.go == '1' && env.PUBLISH == '1'
         working-directory: pipeline

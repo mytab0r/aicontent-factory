@@ -55,6 +55,11 @@ jobs:
         if: steps.flag.outputs.go == '1'
         working-directory: pipeline
         run: ../.venv/bin/python whatif_channel.py render
+      # P19: гейт до заливки (целостность, чёрный кадр, формат шортса, обложка). FAIL = не публиковать.
+      - name: quality gate video (FAIL = не публиковать)
+        if: steps.flag.outputs.go == '1'
+        working-directory: pipeline
+        run: ../.venv/bin/python quality_gate.py --video
       - name: token
         if: steps.flag.outputs.go == '1'
         env:

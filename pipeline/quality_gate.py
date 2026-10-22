@@ -5,7 +5,7 @@
    Тишина/LUFS/TP «кашу» не ловят: 16.10 на канал ушло LRA 1.4 при эталоне 10.9.
 2) Модель-критик Meta audiobox-aesthetics, CE (предсказание «понравится ли»), в контейнере ace-step.
    Замеры: рефы ниши CE 7.07-7.91, брак base-модели 2.1-3.6.
-Запуск: quality_gate.py [track.mp3 genre] [--no-ce] [--final] [--seams=t1,t2]; без аргументов = последний runs/*/track.mp3.
+Запуск: quality_gate.py [track.mp3 genre] [--no-ce] [--final] [--seams=t1,t2] | --video [run_dir] (P19); без аргументов = последний runs/*/track.mp3.
 --final (шаг 04b) = целостность mp4 (V2/V3: потоки, длительность, синхрон) + тот же объективный гейт и CE по окнам/стыкам ФИНАЛЬНОГО video.mp4 (AAC после 04 assemble):
    17.10 YouTube-копия p-kkEmLGviU дала TP +1.3..+1.9 dBTP — перекодирование добавляет пики, мерить надо то, что уходит.
 """
@@ -450,6 +450,27 @@ def tuning_why(f):
             f"(окно {dev.index(max(dev)) * TUNE_WIN:.0f} с против {dev.index(min(dev)) * TUNE_WIN:.0f} с)"] if spread > TUNE_MAX else []
 
 
+
+def video_why(d):
+    """P19: гейт речевых видео-форматов (listshow/whatif: render.json long+shorts; owning: video.mp4 = Short) до заливки.
+    Целостность/синхрон (V2/V3), чёрный кадр (V1), формат шортса (V3), обложка (V9). Музыкальные эталоны тут не применимы."""
+    d = str(d)
+    rj = os.path.join(d, "render.json")
+    if os.path.exists(rj):
+        meta = json.load(open(rj, encoding="utf-8"))
+        longs, shorts = [x for x in [meta.get("long")] if x], list(meta.get("shorts") or [])
+    else:
+        longs, shorts = [], [os.path.join(d, "video.mp4")]
+    why = []
+    for f in longs + shorts:
+        if not os.path.exists(str(f)):
+            why.append(f"нет файла {os.path.basename(str(f))}")
+            continue
+        tag = os.path.basename(str(f))
+        why += [f"{tag}: {w}" for w in integrity_why(f) + black_why(f) + (short_why(f) if f in shorts else [])]
+    return why + cover_why(os.path.join(d, "cover.png"))
+
+
 def target(d, final):
     """--final: финальный файл после 04 assemble (то, что заливается), иначе трек после 03."""
     return d / ("video.mp4" if final else "track.mp3")
@@ -457,6 +478,12 @@ def target(d, final):
 
 def main(argv):
     args = [a for a in argv[1:] if not a.startswith("--")]
+    if "--video" in argv:  # P19: речевые форматы (listshow/whatif/owning) — тот же стоп до заливки
+        from common import latest_run_dir
+        why = video_why(args[0] if args else latest_run_dir())
+        for w in why:
+            print(f"::error::quality gate: {w}")
+        return 1 if why else 0
     expect, seams = None, []
     if args:
         f, genre = args[0], args[1]
