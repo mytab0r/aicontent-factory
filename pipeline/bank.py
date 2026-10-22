@@ -84,6 +84,15 @@ def release_busy(repo=None, token=None, sleep=time.sleep, tries=3) -> bool:
     return False
 
 
+def guarded_scores(paths, busy, batch):
+    """Критик чистит общий /app/output/qg в ace-step: при выпуске он чужой -> не запускаем.
+    Старт выпуска = чистый выход (BankYield), не RuntimeError: повторный busy() в fill мог
+    вернуть False из-за гонки статусов API и уронить весь банк (run 39800222017)."""
+    if busy():
+        raise BankYield("выпуск стартовал — критик банка не запускаю")
+    return batch(paths)
+
+
 def stats_record(genre: str, prompt: str, seed: int, ok: bool, why: str = "", docker_sh=None) -> None:
     """t_ba72c7aa R4: статистика отказов по промптам/сидам в stats.jsonl рядом с банком."""
     import json as _json
@@ -181,10 +190,7 @@ def main():
     run_dir = Path(tempfile.mkdtemp(prefix="bank_"))
     seed = random.randrange(2**31)
     def scores(paths):
-        # критик чистит общий /app/output/qg в ace-step: при выпуске он чужой -> не запускаем
-        if release_busy():
-            raise RuntimeError("выпуск стартовал — критик банка не запускаю")
-        return ce_windows_batch(paths)
+        return guarded_scores(paths, release_busy, ce_windows_batch)
 
     gen = music.gated_gen(music.mix_raw(run_dir, prompt, seed, ref, genre),
                           scores, lambda p: objective(p, genre)[0], attempts=3, extra=2)

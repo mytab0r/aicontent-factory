@@ -269,8 +269,10 @@ jobs:
           git add -f .state/antirepeat 2>/dev/null || true  # отпечатки анти-повтора (t_e39908b1), удаления старше 14 дней тоже
           git add -f .state/bank_used.jsonl 2>/dev/null || true  # t_ba72c7aa: использованные сегменты банка (анти-повтор 14д)
           git diff --cached --quiet || git commit -m "chore: advance mood rotation [skip ci]"
-          git pull --rebase -q || true
-          git push
+          # параллельные джобы матрицы правят те же .state-файлы (run 39800343057: CONFLICT titles.json):
+          # своя версия поверх (-X theirs при rebase = наш коммит), 3 попытки, без маскировки ошибки
+          for i in 1 2 3; do git pull --rebase -X theirs -q && git push && break; git rebase --abort 2>/dev/null || true; sleep $((i*5)); done
+          git status -sb | head -1 | grep -qv ahead
 
       - name: TG alert on failure (без секретов TG_* — только лог)
         if: failure()
