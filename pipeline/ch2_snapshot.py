@@ -53,7 +53,7 @@ def v2_impressions(at, ids, start) -> dict:
         return {r[0]: (int(r[1]), float(r[2]) * (100 if float(r[2]) <= 1 else 1))
                 for r in pa.api(pa.YTA + q, at).get("rows") or []}
     except Exception as e:  # noqa: BLE001
-        print("v2 impressions unavailable:", pa._http_err(e) if hasattr(pa, "_http_err") else e, file=sys.stderr)
+        print("v2 impressions unavailable:", pa._http_err(e) if hasattr(e, "code") else repr(e), file=sys.stderr)
         return {}
 
 
