@@ -31,8 +31,21 @@ RUN git clone https://github.com/ace-step/ACE-Step.git /tmp/ace \
 # ponytail: gradio пин — код ACE-Step (фев 2026) несовместим с gradio 6.x
 # (gr.Audio(show_download_button=...) упал в ACE-Step/acestep/ui/components.py);
 # пин 5.x, поднять при обновлении апстрима.
-RUN pip install --no-cache-dir torch torchvision torchaudio \
-      --index-url https://download.pytorch.org/whl/cu128 \
+# root-cause: t_43dc0241 -- 820MB torch wheel качается pip'ом за один HTTP-ответ;
+# транспорт-обрыв egress ПК (то же семейство, что t_0a4cae59 к ghcr/CloudFront) даёт
+# "Read timed out" и весь RUN падает без докачки. Механика класса: качаем wheels
+# отдельно curl'ом с Range-докачкой (4 попытки, -C -), затем pip ставит из локальных
+# файлов -- сеть больше не входит в слой.
+RUN mkdir -p /tmp/wheels \
+ && for u in \
+      "https://download.pytorch.org/whl/cu128/torch-2.11.0%2Bcu128-cp310-cp310-manylinux_2_28_x86_64.whl" \
+      "https://download.pytorch.org/whl/cu128/torchvision-0.26.0%2Bcu128-cp310-cp310-manylinux_2_28_x86_64.whl" \
+      "https://download.pytorch.org/whl/cu128/torchaudio-2.11.0%2Bcu128-cp310-cp310-manylinux_2_28_x86_64.whl" \
+    ; do f="/tmp/wheels/$(basename "$u" | sed 's/%2B/+/')"; \
+      for n in 1 2 3 4; do curl -fSL --retry 5 --retry-delay 5 --retry-all-errors -C - -o "$f" "$u" && break; [ $n = 4 ] && exit 1; sleep $((n*10)); done; \
+    done \
+ && pip install --no-cache-dir /tmp/wheels/*.whl \
+ && rm -rf /tmp/wheels \
  && pip install --no-cache-dir "gradio==5.23.0" \
  && pip install --no-cache-dir torchcodec --index-url https://download.pytorch.org/whl/cu128 \
  && pip install --no-cache-dir hf_transfer \
