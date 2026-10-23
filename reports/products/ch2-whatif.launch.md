@@ -1,16 +1,16 @@
 # ch2-whatif — launch gate (23.10.2026)
 
-Продукт: ch2 — стикмен list-формат на канале @OwningItMath (UC82JHx5Cl_kuxND-qHHwzTg; второго Google-аккаунта нет, ch2 живёт плейлистами «Fascinating Lists» и «What If...» на канале ch1). Воркфлоу daily-listshow.yml (long 10 мин + 3 Shorts) и daily-whatif.yml (3 Shorts + long по графику). До GO публикация заблокирована гейтом `scripts/launch_gate.py ch2-whatif` в обоих воркфлоу (шаг перед token/publish, NO-GO = exit 1 без upload).
+Продукт: ch2 — стикмен list-формат на канале @OwningItMath (UC82JHx5Cl_kuxND-qHHwzTg; второго Google-аккаунта нет, ch2 живёт плейлистами «Fascinating Lists» и «What If...» на канале ch1). Воркфлоу daily-listshow.yml (long 10 мин + 3 Shorts) и daily-whatif.yml (3 Shorts + long по графику). До GO публикация заблокирована гейтом `scripts/launch_gate.py ch2-whatif` в обоих воркфлоу (шаг перед token/publish: NO-GO = token и publish пропускаются, токен не пишется, upload нет; рендер/QA идут).
 
 ## Счётчик открытий по получателю
 Получатель = YouTube-зритель US. Воронка и источник каждой цифры:
-1. **Показы превью (impressions)** — YouTube Reporting API, bulk-отчёт `channel_reach_basic_a1`, поле `video_thumbnail_impressions` (per video, per day). Скрипт `pipeline/ch2_snapshot.py` ( reach-джоба идемпотентна, CSV последнего дня).
+1. **Показы превью (impressions)** — только YouTube Reporting API, bulk-отчёт `channel_reach_basic_a1`, поле `video_thumbnail_impressions` (per video, per day); Analytics v2 targeted query на `videoThumbnailImpressions` отвечает 400 "query not supported" (проверено 23.10). Требует scope `yt-analytics.readonly` — добавлен в `youtube_oauth.SCOPES`, токен нужно перевыпустить. Скрипт `pipeline/ch2_snapshot.py` (reach-джоба идемпотентна, CSV последнего дня).
 2. **CTR показов** — тот же отчёт, `video_thumbnail_impressions_ctr` (суточный срез).
 3. **Просмотр (view)** — YouTube Data API `videos`/Analytics v2 `views` по видео (увидено в снапшоте и yt-dlp как прокси-проверка).
 4. **Удержание 30 с / 50%** — Analytics v2 `averageViewPercentage` per video (метрика `metric()` в 08_post_analytics.py, переиспользована); порог «в разбор»: long < 30% avg, Short < 50% avg. Отдельной метрики «удержание на 30-й секунде» через API нет — прокси: среднее удержание + ранний отвал по кривой недоступны; принято как ограничение замера (в снапшоте фиксируется avg%).
 5. **Подписка** — Analytics v2 `subscribersGained` per video (`metrics=subscribersGained, dimensions=video`).
 6. **Источник трафика** — Analytics v2 `dimensions=insightTrafficSourceType` per video (SEARCH/RELATED_VIDEO/BROWSE/SHORTS_FEED...), суммарно views по источнику.
-Снапшот пишется ежедневно в `reports/ch2_snapshot/<date>.md` воркфлоу `ch2-snapshot.yml` (ручной dispatch до включения cron).
+Снапшот: воркфлоу `ch2-snapshot.yml`, cron ежедневно 12:30 UTC + dispatch; вывод в лог шага и `reports/ch2_snapshot/<date>.md`.
 
 ## Факты за последние дни (срез 22.10 15:16 UTC, yt-dlp; API-снапшот ниже)
 - «Things That Will Be Banned In Your Lifetime» (P6Y21LKsDHU, list, 9.4 мин): 0 просмотров за ~12 ч.
@@ -50,7 +50,7 @@
 8. **Дубли тем**: 15 тем TOPICS listshow ротируются; повтор одной темы чаще раза в 15 дней = усталость аудитории. Контроль: .state/listshow_idx.txt коммитится CI, проверка test_listshow.
 9. **Авторские права на факты/картинки**: текст пунктов свой, изображения рисует код (стикмен, без чужих кадров), музыка нет (ролики без музыки, TTS). Источники фактов: общеизвестные факты без цитирования длинных фрагментов. Остаточный риск: совпадение формулировок с референсом — текст генерируется своей формулировкой.
 10. **Часовой пояс публикации**: 16:30 UTC = 12:30 ET — US день, окно корректное; 18:00 UTC whatif = 14:00 ET. Проверка: cron-ы воркфлоу.
-11. **Shorts без ссылки на long**: Shorts listshow сейчас без «part N»-ссылки на long в описании (ссылка есть в описании через descriptions(s, done.get("long"))). Проверка: описания Shorts содержат URL long после публикации long.
+11. **Shorts без ссылки на long**: описание Shorts строится `descriptions(s, done.get("long"))` — «Full video: <url>» есть, только если long вышел раньше в том же прогоне; при сбое long Shorts уйдут без ссылки. Контроль: `listshow_channel.py verify` (сухой прогон) падает, если в описании Short нет URL long.
 12. **Неверный плейлист**: ролик уходит в «Fascinating Lists» (listshow) или «What If...» (whatif) по `_playlist()`; вчерашний инцидент: list-ролики вышли без гейта в общий поток — плейлист верный, вопрос был не в нём.
 
 ## Симуляция (5 персон US-зрителя)
@@ -73,7 +73,7 @@
 Выборка: ролики с **impressions ≥ 1000** (reach-отчёт, сумма по видео за 7 дней; impressions < 1000 и «н/д» = дефект замера, не сигнал — такие ролики в выборку не входят). Для 5 первых роликов, набравших ≥1000 показов: CTR < 2% при показах ≥ 1000 = заголовок/обложка убиты; CTR ≥ 2%, но avg retention < 20% (long) / < 35% (Shorts) = контент не удерживает; подписки < 1 на 1000 показов при живых двух предыдущих = канал не растёт. Любое из условий на всей выборке ≥ 5 роликов → ch2 в текущем виде убит: воркфлоу listshow/whatif возвращаются под флаг vars.LIST2D/CODE2D=0, карточка blocked с разбором. Ноль показов при пустом reach-отчёте = ДЕФЕКТ ЗАМЕРА, не результат: чинить замер, выборку не закрывать.
 
 ## Пост-GO
-1. `ch2-snapshot.yml` переводится на cron ежедневно 12:00 UTC (правка one line).
+1. `ch2-snapshot.yml` уже на cron 12:30 UTC; после перевыпуска токена в нём появятся показы/CTR.
 2. daily-listshow/daily-whatif публикуют автоматически (гейт зелёный ≤ 72 ч, иначе NO-GO стоп).
 3. Ежедневный срез impressions/CTR/удержания/трафика в reports/ch2_snapshot/ + сводка в TG-топик.
 
