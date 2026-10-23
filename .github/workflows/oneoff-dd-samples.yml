@@ -28,7 +28,7 @@ jobs:
           name: dd-samples-${{ github.run_id }}
           path: samples_candidates/dd_*.mp3
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 1  # t_9d452170: доставка вне артефактов (TG/git); квота storage 500MB
       - name: report
         if: always()
         run: |

@@ -40,6 +40,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          retention-days: 1  # t_9d452170: доставка вне артефактов (TG/git); квота storage 500MB
           clean: true  # self-hosted: wipe previous runs/ so disk doesn't grow
 
       # schedule опаздывает до 18:41 UTC -> второй long-form за сутки (12.10). Ручной dispatch = намеренный.
@@ -125,5 +126,6 @@ jobs:
           ffmpeg -hide_banner -i "$d/track.mp3" -af silencedetect=n=-50dB:d=1,ebur128=peak=true -f null - 2>&1 | grep -E 'silence_|I:|Peak:' | tail -12
       - uses: actions/upload-artifact@v4  # artifact-ok: логи прогона; доставка результата вне артефактов
         with:
+          retention-days: 1  # t_9d452170: доставка вне артефактов (TG/git); квота storage 500MB
           name: mix-check
           path: out/

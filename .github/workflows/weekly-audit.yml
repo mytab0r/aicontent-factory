@@ -36,4 +36,4 @@ jobs:
         with:
           name: audit-log
           path: pipeline/audit_log.txt
-          retention-days: 14
+          retention-days: 1  # t_9d452170: доставка вне артефактов (TG/git); квота storage 500MB
