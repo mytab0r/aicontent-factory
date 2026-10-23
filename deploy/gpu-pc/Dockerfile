@@ -5,8 +5,13 @@
 # из cu128-индекса ДО общих requirements.
 FROM nvidia/cuda:12.8.1-runtime-ubuntu22.04
 
+# root-cause: t_43dc0241 -- pip по умолчанию рвёт загрузку при паузе >15 c
+# (Read timed out на files.pythonhosted.org / download-r2.pytorch.org через
+# рваный egress ПК). Окно 300 c + retries снижают класс для ВСЕХ pip-шагов.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    PIP_DEFAULT_TIMEOUT=300 \
+    PIP_RETRIES=10 \
     DEBIAN_FRONTEND=noninteractive \
     HF_HUB_ENABLE_HF_TRANSFER=1 \
     ACE_OUTPUT_DIR=/app/outputs
