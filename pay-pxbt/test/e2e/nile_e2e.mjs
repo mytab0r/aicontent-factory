@@ -170,7 +170,7 @@ assert.ok(tx.transaction && tx.result?.result !== false, 'trigger: ' + JSON.stri
 const raw = tx.transaction;
 const hash = keccak256(Buffer.from(raw.raw_data_hex, 'hex'));
 const { r, s } = ecdsaSign(privBig, hash);
-const der = (n) => { const h = n.toString(16).padStart(64, '0'); let b = Buffer.from(h, 'hex'); if (b[0] & 0x80) b = Buffer.concat([Buffer.from([0]), b]); return b; };
+const der = (n) => { const h = n.toString(16); let b = Buffer.from(h.length % 2 ? '0' + h : h, 'hex'); while (b.length > 1 && b[0] === 0) b = b.subarray(1); if (b[0] & 0x80) b = Buffer.concat([Buffer.from([0]), b]); return b; };
 const sig = Buffer.concat([Buffer.from([0x30, der(r).length + der(s).length + 4, 2, der(r).length]), der(r), Buffer.from([2, der(s).length]), der(s)]);
 raw.signature = [sig.toString('hex')];
 const bcast = await post('/wallet/broadcasttransaction', raw);
