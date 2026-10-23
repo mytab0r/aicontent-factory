@@ -117,7 +117,9 @@ async function evmWallet() {
 async function solanaWallet() {
   const p = (window.phantom && window.phantom.solana) || window.solana;
   if (!p) throw Object.assign(new Error('кошелёк не найден'), { nowallet: true });
-  const res = await p.connect();
+  let res;
+  try { res = await p.connect(); }
+  catch (e) { throw Object.assign(new Error('подключение отклонено'), { code: (e && e.code) || 4001, connect: true }); }
   const pk = (res && res.publicKey) || p.publicKey;
   if (!pk) throw new Error('кошелёк не вернул адрес');
   return {
@@ -135,7 +137,7 @@ async function tronWallet() {
   if (!p) throw Object.assign(new Error('кошелёк не найден'), { nowallet: true });
   if (p.request) {
     const r = await p.request({ method: p === window.tron ? 'eth_requestAccounts' : 'tron_requestAccounts' });
-    if (r && (r.code === 4001 || r.code === 4000)) throw { code: 4001 };
+    if (r && (r.code === 4001 || r.code === 4000)) throw Object.assign(new Error('подключение отклонено'), { code: 4001, connect: true });
   }
   const tw = p.tronWeb || window.tronWeb;
   if (!tw || !tw.defaultAddress || !tw.defaultAddress.base58) throw new Error('TronLink заблокирован: разблокируйте кошелёк');
