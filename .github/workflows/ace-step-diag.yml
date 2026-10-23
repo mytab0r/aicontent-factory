@@ -9,30 +9,61 @@ jobs:
       - uses: actions/checkout@v4
         with: {ref: master}
       - uses: astral-sh/setup-uv@v3
-      - name: restore + instrumented take (mkdir ok)
+      - name: restore + per-segment probe
         working-directory: pipeline
         run: |
           uv venv .venv
           uv pip install --python .venv/bin/python pillow gradio_client numpy
           d=/app/output/bank/anime-lofi
           docker exec ace-step sh -c "cd $d/broken 2>/dev/null && for f in *.mp3; do s=\${f%.mp3}; mv -f \$s.mp3 \$s.json $d/; done; ls $d | grep -c mp3$"
-          mkdir -p /tmp/tk
+          uptime
+          rm -rf /tmp/tk && mkdir -p /tmp/tk
           ./.venv/bin/python - <<'PY'
-          import bank_release as br, subprocess, pathlib
-          def sh(*a):
+          import subprocess, pathlib, time, json
+          D="/app/output/bank/anime-lofi"
+          def dsh(*a):
               r=subprocess.run(["docker",*a],capture_output=True,text=True)
-              if a[0]=="cp" and r.returncode: print("CP-ERR",a[1][-50:],r.returncode,r.stderr.strip()[:200])
-              return r.stdout
-          def valid(p):
-              r=subprocess.run(["ffprobe","-v","error","-show_entries","format=duration","-of","csv=p=0",str(p)],capture_output=True,text=True,timeout=60)
-              ok=r.returncode==0 and float(r.stdout.strip() or 0)>1.0
-              if not ok: print("INVALID",p.name,pathlib.Path(p).stat().st_size,r.returncode,repr(r.stdout[:40]),r.stderr[:200])
-              return ok
-          real_sh=sh
-          def sh2(*a):
-              if a[0]=="exec" and "mv -f" in a[-1]: print("WOULD-QUARANTINE",a[-1][-100:]); return ""
-              return real_sh(*a)
-          got=br.take("anime lofi",20,"/tmp/tk",docker_sh=sh2,valid=valid)
-          print("RESULT", None if got is None else len(got))
+              return r
+          # крупнейшая группа по мета (как pick)
+          metas={}
+          listing=dsh("exec","ace-step","sh","-c",f"ls {D}").stdout.split()
+          for line in listing:
+              if not line.endswith(".mp3"): continue
+              n=line[:-4]
+              r=dsh("exec","ace-step","sh","-c",f"cat {D}/{n}.json")
+              try: metas[n]=json.loads(r.stdout)
+              except Exception: print("META-BAD",n)
+          import re
+          groups={}
+          for n,m in metas.items():
+              p=m.get("prompt") or ""
+              groups.setdefault(p,[]).append(n)
+          gp=max(groups,key=lambda k:len(groups[k]))
+          names=groups[gp]
+          print("GROUP",repr(gp[:80]),len(names))
+          bad=0
+          for n in names:
+              dst=pathlib.Path("/tmp/tk")/f"{n}.mp3"
+              w=dsh("exec","ace-step","sh","-c",f"stat -c %s {D}/{n}.mp3")
+              try: want=int(w.stdout.split()[0])
+              except Exception: want=None
+              t0=time.time()
+              cp=dsh("cp",f"ace-step:{D}/{n}.mp3",str(dst))
+              size=dst.stat().st_size if dst.exists() else -1
+              if cp.returncode:
+                  print("CP-ERR",n,"rc",cp.returncode,cp.stderr.strip()[:150]); bad+=1; continue
+              t1=time.time()
+              r=subprocess.run(["ffprobe","-v","error","-show_entries","format=duration","-of","csv=p=0",str(dst)],capture_output=True,text=True,timeout=180)
+              dt=time.time()-t1
+              ok=False
+              try: ok=r.returncode==0 and float(r.stdout.strip() or 0)>1.0
+              except Exception: pass
+              if not ok:
+                  bad+=1
+                  print("INVALID",n,"size",size,"want",want,"rc",r.returncode,"ffprobe_sec",round(dt,1),"err",r.stderr.strip()[:200])
+              else:
+                  print("OK",n,"size",size,"want",want,"cp_sec",round(t1-t0,1),"ffprobe_sec",round(dt,1))
+              dst.unlink(missing_ok=True)
+          print("SUMMARY","total",len(names),"bad",bad)
           PY
-          ls /tmp/tk | head -3
+          uptime
