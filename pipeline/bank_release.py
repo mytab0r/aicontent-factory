@@ -147,6 +147,10 @@ def take(genre: str, need: int, run_dir: str, docker_sh=None, now=None, rng=None
                 docker_sh("cp", f"ace-step:{d}/{n}.mp3", str(dst))
                 if not (dst.exists() and valid(dst)):
                     bad.add(n)
+                    # карантин в банке: иначе генератор считает битый годным и группа «полная»
+                    # навсегда (run 39905560585); broken/ = обратимо, файлы не удаляем
+                    docker_sh("exec", "ace-step", "sh", "-c",
+                              f"mkdir -p {d}/broken && mv -f {d}/{n}.mp3 {d}/{n}.json {d}/broken/")
                     try:
                         dst.unlink()
                     except OSError:
