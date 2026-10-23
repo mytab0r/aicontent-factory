@@ -6,7 +6,7 @@
  * Инвойсы в KV: invoice:<id> = { amount, dueMicro, currency, memo, pair, status, createdMs, paid: {...} }
  * Реестр tx: paidtx:<chain>:<tx> = <invoice id> — один перевод закрывает только один счёт.
  */
-import { CONFIG_KEY, enabledPairs, pairToken, defaultConfig } from '../../lib/config.js';
+import { CONFIG_KEY, PAIRS, enabledPairs, pairToken, defaultConfig } from '../../lib/config.js';
 import { findPayments } from '../../lib/paycheck.js';
 
 const INVOICE_TTL = 60 * 60 * 24 * 30; // 30 дней
