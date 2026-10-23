@@ -21,7 +21,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 BANK_ROOT = "/app/output/bank"
 CAP_FILES = 400  # ~4 МБ/сегмент -> ~1.6 ГБ, ниже лимита 15 ГБ спецификации
-MARGIN = 2  # запас сегментов в группе сверх need: битый сегмент не обнуляет выпуск (run 39905560585)
+MARGIN = 4  # запас сегментов в группе сверх need: рваный cp бьёт пачкой — всплеск из 3 битых (39924822702) не должен обнулять выпуск
 
 
 class BankYield(Exception):

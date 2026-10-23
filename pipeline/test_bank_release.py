@@ -261,6 +261,14 @@ def test_take_retries_ragged_cp_before_quarantine():
     assert mv == [], mv
 
 
+
+
+def test_margin_absorbs_ragged_cp_burst():
+    """run 39924822702: группа ровно need+2 (22 при need=20), три рваных cp подряд ->
+    свободных 19 < 20 = nobank, слот пропущен. Запас группы должен поглощать всплеск
+    рваных cp: MARGIN >= 4."""
+    assert bank.MARGIN >= 4, bank.MARGIN
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for f in fns:
