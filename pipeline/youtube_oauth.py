@@ -50,6 +50,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/youtube.readonly",
     "https://www.googleapis.com/auth/youtube",  # нужен для videos().delete()
     "https://www.googleapis.com/auth/youtube.force-ssl",  # captions.insert/list (localize.py, t_b9eb61b2)
+    "https://www.googleapis.com/auth/yt-analytics.readonly",  # Reporting API reach: показы/CTR (t_f807dc99)
 ]
 
 # OOB-флоу google deprecated — используем localhost-редирект, код
