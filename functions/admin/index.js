@@ -81,8 +81,26 @@ const nonceMsg = (nonce) => 'pay.pxbt.app: claim ' + nonce + '\\nвладеле�
 
 const wagmiCore = () => import('https://esm.sh/@wagmi/core@2');
 
-// EVM: адрес/подпись через AppKit (WalletConnect + инжектед)
+// EVM: сначала инжектед-кошелёк (EIP-6963 / window.ethereum) — десктоп-расширения и dApp-браузеры кошельков;
+// иначе AppKit (WalletConnect): модалка со списком кошельков и QR.
+function injectedEvm() {
+  return new Promise((res) => {
+    let first = null;
+    const on = (ev) => { if (!first && ev.detail && ev.detail.provider) first = ev.detail; };
+    window.addEventListener('eip6963:announceProvider', on);
+    window.dispatchEvent(new Event('eip6963:requestProvider'));
+    setTimeout(() => { window.removeEventListener('eip6963:announceProvider', on); res(first || (window.ethereum ? { provider: window.ethereum } : null)); }, 300);
+  });
+}
 async function evmWallet() {
+  const inj = await injectedEvm();
+  if (inj) {
+    const p = inj.provider;
+    const accs = await p.request({ method: 'eth_requestAccounts' });
+    const address = accs && accs[0];
+    if (!address) throw new Error('кошелёк не вернул адрес');
+    return { address, async sign(msg) { return p.request({ method: 'personal_sign', params: [hexUtf8(msg), address] }); } };
+  }
   if (window.__appkitError) throw new Error('AppKit: ' + window.__appkitError);
   const kit = window.__appkit;
   if (!kit) throw new Error('AppKit не загрузился');
