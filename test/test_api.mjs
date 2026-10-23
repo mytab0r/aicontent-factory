@@ -103,8 +103,8 @@ async function claimVerify(env, { chain, address, signature, nonce }) {
 
   let transfers = [];
   const realFetch = globalThis.fetch;
-  globalThis.fetch = async () => new Response(JSON.stringify({ token_transfers: transfers }));
-  const tr = (tx, quant) => ({ transaction_id: tx, to_address: TRON, quant: String(quant), confirmed: true, finalResult: 'SUCCESS', block_ts: Date.now(), tokenInfo: { tokenId: PAIRS['USDT-TRC20'].token, tokenDecimal: 6 } });
+  globalThis.fetch = async () => new Response(JSON.stringify({ data: transfers, success: true }));
+  const tr = (tx, quant) => ({ transaction_id: tx, to: TRON, type: 'Transfer', value: String(quant), block_timestamp: Date.now(), token_info: { address: PAIRS['USDT-TRC20'].token, decimals: 6 } });
   const check = async (id) => (await invoiceApi.onRequestPut({ env, params: { id } })).json();
   try {
     // крупный чужой перевод (147 USDT) и ровно «1.000000» без хвоста не закрывают счёт на 1
