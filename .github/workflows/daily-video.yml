@@ -119,6 +119,7 @@ jobs:
         if: steps.guard.outputs.published != '1'
         timeout-minutes: 30  # P18: зависание шага = failure -> TG alert, не 240 мин
         run: |
+          sh deploy/gpu-pc/gpu_yield.sh stop || true  # 23.10: flint держал VRAM, банк пустой
           # 17.10: после xl-probe ace-step остался healthy, но очередь висела на XL /v1/init -> 03 music timeout 1ч.
           # Рестарт сбрасывает зависшие задачи и возвращает дефолтный turbo без LoRA (concurrency group исключает чужой прогон).
           # 19.10 (t_03efb867): спайк остановил ace-step, затем сторонний docker rm удалил его ->
@@ -321,6 +322,10 @@ jobs:
           failed = failed_step(json.loads(os.environ["STEPS_JSON"]), jobs, wf)
           tg_send(f"❌ daily-video (${{ matrix.genre }}) упал на шаге: {failed}. Лог: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}")
           PY
+
+      - name: GPU tenants restore (gpu_yield)
+        if: always()
+        run: sh deploy/gpu-pc/gpu_yield.sh restore || true
 
       - name: upload run artifact
         if: steps.guard.outputs.published != '1'

@@ -39,6 +39,7 @@ jobs:
         run: sh deploy/gpu-pc/disk_gate.sh c 1
       - name: ACE-Step up (start only, wait health)
         run: |
+          sh deploy/gpu-pc/gpu_yield.sh stop || true  # 23.10: flint держал VRAM, банк пустой
           docker start ace-step >/dev/null 2>&1 || true
           for i in $(seq 1 100); do
             [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step 2>/dev/null)" = healthy ] && { echo "ace-step healthy"; exit 0; }
@@ -54,3 +55,6 @@ jobs:
       - name: fill bank
         working-directory: pipeline
         run: PATH="$PWD/../.venv/bin:$PATH" ../.venv/bin/python bank.py
+      - name: GPU tenants restore (gpu_yield)
+        if: always()
+        run: sh deploy/gpu-pc/gpu_yield.sh restore || true
