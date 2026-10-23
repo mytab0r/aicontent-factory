@@ -290,7 +290,9 @@ jobs:
           git config user.name "aicontent-factory-bot"
           git config user.email "actions@users.noreply.github.com"
           git add -f .state/*_idx.txt 2>/dev/null || true  # mood + scene + fallback ротации
-          git add -f .state/titles.json 2>/dev/null || true  # M1: заголовки 14 дней против дублей сцен
+          # P21: заголовок занимает сцену на 14 дней только если ролик реально залит (nobank/сбой = откат файла)
+          PUB_OUTCOME="${{ steps.publish.outcome }}"  # P21: исход шага публикации
+          if [ "$PUB_OUTCOME" = "success" ]; then git add -f .state/titles.json 2>/dev/null || true; else git checkout -- .state/titles.json 2>/dev/null || true; fi  # M1
           git add -f .state/antirepeat 2>/dev/null || true  # отпечатки анти-повтора (t_e39908b1), удаления старше 14 дней тоже
           git add -f .state/bank_used.jsonl 2>/dev/null || true  # t_ba72c7aa: использованные сегменты банка (анти-повтор 14д)
           git diff --cached --quiet || git commit -m "chore: advance mood rotation [skip ci]"
