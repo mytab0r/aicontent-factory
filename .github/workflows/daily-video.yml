@@ -78,6 +78,8 @@ jobs:
 
       - uses: astral-sh/setup-uv@v3
         if: steps.guard.outputs.published != '1'
+        with:
+          cache-local-path: /tmp/acf-uv-cache  # P23: кэш переживает прогон
 
       - name: install deps
         id: deps
@@ -87,7 +89,7 @@ jobs:
           command -v ffmpeg || { sudo dpkg --configure -a || true; for i in 1 2 3; do sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg && break; sleep 20; done; }
           command -v ffmpeg
           uv venv .venv
-          uv pip install --python .venv/bin/python pillow gradio_client numpy yt-dlp  # refpool.ensure_ref (21.10: FileNotFoundError yt-dlp -> fallback)
+          for i in 1 2 3; do UV_HTTP_TIMEOUT=120 uv pip install --python .venv/bin/python pillow gradio_client numpy yt-dlp && break; [ $i = 3 ] && exit 1; sleep 30; done  # refpool.ensure_ref (21.10: FileNotFoundError yt-dlp -> fallback)
 
       - name: 01 idea
         id: idea
@@ -234,9 +236,9 @@ jobs:
           if [ -n "$YOUTUBE_TOKEN_JSON" ]; then
             mkdir -p ../.state
             printf '%s' "$YOUTUBE_TOKEN_JSON" > ../.state/youtube_token.json
-            uv pip install --quiet --python ../.venv/bin/python google-api-python-client google-auth-oauthlib
+            for i in 1 2 3; do UV_HTTP_TIMEOUT=120 uv pip install --quiet --python ../.venv/bin/python google-api-python-client google-auth-oauthlib && break; [ $i = 3 ] && exit 1; sleep 30; done
             # t_d53850f6: гейт Content ID — unlisted -> ждём вердикт -> public / удаление.
-            uv pip install --quiet --python ../.venv/bin/python google-api-python-client
+            for i in 1 2 3; do UV_HTTP_TIMEOUT=120 uv pip install --quiet --python ../.venv/bin/python google-api-python-client && break; [ $i = 3 ] && exit 1; sleep 30; done
             ../.venv/bin/python 05_publish.py --claim-gate
           else
             echo "skip: секрет YOUTUBE_TOKEN_JSON не задан, публикация отложена"
@@ -257,7 +259,7 @@ jobs:
         working-directory: pipeline
         run: |
           if [ -f ../.state/youtube_token.json ]; then
-            uv pip install --quiet --python ../.venv/bin/python librosa
+            for i in 1 2 3; do UV_HTTP_TIMEOUT=120 uv pip install --quiet --python ../.venv/bin/python librosa && break; [ $i = 3 ] && exit 1; sleep 30; done
             ../.venv/bin/python 07_shorts.py
           else
             echo "skip: нет YouTube токена"
