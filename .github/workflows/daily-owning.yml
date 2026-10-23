@@ -89,6 +89,8 @@ jobs:
       - name: verify dryrun (title/privacy/длина)
         if: steps.gate.outputs.go == '1' && inputs.dryrun && env.PUBLISH == '1'
         working-directory: pipeline
+        env:
+          PRIVACY: ${{ env.PUBLISH_PRIVACY }}
         run: ../.venv/bin/python 05_publish.py --verify
       - name: commit rotation state
         if: steps.guard.outputs.go == '1' && !inputs.dryrun
