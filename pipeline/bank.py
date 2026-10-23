@@ -65,8 +65,7 @@ def fill(target, have, make, put, busy, log=print, max_iter=40, max_consecutive_
             continue
         i += 1
         fails = 0
-        if p:
-            put(p)
+        if p and put(p) is not False:
             n += 1
             log(f"банк: +1 сегмент, всего {n}/{target}")
     return n
@@ -213,6 +212,59 @@ def pin_prompt(prompt, counts, need, seed):
     return f"{prompt}, {bpm} BPM, {key}"
 
 
+
+
+def _sha_local(path) -> str:
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _sha_container(d, name, docker_sh):
+    # exec недоступен = проверить нельзя = сегмент не кладём (None)
+    try:
+        out = docker_sh("exec", "ace-step", "sh", "-c", "sha256sum " + d + "/" + name + " 2>/dev/null")
+        return out.split()[0] if out.split() else None
+    except Exception:
+        return None
+
+
+def put_verified(p, genre, name, meta, docker_sh, tries=2) -> bool:
+    """docker cp на ПК бывает рваный в ОБЕ стороны (23.10: два слота по 5 битых из группы =>
+    nobank при MARGIN 4). json+mp3 кладутся во временное имя (.part), sha256 контейнера
+    сверяется с локальным, затем атомарный mv; не сошлось после ретраев - сегмент НЕ в банк
+    (False), генератор кладёт следующий."""
+    import json as _json
+    from pathlib import Path as _P
+    d = f"{BANK_ROOT}/{slug(genre)}"
+    stem = name[:-4] if name.endswith(".mp3") else name
+    local_json = _P(p).with_name(stem + ".json")
+    local_json.write_text(_json.dumps(meta, ensure_ascii=False))
+    pairs = [(local_json, f"{stem}.json"), (_P(p), f"{stem}.mp3")]
+    try:
+        try:
+            for src, remote in pairs:
+                local_sha = _sha_local(src)
+                for _attempt in range(1, tries + 1):
+                    docker_sh("cp", str(src), f"ace-step:{d}/{remote}.part")
+                    if _sha_container(d, f"{remote}.part", docker_sh) == local_sha:
+                        break
+                else:
+                    print(f"bank: sha256 не сошёлся после {tries} cp ({remote}) - сегмент пропущен")
+                    return False
+            for _src, remote in pairs:  # mp3 последним: есть mp3 = есть проверенный json
+                docker_sh("exec", "ace-step", "mv", f"{d}/{remote}.part", f"{d}/{remote}")
+            return True
+        except Exception as e:
+            print(f"bank: put {type(e).__name__}: {e} - сегмент пропущен")
+            return False
+    finally:
+        local_json.unlink(missing_ok=True)
+
+
 def group_counts(genre, docker_sh, now=None):
     """Свободные (не использованные 14 дней) сегменты банка по группам (bpm, key)."""
     import bank_release as br
@@ -290,15 +342,12 @@ def main():
 
     def put(p):
         name = f"{int(time.time())}_{seed}_{Path(p).stem}"
-        meta = run_dir / f"{name}.json"
-        meta.write_text(json.dumps({"genre": genre, "prompt": prompt, "ref": ref, "seed": seed,
-                                    "src": Path(p).name, "ts": int(time.time())}, ensure_ascii=False))
-        _sh("docker", "cp", str(meta), f"ace-step:{d}/{name}.json")
-        # mp3 последним: есть mp3 = есть meta. cp во временное имя + mv: обрыв/отмена прогона посреди
-        # cp оставлял битый .mp3, который считался годным (run 39905560585)
-        _sh("docker", "cp", str(p), f"ace-step:{d}/{name}.mp3.part")
-        _sh("docker", "exec", "ace-step", "mv", f"{d}/{name}.mp3.part", f"{d}/{name}.mp3")
+        meta = {"genre": genre, "prompt": prompt, "ref": ref, "seed": seed,
+                "src": Path(p).name, "ts": int(time.time())}
+        # sha256 после cp (put_verified): рваный docker cp не попадает в банк (23.10)
+        ok = put_verified(p, genre, name + ".mp3", meta, _sh)
         Path(p).unlink(missing_ok=True)
+        return ok
 
     dmin = float(os.environ.get("BANK_DEADLINE_MIN", "0") or 0)
     deadline = time.monotonic() + dmin * 60 if dmin else None
