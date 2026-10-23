@@ -113,20 +113,6 @@ def test_generator_completes_largest_open_group():
     assert "choose_prompt(" in src.split("def main", 1)[1], "main() обязан выбирать промпт через choose_prompt"
 
 
-if __name__ == "__main__":
-    test_release_check_network_error_yields_not_crash()
-    test_fill_stops_at_target_and_skips_rejects()
-    test_fill_yields_to_release()
-    test_failure_during_release_is_yield_not_error()
-    test_failure_without_release_raises()
-    test_workflow_never_restarts_gpu_and_no_artifacts()
-    test_ace_hang_without_release_stops_clean()
-    test_critic_on_release_start_is_clean_yield()
-    test_daily_state_commit_survives_parallel_matrix_conflict()
-    test_generator_completes_largest_open_group()
-    print("ok test_bank")
-
-
 def test_transient_failure_without_release_is_retried():
     """run 39884870081: одноразовый сбой критика (oneMKL: Cannot load libtorch_cpu.so, 0/21)
     на 39/40 уронил многочасовой прогон. Сбой без выпуска = повтор; падаем только после
@@ -161,3 +147,18 @@ def test_persistent_failure_without_release_raises():
         return
     raise AssertionError("устойчивый сбой должен ронять прогон")
 
+
+if __name__ == "__main__":
+    test_release_check_network_error_yields_not_crash()
+    test_fill_stops_at_target_and_skips_rejects()
+    test_fill_yields_to_release()
+    test_failure_during_release_is_yield_not_error()
+    test_failure_without_release_raises()
+    test_workflow_never_restarts_gpu_and_no_artifacts()
+    test_ace_hang_without_release_stops_clean()
+    test_critic_on_release_start_is_clean_yield()
+    test_daily_state_commit_survives_parallel_matrix_conflict()
+    test_generator_completes_largest_open_group()
+    test_transient_failure_without_release_is_retried()
+    test_persistent_failure_without_release_raises()
+    print("ok test_bank")
