@@ -177,7 +177,8 @@ def test_target_grows_until_largest_group_has_margin():
     src = (Path(__file__).resolve().parent / "bank.py").read_text(encoding="utf-8").split("def main", 1)[1]
     assert "effective_target(" in src, "main() обязан пересчитывать цель через effective_target"
     assert "need + MARGIN" in src, "choose_prompt обязан добивать группу до need + MARGIN"
-    assert ".mp3.part" in src and '"mv"' in src, "put: cp во временное имя + атомарный mv (обрыв прогона = нет битого .mp3)"
+    assert ".part" in src and '"mv"' in src
+    assert "sha256" in src, "put: cp во временное имя + атомарный mv (обрыв прогона = нет битого .mp3)"
 
 
 
@@ -218,6 +219,40 @@ def test_genre_without_bpm_gets_pinned_group():
     assert bank.pin_prompt(base, counts, 24, seed=1) == base + ", 84 BPM, G major"
     # уже размеченный промпт (lofi ab_1/ab_3) не трогаем
     assert bank.pin_prompt("x, 89 BPM, F major", {}, 24, seed=1) == "x, 89 BPM, F major"
+
+
+def test_put_verifies_checksum_and_skips_torn_copy():
+    """23.10: два слота подряд по 5 битых сегментов из группы (рваный docker cp в обе стороны)
+    при MARGIN 4 => группа < 20 => nobank. put_verified сверяет sha256 контейнера с локальным;
+    не сошлось после ретраев - сегмент не в банк (False); exec лежит - тоже False."""
+    import hashlib, os, tempfile
+    import bank
+
+    with tempfile.TemporaryDirectory() as d0:
+        p = os.path.join(d0, "seg.mp3")
+        open(p, "wb").write(b"audio-bytes")
+        ok_sh = {"ans": "match"}
+        def docker_ok(*a):
+            if a[0] == "exec" and "sha256sum" in " ".join(a):
+                if ok_sh["ans"] != "match":
+                    return "deadbeef  f"
+                cmd = a[4].replace("2>/dev/null", "").strip()
+                path = cmd.split()[-1]
+                base = os.path.basename(path)[:-5] if path.endswith(".part") else os.path.basename(path)
+                src = os.path.join(d0, base) if base.endswith(".json") else p
+                return hashlib.sha256(open(src, "rb").read()).hexdigest() + "  " + path
+            return ""
+        assert bank.put_verified(p, "lofi", "x_seed.mp3", {"genre": "lofi"}, docker_ok) is True
+        ok_sh["ans"] = "mismatch"
+        assert bank.put_verified(p, "lofi", "y_seed.mp3", {"genre": "lofi"}, docker_ok) is False
+
+    def docker_exec_fails(*a):
+        raise RuntimeError("exec down")
+
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "seg.mp3")
+        open(p, "wb").write(b"audio-bytes")
+        assert bank.put_verified(p, "lofi", "z_seed.mp3", {}, docker_exec_fails) is False
 
 
 if __name__ == "__main__":

@@ -3,9 +3,17 @@ on:
   workflow_dispatch:
 jobs:
   diag:
-    runs-on: [self-hosted, pc]
+    runs-on: [self-hosted, release]
     timeout-minutes: 10
     steps:
-      - name: logs + http probe
+      - name: broken probe
         run: |
-          docker logs --since 6h ace-step 2>&1 | grep -viE 'GET /health|POST /query_result' | tail -150
+          for g in anime-lofi chill-phonk; do
+            d=/app/output/bank/$g
+            echo "== $g ok=$(docker exec ace-step sh -c "ls $d | grep -c mp3$") broken=$(docker exec ace-step sh -c "ls $d/broken 2>/dev/null | grep -c mp3$")"
+            docker exec ace-step sh -c "for f in $d/broken/*.mp3; do [ -f \"\$f\" ] || continue; s=\$(stat -c %s \"\$f\"); du=\$(ffprobe -v error -show_entries format=duration -of csv=p=0 \"\$f\" 2>&1 | head -1); echo \"\$(basename \$f) size=\$s dur=\$du\"; done"
+          done
+          f=$(docker exec ace-step sh -c "ls /app/output/bank/anime-lofi/*.mp3 | head -1")
+          for i in 1 2 3 4 5 6; do docker cp ace-step:$f /tmp/cpt.mp3 2>&1 | tail -1; echo "cp$i rc=$? size=$(stat -c %s /tmp/cpt.mp3 2>/dev/null) sha=$(sha256sum /tmp/cpt.mp3|cut -c1-12) dur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 /tmp/cpt.mp3 2>&1|head -1)"; rm -f /tmp/cpt.mp3; done
+          echo "container sha=$(docker exec ace-step sha256sum $f | cut -c1-12)"
+          echo DOCKER_HOST=$DOCKER_HOST; docker version --format '{{.Server.Version}}'
