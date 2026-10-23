@@ -30,8 +30,9 @@ jobs:
           # 404 прошлых прогонов: $GGUF не передавался в контейнер -> URL .../resolve/main/ . -e GGUF обязателен.
           docker run --rm -e GGUF -v $M:/m -w /m alpine:3.20 sh -ec '
             [ -n "$GGUF" ] || { echo "GGUF empty"; exit 1; }
+            # CDN рвёт TLS каждые ~2.3GB (~4 мин); -C - докачивает, поэтому попыток с запасом.
             apk add -q curl >/dev/null 2>&1 || true
-            i=0; while [ $i -lt 10 ]; do
+            i=0; while [ $i -lt 40 ]; do
               i=$((i+1))
               if curl -fSL -C - --retry 3 --retry-delay 20 -o flint.part "https://huggingface.co/unsloth/flint-GGUF/resolve/main/$GGUF"; then mv flint.part "$GGUF"; exit 0; fi
               echo "attempt $i failed"; sleep 20
