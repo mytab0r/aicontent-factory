@@ -180,7 +180,32 @@ def test_hung_ace_restarts_when_no_release():
     raise AssertionError("при выпуске рестарт обязан уступить")
 
 
+def test_every_release_genre_has_bank_generator():
+    """23.10: bank-fill наполнял только anime lofi (GENRE захардкожен) -> слоты chill phonk 22-23.10
+    все nobank, генератора нет вообще. Каждый жанр матрицы daily-video обязан быть в матрице bank-fill."""
+    dv = (Path(__file__).resolve().parent.parent / ".github/workflows/daily-video.yml").read_text(encoding="utf-8")
+    rel = set(re.findall(r'- genre:\s*"([^"]+)"', dv))
+    gen = set(re.findall(r'- genre:\s*"([^"]+)"', WF))
+    assert rel and rel <= gen, f"жанры без генератора банка: {rel - gen}"
+    assert "GENRE: ${{ matrix.genre }}" in WF and "max-parallel: 1" in WF
+
+
+def test_genre_without_bpm_gets_pinned_group():
+    """Промпт phonk без BPM/тональности: bpm/key шли из seed каждого сегмента -> группа (None, None)
+    смешивала темпы, переходы несовместимы. Генератор фиксирует пару в тексте промпта на прогон."""
+    base = "chill phonk, instrumental"
+    p = bank.pin_prompt(base, {}, 24, seed=5)
+    assert p.startswith(base) and re.search(r", \d{2,3} BPM, [A-G] major$", p), p
+    # открытая группа добивается, а не начинается новая
+    counts = {(84, "G major"): 7, (None, None): 30, (80, "C major"): 24}
+    assert bank.pin_prompt(base, counts, 24, seed=1) == base + ", 84 BPM, G major"
+    # уже размеченный промпт (lofi ab_1/ab_3) не трогаем
+    assert bank.pin_prompt("x, 89 BPM, F major", {}, 24, seed=1) == "x, 89 BPM, F major"
+
+
 if __name__ == "__main__":
+    test_every_release_genre_has_bank_generator()
+    test_genre_without_bpm_gets_pinned_group()
     test_hung_ace_restarts_when_no_release()
     test_release_check_network_error_yields_not_crash()
     test_fill_stops_at_target_and_skips_rejects()
