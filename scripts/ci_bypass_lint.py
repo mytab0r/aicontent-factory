@@ -17,6 +17,12 @@ DRIVER_DOCKER = re.compile(r"^\s*driver:\s*['\"]?docker['\"]?\s*(#.*)?$")
 # -> "Client.Timeout exceeded while awaiting headers". Креды писать в DOCKER_CONFIG, не логиниться демоном.
 DOCKER_LOGIN = re.compile(r"uses:\s*docker/login-action@|\bdocker\s+login\b")
 UPLOAD = re.compile(r"uses:\s*actions/upload-artifact@")
+# t_0a4cae59: push образа неретраибельным экшеном (docker/build-push-action) или `docker buildx build --push`
+# без retry-цикла ронял pay-image на разовых transport-обрывах egress ПК (EOF/timeout к ghcr).
+BUILD_PUSH_ACTION = re.compile(r"uses:\s*docker/build-push-action@")
+BUILDX_PUSH = re.compile(r"docker\s+buildx\s+build\b[^\n]*--push")
+PULL_RETRY = re.compile(r"for n in 1 2 3 4.*docker pull|docker pull.*for n in 1 2 3 4")
+PUSH_RETRY = re.compile(r"for n in 1 2 3 4")
 ROOT_CAUSE = re.compile(r"#\s*root-cause:\s*t_[0-9a-f]{6,}")
 ARTIFACT_OK = re.compile(r"#\s*artifact-ok:\s*\S")
 # t_9d452170: каждый upload обязан иметь retention-days: 1 (квота storage 500MB/account; доставка вне артефактов)
@@ -36,11 +42,19 @@ def _rules(line, lines=None, i=0):
         if not any(RETENTION_1.match(x) for x in (lines or [])[i + 1:i + 1 + UPLOAD_CTX]):
             yield "upload-retention", ROOT_CAUSE
         yield "upload-artifact", ARTIFACT_OK
+    if BUILD_PUSH_ACTION.search(line):
+        # экшен-форма не ретраится целиком: transport-обрыв ghcr = красный workflow (t_0a4cae59)
+        yield "push-no-retry", ROOT_CAUSE
 
 
 
 def lint_text(text):
     lines, out = text.splitlines(), []
+    joined = "\n".join(lines)
+    if BUILDX_PUSH.search(joined) and not PUSH_RETRY.search(joined):
+        out.append((1, "push-no-retry"))
+    if BUILDX_PUSH.search(joined) and not PULL_RETRY.search(joined):
+        out.append((1, "push-no-prepull"))
     for i, line in enumerate(lines):
         # t_a41372f5: эфемерный BuildKit (docker-container) качает базу с Docker Hub каждый прогон -> httpReadSeeker EOF
         if BUILDX.search(line) and not any(DRIVER_DOCKER.match(x) for x in lines[i + 1:i + 6]):
