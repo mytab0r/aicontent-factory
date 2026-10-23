@@ -16,6 +16,8 @@ jobs:
         run: python3 deploy/gpu-pc/test_ace_relay.py
       - name: HF ranged download regression (t_5dccab9e)
         run: python3 pipeline/test_hf_get.py
+      - name: ensure ace-step bounded-failure regression (t_14d314c2)
+        run: python3 deploy/gpu-pc/test_ensure_ace_step.py
       - name: relay blob download proof (t_5dccab9e)
         # real HF download of the blob that failed in runs 39289005487/39290291128; on demand via commit tag
         if: contains(github.event.head_commit.message, '[relay-proof]')

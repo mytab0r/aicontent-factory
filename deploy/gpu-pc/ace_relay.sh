@@ -23,12 +23,10 @@ n=0
 while read -r dg size; do
   n=$((n+1)); hex=${dg#sha256:}; f="$RELAY/blobs/sha256/$hex"
   if [ -f "$f" ] && [ "$(stat -c %s "$f")" = "$size" ] && sha256sum "$f" | grep -q "$hex"; then echo "skip $n (verified on D:)"; continue; fi
-  start=$(date +%s); waited=0
-  while ! curl -fsSI -H "Authorization: Bearer $TOK" "https://huggingface.co/datasets/$REPO/resolve/main/$hex.blob" >/dev/null 2>&1; do
-    sleep 30; waited=$((waited+30))
-    [ "$waited" -ge 10800 ] && { echo "::error::blob $hex.blob not on HF after 3h"; exit 1; }
-    echo "waiting blob $n ($hex) ${waited}s"
-  done
+  start=$(date +%s)
+  # t_14d314c2: blobs are pinned and already on HF; a missing blob is a hard error, not a 3h wait
+  curl -fsSI -m 30 -H "Authorization: Bearer $TOK" "https://huggingface.co/datasets/$REPO/resolve/main/$hex.blob" >/dev/null \
+    || { echo "::error::blob $hex.blob not reachable on HF"; exit 1; }
   # root-cause t_5dccab9e: HF CDN closes any single connection after ~205 s (runs 39289005487/39290291128:
   # "SSL_read: unexpected eof" at 1996 MiB -> "download <id> failed"). Ranged download, no retry loop.
   sh "$(dirname "$0")/hf_get.sh" "https://huggingface.co/datasets/$REPO/resolve/main/$hex.blob" "$f" -H "Authorization: Bearer $TOK" \
