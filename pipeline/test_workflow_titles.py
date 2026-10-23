@@ -12,7 +12,8 @@ def commit_step(text: str) -> str:
 def test_titles_committed_only_after_publish():
     step = commit_step(WF.read_text(encoding="utf-8"))
     line = next(l for l in step.splitlines() if "git add -f .state/titles.json" in l)
-    assert "steps.publish.outcome" in line and "success" in line, line
+    assert 'PUB_OUTCOME="${{ steps.publish.outcome }}"' in step
+    assert '"$PUB_OUTCOME" = "success"' in line, line
 
 
 def test_unpublished_title_reverted_before_rebase():
