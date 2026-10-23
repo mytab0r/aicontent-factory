@@ -105,6 +105,18 @@ def pick(entries_: list[dict], need: int, now: float, used_lines=None, rng=None)
     return best[:need]
 
 
+
+def _ffprobe_detail(path) -> str:
+    """Диагностика: почему ffprobe счёл сегмент нечитаемым (слоты 18:28/21:00/23:10
+    исключали сегменты с сошедшимся размером — причина класса не зафиксирована)."""
+    import subprocess
+    try:
+        r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                            "-of", "csv=p=0", str(path)], capture_output=True, text=True, timeout=60)
+        return f"rc={r.returncode} out={r.stdout.strip()[:80]!r} err={r.stderr.strip()[:160]!r}"
+    except Exception as e:
+        return f"{type(e).__name__}: {e}"
+
 def _valid_audio(path) -> bool:
     """Скопированный сегмент читается ffprobe и длится > 1 с (битый/недописанный mp3 = False)."""
     import subprocess
@@ -156,6 +168,9 @@ def take(genre: str, need: int, run_dir: str, docker_sh=None, now=None, rng=None
                         ok = True
                         break
                 if not ok:
+                    if dst.exists():
+                        print(f"bank: {n}: ffprobe не читает после cp (size={dst.stat().st_size}, "
+                              f"want={want}): {_ffprobe_detail(dst)}")
                     bad.add(n)
                     # карантин в банке: иначе генератор считает битый годным и группа «полная»
                     # навсегда (run 39905560585); broken/ = обратимо, файлы не удаляем
