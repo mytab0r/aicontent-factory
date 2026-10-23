@@ -5,7 +5,12 @@ name: daily owning short (S1 ch1)
 on:
   schedule:
     - cron: "0 15,21 * * *"  # 2 слота/день: US утро и вечер
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      dryrun:
+        description: "сухой прогон launch-гейта: upload private + автосверка, без гейта и без ротации (t_479b69e6)"
+        type: boolean
+        default: false
 
 concurrency:
   group: daily-owning
@@ -23,6 +28,7 @@ jobs:
       ROUTER_API_KEY: ${{ secrets.ROUTER_API_KEY }}
       CHANNEL: owning
       PUBLISH: ${{ vars.OWNING_PUBLISH }}
+      PUBLISH_PRIVACY: ${{ inputs.dryrun && 'private' || 'public' }}  # dryrun = private, публики нет даже при OWNING_PUBLISH=1
       LOCALIZE: ${{ vars.LOCALIZE }}  # '1' = ES/pt-BR localizations + субтитры (localize.py), иначе no-op
     steps:
       - uses: actions/checkout@v4
@@ -32,7 +38,16 @@ jobs:
           command -v ffmpeg || { sudo apt-get update -y && sudo apt-get install -y ffmpeg; }
           uv venv .venv
           uv pip install --python .venv/bin/python pillow edge-tts google-api-python-client google-auth-oauthlib google-auth-httplib2
+      # t_479b69e6: без GO гейта запуска ch1 — выход без upload (рендер/QA остаются, токен не пишется).
+      - name: launch gate (NO-GO = без upload)
+        id: gate
+        if: steps.guard.outputs.go == '1'
+        run: |
+          if [ "$PUBLISH_PRIVACY" = "private" ]; then echo "go=1" >> "$GITHUB_OUTPUT"; echo "dryrun: private upload, гейт не нужен"
+          elif python3 scripts/launch_gate.py us-youtube-grid; then echo "go=1" >> "$GITHUB_OUTPUT"
+          else echo "::warning::launch gate NO-GO: upload ch1 пропущен (reports/products/us-youtube-grid.launch.md)"; fi
       - name: token
+        if: steps.gate.outputs.go == '1'
         env:
           YT_CH1_TOKEN_JSON: ${{ secrets.YT_CH1_TOKEN_JSON }}
         run: |
@@ -63,12 +78,18 @@ jobs:
         if: steps.guard.outputs.go == '1'
         working-directory: pipeline
         run: ../.venv/bin/python quality_gate.py --video
-      - name: 05 publish (только после sample gate)
-        if: steps.guard.outputs.go == '1' && env.PUBLISH == '1'
+      - name: 05 publish (только после launch gate + sample gate)
+        if: steps.gate.outputs.go == '1' && env.PUBLISH == '1'
         working-directory: pipeline
+        env:
+          PRIVACY: ${{ env.PUBLISH_PRIVACY }}
         run: ../.venv/bin/python 05_publish.py
+      - name: verify dryrun (title/privacy/длина)
+        if: steps.gate.outputs.go == '1' && inputs.dryrun && env.PUBLISH == '1'
+        working-directory: pipeline
+        run: ../.venv/bin/python 05_publish.py --verify
       - name: commit rotation state
-        if: steps.guard.outputs.go == '1'
+        if: steps.guard.outputs.go == '1' && !inputs.dryrun
         run: |
           git config user.name "aicontent-factory-bot"
           git config user.email "actions@users.noreply.github.com"
