@@ -269,6 +269,44 @@ def test_margin_absorbs_ragged_cp_burst():
     рваных cp: MARGIN >= 4."""
     assert bank.MARGIN >= 4, bank.MARGIN
 
+def test_take_recovers_torn_cp_by_size_check():
+    """Аудит 21:54: банк здоров (44 OK, 0 sha-mismatch), но 18:28/21:00 take() исключал по 5
+    сегментов за слот => рваный cp-out под нагрузкой Ace-Step. Контракт: размер скопированного
+    сверяется со stat контейнера; рваный перекачивается (до 4 попыток) до ffprobe/карантина."""
+    now = time.time()
+    ents = [meta("a", 89, "F major"), meta("b", 89, "F major")]
+    names = "\n".join(e["name"] + ".mp3" for e in ents) + "\n"
+    metas = {f"/app/output/bank/anime-lofi/{e['name']}.json": json.dumps(
+        {"prompt": e["prompt"], "seed": e["seed"]}) for e in ents}
+    full = {f"/app/output/bank/anime-lofi/{e['name']}.mp3": b"PAYLOAD" for e in ents}
+    dk = FakeDocker({**full, **metas, "/app/output/bank/anime-lofi": names})
+    attempts = {"a": 0}
+
+    def flaky_cp(*a):
+        r = dk(*a)
+        if a and a[0] == "cp":
+            dst = Path(a[2])
+            if dst.stem == "a":
+                attempts["a"] += 1
+                dst.write_bytes(b"PAYLOAD" if attempts["a"] >= 3 else b"PAY")  # первые 2 cp рваные (нагрузка), 3-й полный
+            else:
+                dst.write_bytes(b"PAYLOAD")
+        return r
+
+    def docker_sh(*a):
+        if a[0] == "exec" and "stat -c %s" in " ".join(a):
+            path = a[-1].split()[-1]
+            return str(len(dk.files.get(path, b"")))
+        return flaky_cp(*a)
+
+    ok = lambda p: Path(p).stat().st_size == 7
+    with tempfile.TemporaryDirectory() as td:
+        got = bank_release.take("anime lofi", 2, td, docker_sh=docker_sh, now=now,
+                                rng=random.Random(1), valid=ok)
+        assert got is not None and {p.stem for p in got} == {"a", "b"}, got
+        assert attempts["a"] == 3, attempts  # перекачан на 3-й попытке, не закарантинен
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for f in fns:

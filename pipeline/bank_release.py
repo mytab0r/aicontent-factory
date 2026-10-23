@@ -145,9 +145,14 @@ def take(genre: str, need: int, run_dir: str, docker_sh=None, now=None, rng=None
             if n not in good:
                 dst = Path(run_dir) / f"{n}.mp3"
                 ok = False
-                for attempt in (1, 2):  # cp из контейнера бывает рваный (битые имена не
-                    docker_sh("cp", f"ace-step:{d}/{n}.mp3", str(dst))  # повторяются между прогонами) — одна повторная попытка до карантина
-                    if dst.exists() and valid(dst):
+                try:  # эталонный размер в контейнере: рваный cp виден по размеру до ffprobe
+                    want = int(docker_sh("exec", "ace-step", "sh", "-c",
+                                         f"stat -c %s {d}/{n}.mp3").split()[0])
+                except Exception:
+                    want = None
+                for _attempt in range(1, 5):  # cp-out под нагрузкой рвётся подряд (18:28: 2 из 2
+                    docker_sh("cp", f"ace-step:{d}/{n}.mp3", str(dst))  # попыток) — 4 попытки, размер до ffprobe/карантина
+                    if dst.exists() and (want is None or dst.stat().st_size == want) and valid(dst):
                         ok = True
                         break
                 if not ok:
