@@ -62,6 +62,10 @@ JUMP_BLOCK, JUMP_MAX = 60.0, 4.0
 # Разброс строя между окнами > TUNE_MAX центов = FAIL. Замер 19.10 (окна 30 с): ref1 1.8, ref2 1.1, ref3 2.5,
 # одобренный 15-мин микс ref-style6 6.6, MIX 85-95-105 4.2, two-formats S1-U2 0.7-2.5; брак ref1 + та же часть +40 центов = 42.
 TUNE_WIN, TUNE_MAX = 30.0, 20.0
+# t_b4e407ca: окно без строя (шум, перкуссия) даёт случайный угол — CI case_a (шум) ловил «разброс 21-24 центов».
+# Окно в счёт, только если пики согласованы: |sum b*e^(i*phi)| / sum b >= TUNE_MIN_R. Замер: белый/розовый/коричневый
+# шум 0.002-0.02, ref1 0.33-0.49, синус 1.0.
+TUNE_MIN_R = 0.1
 MIN_CE = 6.5  # ниже худшего рефа ниши (7.07), сильно выше брака (<=3.6)
 
 
@@ -412,7 +416,7 @@ def loudjump_why(f):
 
 
 def tunings(f, sr=11025, n=8192):
-    """A19: строй (центы от A440, -50..50) по окнам TUNE_WIN с; окна без тональных пиков пропускаются."""
+    """A19: строй (центы от A440, -50..50) по окнам TUNE_WIN с; окна без согласованных тональных пиков пропускаются."""
     import numpy as np
     x = np.frombuffer(subprocess.run(["ffmpeg", "-v", "error", "-i", str(f), "-ac", "1", "-ar", str(sr), "-f", "f32le", "-"],
                                      capture_output=True).stdout, np.float32)
@@ -424,7 +428,7 @@ def tunings(f, sr=11025, n=8192):
             continue
         S = np.abs(np.fft.rfft(fr, axis=1))
         S[:, (fq < 100) | (fq > 2000)] = 0
-        z = 0j
+        z, w = 0j, 0.0
         for s in S:
             k = np.where((s[1:-1] > s[:-2]) & (s[1:-1] > s[2:]) & (s[1:-1] > s.max() * 0.1))[0] + 1
             if s.max() <= 0 or not len(k):
@@ -432,7 +436,8 @@ def tunings(f, sr=11025, n=8192):
             a, b, c = s[k - 1], s[k], s[k + 1]
             hz = (k + 0.5 * (a - c) / np.where(a - 2 * b + c == 0, -1e-12, a - 2 * b + c)) * sr / n
             z += np.sum(b * np.exp(2j * np.pi * 12 * np.log2(hz / 440.0)))
-        if abs(z) > 0:
+            w += float(b.sum())
+        if w > 0 and abs(z) / w >= TUNE_MIN_R:  # иначе строя в окне нет — угол случайный
             out.append(float(np.angle(z) * 50 / np.pi))
     return out
 
