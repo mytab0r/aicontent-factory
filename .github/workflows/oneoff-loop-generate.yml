@@ -101,6 +101,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4  # artifact-ok: логи прогона; доставка результата вне артефактов
         with:
+          retention-days: 1  # t_9d452170: доставка вне артефактов (TG/git); квота storage 500MB
           name: loopgen
           path: |
             runs/loopgen/loop.mp4
@@ -113,6 +114,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4  # artifact-ok: логи прогона; доставка результата вне артефактов
         with:
+          retention-days: 1  # t_9d452170: доставка вне артефактов (TG/git); квота storage 500MB
           name: loopgen-frames-full
           path: runs/loopgen/
           if-no-files-found: warn

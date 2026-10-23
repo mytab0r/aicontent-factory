@@ -1,0 +1,11 @@
+name: ace-step diag (read-only)
+on:
+  workflow_dispatch:
+jobs:
+  diag:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 10
+    steps:
+      - name: logs + http probe
+        run: |
+          docker logs --since 6h ace-step 2>&1 | grep -viE 'GET /health|POST /query_result' | tail -150

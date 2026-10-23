@@ -126,6 +126,13 @@ def test_days_without_long():
     assert "дн. без" not in msg, msg
 
 
+def test_shorts_only_day_still_alerts():
+    """P22: 23.10 — 7 дней без public long-form; шортс за сегодня не должен глушить алерт сторожа."""
+    rss = RSS.replace("Late night", "the vibe you need right now #Shorts")
+    msg, _ = decide(rss, [run("completed", "success", "2026-10-12", 9)], D12)
+    assert msg and "нет ролика" in msg, msg
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

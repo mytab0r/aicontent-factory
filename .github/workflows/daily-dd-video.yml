@@ -65,4 +65,4 @@ jobs:
         with:
           name: dd-video-${{ github.run_id }}
           path: runs/*/video.mp4
-          retention-days: 14
+          retention-days: 1  # t_9d452170: доставка вне артефактов (TG/git); квота storage 500MB

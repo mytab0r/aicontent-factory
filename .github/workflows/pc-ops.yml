@@ -180,24 +180,16 @@ jobs:
           sh deploy/gpu-pc/disk_gate.sh c 36   # R3 t_40bfcd35: Wan2.2 FLF2V набор ~36 GB на C:
           docker run --rm -v /run/desktop/mnt/host/c/dockerlocal/wan22/models:/models -w /models \
             curlimages/curl:latest -s --version >/dev/null
-          docker run --rm -v /run/desktop/mnt/host/c/dockerlocal/wan22/models:/models --entrypoint /bin/sh alpine:3.20 -c "
+          # hf_get.sh по stdin: одно HF-соединение рвётся через ~205 с, качаем диапазонами (t_5dccab9e)
+          docker run --rm -i -v /run/desktop/mnt/host/c/dockerlocal/wan22/models:/models --entrypoint /bin/sh alpine:3.20 -c "
+            set -e
+            cat > /hf_get.sh
             apk add -q curl >/dev/null 2>&1
             cd /models
             mkdir -p diffusion_models loras text_encoders vae clip_vision
             base22='https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files'
             base21='https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files'
-            dl() {  # dl <url> <dest> — докачка: HF рвёт длинные соединения (SSL eof ~4 мин)
-              if [ -s \"$2\" ]; then echo \"EXISTS \$2\"; return 0; fi
-              echo \"GET \$2\"
-              for a in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
-                curl -fL -C - --retry 3 --retry-delay 10 --speed-time 60 --speed-limit 10000 \\
-                  -o \"\$2.part\" \"\$1\" \\
-                  && mv \"\$2.part\" \"\$2\" && echo \"OK \$2\" && return 0
-                echo \"retry \$a \$2 (после -C - докачка продолжится)\"
-                sleep 10
-              done
-              echo \"FAIL \$2\"; return 1
-            }
+            dl() { sh /hf_get.sh \"\$1\" \"\$2\"; }
             dl \$base22/diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors
             dl \$base22/diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors
             dl \$base22/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors
@@ -207,7 +199,7 @@ jobs:
             dl \$base22/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors loras/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors
             cp /models/../extra_model_paths.yaml /models/extra_model_paths.yaml 2>/dev/null || true
             echo '=== models ==='; ls -la diffusion_models loras text_encoders vae clip_vision
-          "
+          " < deploy/gpu-pc/hf_get.sh
           # extra_model_paths.yaml в volume (stdin: монтирование файла ненадёжно)
           docker run --rm -i -v /run/desktop/mnt/host/c/dockerlocal/wan22/models:/models alpine:3.20 \
             sh -c 'cat > /models/extra_model_paths.yaml' < deploy/gpu-pc/comfyui/extra_model_paths.yaml

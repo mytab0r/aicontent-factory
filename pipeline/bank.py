@@ -21,6 +21,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 BANK_ROOT = "/app/output/bank"
 CAP_FILES = 400  # ~4 МБ/сегмент -> ~1.6 ГБ, ниже лимита 15 ГБ спецификации
+MARGIN = 4  # запас сегментов в группе сверх need: рваный cp бьёт пачкой — всплеск из 3 битых (39924822702) не должен обнулять выпуск
 
 
 class BankYield(Exception):
@@ -31,10 +32,12 @@ def slug(genre: str) -> str:
     return genre.replace(" ", "-")
 
 
-def fill(target, have, make, put, busy, log=print, max_iter=40):
+def fill(target, have, make, put, busy, log=print, max_iter=40, max_consecutive_fail=3):
     """Наполнить банк до target. make(i) -> путь прошедшего гейт сегмента или None (брак).
-    busy() = выпуск идёт/в очереди -> выход. Сбой генерации при занятом GPU = уступили, без ошибки."""
-    n, i = have(), 0
+    busy() = выпуск идёт/в очереди -> выход. Сбой генерации при занятом GPU = уступили, без ошибки.
+    Сбой без выпуска (run 39884870081: oneMKL transient 0/21 на 39/40) = повтор, прогон роняем
+    только после max_consecutive_fail сбоев подряд — устойчивая поломка остаётся ошибкой."""
+    n, i, fails = have(), 0, 0
     while n < min(target, CAP_FILES) and i < max_iter:
         if busy():
             log(f"банк: выпуск в работе — уступаю GPU (в банке {n})")
@@ -48,8 +51,13 @@ def fill(target, have, make, put, busy, log=print, max_iter=40):
             if busy():
                 log(f"банк: сбой {type(e).__name__} во время выпуска — выхожу (в банке {n})")
                 break
-            raise
+            fails += 1
+            if fails >= max_consecutive_fail:
+                raise
+            log(f"банк: сбой {type(e).__name__} ({fails}/{max_consecutive_fail}) — повторяю: {e}")
+            continue
         i += 1
+        fails = 0
         if p:
             put(p)
             n += 1
@@ -157,6 +165,38 @@ def pick_prompt(enabled=lambda lines, p: True) -> str:
     return pair["prompt"]
 
 
+def choose_prompt(variants, counts, need, day_prompt, key):
+    """Выпуск берёт need сегментов одной группы (bpm, key). Ротация промпта по дню размазывала банк
+    по группам -> ни одной полной (run 39800343057, nobank). Добиваем самую большую незакрытую группу;
+    все закрыты/пусто -> промпт дня (разнообразие следующего выпуска)."""
+    open_ = [v for v in variants if 0 < counts.get(key(v), 0) < need]
+    return max(open_, key=lambda v: counts[key(v)]) if open_ else day_prompt
+
+
+def effective_target(target, have, counts, need):
+    """Цель по общему числу файлов слепа к группам: 40/40 при группе 21 из need=20 и 2 битых ->
+    nobank, генератор стоит (run 39905560585). Растим цель, пока в одной группе нет need+MARGIN."""
+    gap = need + MARGIN - max(counts.values(), default=0)
+    return max(target, have + gap) if gap > 0 else target
+
+
+def group_counts(genre, docker_sh, now=None):
+    """Свободные (не использованные 14 дней) сегменты банка по группам (bpm, key)."""
+    import bank_release as br
+    used = []
+    try:
+        used = (br.ROOT / ".state/bank_used.jsonl").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        pass
+    skip = br._used_filter(used, now or time.time())
+    out = {}
+    for e in br.entries(genre, docker_sh=docker_sh):
+        if e["name"] not in skip:
+            k = br.group_key(e)
+            out[k] = out.get(k, 0) + 1
+    return out
+
+
 def main():
     genre = os.environ.get("GENRE", "anime lofi")
     target = int(os.environ.get("BANK_TARGET", "30"))
@@ -180,7 +220,16 @@ def main():
     try:
         import refpool
         pair = refpool.pick()
-        prompt = pair["prompt"]
+        need = -(-int(os.environ.get("TRACK_DURATION_SEC", "3600")) // 180)
+        try:
+            counts = group_counts(genre, lambda *a: _sh("docker", *a))
+            prompt = choose_prompt(refpool.PROMPT_VARIANTS, counts, need + MARGIN, pair["prompt"],
+                                   lambda v: (music.prompt_bpm(v), music.prompt_key(v)))
+            target = effective_target(target, have(), counts, need)
+            print(f"bank: группы {counts}, нужно {need}+{MARGIN} -> промпт {prompt[-30:]}, цель {target}")
+        except Exception as e:  # листинг банка недоступен -> промпт дня
+            print(f"bank: группы не прочитаны ({type(e).__name__}: {e}); промпт дня")
+            prompt = pair["prompt"]
         refpool.ensure_ref(pair)
         ref = pair["ref_path"]
     except Exception as e:  # как в 03_music: эталон дня недоступен -> ref1
@@ -201,7 +250,10 @@ def main():
         meta.write_text(json.dumps({"genre": genre, "prompt": prompt, "ref": ref, "seed": seed,
                                     "src": Path(p).name, "ts": int(time.time())}, ensure_ascii=False))
         _sh("docker", "cp", str(meta), f"ace-step:{d}/{name}.json")
-        _sh("docker", "cp", str(p), f"ace-step:{d}/{name}.mp3")  # mp3 последним: есть mp3 = есть meta
+        # mp3 последним: есть mp3 = есть meta. cp во временное имя + mv: обрыв/отмена прогона посреди
+        # cp оставлял битый .mp3, который считался годным (run 39905560585)
+        _sh("docker", "cp", str(p), f"ace-step:{d}/{name}.mp3.part")
+        _sh("docker", "exec", "ace-step", "mv", f"{d}/{name}.mp3.part", f"{d}/{name}.mp3")
         Path(p).unlink(missing_ok=True)
 
     n = fill(target, have, gen, put, release_busy)

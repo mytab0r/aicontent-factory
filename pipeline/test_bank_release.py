@@ -72,6 +72,37 @@ def test_entries_skips_missing_meta():
     assert [e["name"] for e in got] == ["a"], got
 
 
+def _cp(dk, broken=()):
+    """docker cp создаёт файл-приёмник; имена из broken копируются битыми (0 байт)."""
+    def f(*a):
+        r = dk(*a)
+        if a and a[0] == "cp":
+            dst = Path(a[2])
+            dst.write_bytes(b"" if dst.stem in broken else b"ID3ok")
+        return r
+    return f
+
+
+def test_take_skips_broken_segment_and_refills():
+    """run 39848167892: ffprobe упал на скопированном сегменте -> выпуск рухнул. Битый исключается,
+    добирается другой из той же группы; файл битого в run_dir не остаётся."""
+    now = time.time()
+    ents = [meta(n, 89, "F major") for n in ("a", "b", "c")]
+    names = "".join(e["name"] + ".mp3\n" for e in ents)
+    metas = {f"/app/output/bank/anime-lofi/{e['name']}.json": json.dumps(
+        {"prompt": e["prompt"], "seed": e["seed"]}) for e in ents}
+    dk = FakeDocker({**metas, "/app/output/bank/anime-lofi": names})
+    ok = lambda p: Path(p).stat().st_size > 0
+    with tempfile.TemporaryDirectory() as td:
+        got = bank_release.take("anime lofi", 2, td, docker_sh=_cp(dk, broken={"b"}), now=now,
+                                rng=random.Random(1), valid=ok)
+        assert got is not None and len(got) == 2 and "b" not in {p.stem for p in got}, got
+        assert sorted(x.name for x in Path(td).iterdir()) == sorted(p.name for p in got)
+    with tempfile.TemporaryDirectory() as td:
+        assert bank_release.take("anime lofi", 2, td, docker_sh=_cp(dk, broken={"a", "b"}), now=now,
+                                 rng=random.Random(1), valid=ok) is None
+
+
 def test_take_copies_each_segment_or_none():
     now = time.time()
     ents = [meta("a", 89, "F major"), meta("b", 89, "F major")]
@@ -81,11 +112,13 @@ def test_take_copies_each_segment_or_none():
     dk = FakeDocker({**{f"/app/output/bank/anime-lofi/{e['name']}.mp3": b"x" for e in ents},
                      **metas, "/app/output/bank/anime-lofi": names})
     with tempfile.TemporaryDirectory() as td:
-        got = bank_release.take("anime lofi", 2, td, docker_sh=dk, now=now, rng=random.Random(1))
+        got = bank_release.take("anime lofi", 2, td, docker_sh=_cp(dk), now=now, rng=random.Random(1),
+                                valid=lambda p: True)
         assert got is not None and len(got) == 2
         cps = [op for op in dk.ops if op[0][0] == "cp"]
         assert len(cps) == 2 and all(".mp3" in op[0][1] for op in cps), dk.ops
-        assert bank_release.take("anime lofi", 5, td, docker_sh=dk, now=now, rng=random.Random(1)) is None
+        assert bank_release.take("anime lofi", 5, td, docker_sh=_cp(dk), now=now, rng=random.Random(1),
+                                 valid=lambda p: True) is None
 
 
 def test_used_record_appends_and_cleanup_removes_old():
@@ -186,6 +219,55 @@ def test_bank_main_skips_disabled_prompts():
         if saved is not None:
             bank.refpool = saved
 
+
+def test_take_quarantines_broken_segment_in_bank():
+    """run 39905560585: битые сегменты исключались только в памяти выпуска и оставались в банке ->
+    генератор считал их годными, группа навсегда «полная». Битый уезжает в bank/<жанр>/broken."""
+    now = time.time()
+    ents = [meta(n, 89, "F major") for n in ("a", "b", "c")]
+    names = "".join(e["name"] + ".mp3\n" for e in ents)
+    metas = {f"/app/output/bank/anime-lofi/{e['name']}.json": json.dumps(
+        {"prompt": e["prompt"], "seed": e["seed"]}) for e in ents}
+    dk = FakeDocker({**metas, "/app/output/bank/anime-lofi": names})
+    ok = lambda p: Path(p).stat().st_size > 0
+    with tempfile.TemporaryDirectory() as td:
+        bank_release.take("anime lofi", 2, td, docker_sh=_cp(dk, broken={"b"}), now=now,
+                          rng=random.Random(1), valid=ok)
+    mv = [op[1] for op in dk.ops if "mv " in op[1]]
+    assert len(mv) == 1 and "/b.mp3" in mv[0] and "/b.json" in mv[0] and "/broken" in mv[0], dk.ops
+
+
+def test_take_retries_ragged_cp_before_quarantine():
+    """Битые имена не повторяются между прогонами (39905560585 vs 39908989867) -> это рваный
+    docker cp, а не битый файл. Первая попытка битая, вторая норм: сегмент берётся, карантина нет."""
+    now = time.time()
+    ents = [meta(n, 89, "F major") for n in ("a", "b")]
+    names = "".join(e["name"] + ".mp3\n" for e in ents)
+    metas = {f"/app/output/bank/anime-lofi/{e['name']}.json": json.dumps(
+        {"prompt": e["prompt"], "seed": e["seed"]}) for e in ents}
+    dk = FakeDocker({**metas, "/app/output/bank/anime-lofi": names})
+    tries = {"b": 0}
+
+    def valid(p):
+        if Path(p).stem == "b":
+            tries["b"] += 1
+            return tries["b"] > 1  # первая копия рваная
+        return True
+    with tempfile.TemporaryDirectory() as td:
+        got = bank_release.take("anime lofi", 2, td, docker_sh=_cp(dk), now=now,
+                                rng=random.Random(1), valid=valid)
+        assert got is not None and len(got) == 2, got
+    mv = [op[1] for op in dk.ops if "mv " in op[1]]
+    assert mv == [], mv
+
+
+
+
+def test_margin_absorbs_ragged_cp_burst():
+    """run 39924822702: группа ровно need+2 (22 при need=20), три рваных cp подряд ->
+    свободных 19 < 20 = nobank, слот пропущен. Запас группы должен поглощать всплеск
+    рваных cp: MARGIN >= 4."""
+    assert bank.MARGIN >= 4, bank.MARGIN
 
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]

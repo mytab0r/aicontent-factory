@@ -82,7 +82,8 @@ def run_date(run: dict) -> dt.date:
 
 def decide(rss_xml: str, runs: list[dict], today: dt.date) -> tuple[str | None, bool]:
     """-> (текст алерта или None если ролик есть, нужен ли workflow_dispatch). runs — новые первыми."""
-    if videos_on(rss_xml, today):
+    # P22: только long-form; шортс за сегодня (или старый long-form) не глушит алерт пустого канала
+    if any("#shorts" not in v["title"].lower() for v in videos_on(rss_xml, today)):
         return None, False
     head = f"⚠️ {today}: на канале нет ролика за сегодня (UTC)."
     gap = days_without_long(rss_xml, today)
