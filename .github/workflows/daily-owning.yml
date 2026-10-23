@@ -27,8 +27,9 @@ jobs:
       ROUTER_BASE_URL: https://9router.pxbt.app/v1
       ROUTER_API_KEY: ${{ secrets.ROUTER_API_KEY }}
       CHANNEL: owning
-      PUBLISH: ${{ vars.OWNING_PUBLISH }}
-      PUBLISH_PRIVACY: ${{ inputs.dryrun && 'private' || 'public' }}  # dryrun = private, публики нет даже при OWNING_PUBLISH=1
+      # dryrun = private-публикация независимо от OWNING_PUBLISH (публики нет: PUBLISH_PRIVACY=private)
+      PUBLISH: ${{ (inputs.dryrun || vars.OWNING_PUBLISH == '1') && '1' || vars.OWNING_PUBLISH }}
+      PUBLISH_PRIVACY: ${{ inputs.dryrun && 'private' || 'public' }}
       LOCALIZE: ${{ vars.LOCALIZE }}  # '1' = ES/pt-BR localizations + субтитры (localize.py), иначе no-op
     steps:
       - uses: actions/checkout@v4
