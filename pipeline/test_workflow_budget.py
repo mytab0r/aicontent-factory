@@ -36,8 +36,19 @@ def test_refpool_ytdlp_in_venv():
     assert "yt-dlp" in deps, "refpool зовёт yt-dlp из .venv — без него эталон дня всегда fallback"
 
 
+def test_nobank_alerts_telegram():
+    """P20 (аудит 23.10): run 23.10 01:30 success за 4 мин, nobank=1, publish не шёл, только ::warning —
+    0 public за 7 дней, а статус зелёный. Пустой банк обязан слать TG-алерт, не молчать."""
+    steps = WF.split("- name: ")
+    alert = [s for s in steps if "steps.music.outputs.nobank == '1'" in s.split("run:", 1)[0]]
+    assert alert, "нет шага с if: nobank == '1' — пропуск слота молчит (P20)"
+    body = alert[0]
+    assert "tg_send" in body and "TG_BOT_TOKEN" in body, "шаг nobank не шлёт TG-алерт (P20)"
+
+
 if __name__ == "__main__":
     test_no_generation_env_in_daily_video()
     test_bank_fill_generator_budget()
     test_refpool_ytdlp_in_venv()
+    test_nobank_alerts_telegram()
     print("ok")
