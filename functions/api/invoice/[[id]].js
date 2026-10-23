@@ -6,7 +6,7 @@
  * Инвойсы в KV: invoice:<id> = { amount, dueMicro, currency, memo, pair, status, createdMs, paid: {...} }
  * Реестр tx: paidtx:<chain>:<tx> = <invoice id> — один перевод закрывает только один счёт.
  */
-import { CONFIG_KEY, PAIRS, enabledPairs, defaultConfig } from '../../lib/config.js';
+import { CONFIG_KEY, enabledPairs, pairToken, defaultConfig } from '../../lib/config.js';
 import { findPayments } from '../../lib/paycheck.js';
 
 const INVOICE_TTL = 60 * 60 * 24 * 30; // 30 дней
@@ -53,7 +53,8 @@ export async function onRequestPut({ env, params }) {
   if (inv.paid) return json({ status: 'paid', ...inv.paid });
   if (!inv.pair) return json({ error: 'pair not selected' }, 400);
   try {
-    const pair = { ...PAIRS[inv.pair.id], address: inv.pair.address };
+    const token = pairToken(inv.pair.id);
+    const pair = { ...PAIRS[inv.pair.id], token, address: inv.pair.address };
     for (const m of await findPayments(pair, pair.address, inv.dueMicro, inv.createdMs)) {
       // ponytail: get+put не атомарны в CF KV; в контейнере (FileKV, один процесс) гонки нет.
       const key = `paidtx:${pair.chain}:${m.tx}`;
