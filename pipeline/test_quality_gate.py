@@ -195,6 +195,15 @@ with tempfile.TemporaryDirectory() as td:
     assert qg.tuning_why(ok) == [] and qg.tuning_why(shifted) == [], (qg.tunings(ok), qg.tunings(shifted))
     assert any("строй плывёт" in x for x in qg.tuning_why(bad)), qg.tunings(bad)
     assert qg.TUNE_MAX == 20.0 and qg.TUNE_WIN == 30.0
+    # t_b4e407ca: шумовые окна без строя давали случайный угол — ложное «строй плывёт» (CI 39681054495, 39948994998).
+    # Белый шум seed=19 до фикса: разброс 23 цента > 20; тон + шум (case_a) — 21-24. Теперь шум не голосует, брак ловится.
+    noise, mix = f"{td}/noise.wav", f"{td}/mix.wav"
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
+                    "anoisesrc=colour=white:amplitude=0.7:sample_rate=48000:duration=120:seed=19", noise], check=True)
+    assert qg.tuning_why(noise) == [], qg.tunings(noise)
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", bad, "-i", noise, "-filter_complex",
+                    "[0:a]aresample=48000[a];[a][1:a]concat=n=2:v=0:a=1", mix], check=True)
+    assert any("строй плывёт" in x for x in qg.tuning_why(mix)), qg.tunings(mix)
 print("test_quality_gate A19 tuning drift OK")
 
 # A24 (каталог): шортс из середины трека без фейда = щелчок на старте/конце в ленте Shorts; с фейдами 07 проходит
