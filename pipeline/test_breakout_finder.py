@@ -32,6 +32,12 @@ def test_templates():
     assert bf.template_of("Why It Sucked To Be A Medieval Peasant") == "Why it sucked to be X"
     assert bf.template_of("What Ancient Humans Actually Did At Night") == "What ancient humans actually did"
     assert bf.template_of("Top 10 cats") == "other"
+    # реальные заголовки хитов скана 23.10 (до фикса уходили в other)
+    assert bf.template_of("How Did Early Humans Build Their First Homes? #shorts") == "How did humans X"
+    assert bf.template_of("How The Ancient Humans Survived Ice Age?") == "How did humans X"
+    assert bf.template_of("What Did Ancient Humans Do For Pleasure?") == "What ancient humans actually did"
+    assert bf.template_of("Why Did Humans Start Wearing Clothes?") == "Why did humans start X"
+    assert bf.template_of("Why It Sucked to Be the Sultan's Daughter") == "Why it sucked to be X"
 
 
 def test_occupancy():

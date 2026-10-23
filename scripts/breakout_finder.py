@@ -22,11 +22,13 @@ import urllib.request
 API = "https://www.googleapis.com/youtube/v3/"
 COST = {"search": 100, "channels": 1, "videos": 1}  # единицы квоты YouTube Data API v3
 SEED_QUERIES = ["how did ancient humans", "why it sucked to be"]
+WHO = r"(humans?|people|ancient|early|medieval|prehistoric|cave ?m[ae]n|romans?|egyptians?|vikings?|women|men)"
 TEMPLATES = [  # порядок = приоритет; первый совпавший побеждает
-    ("How did humans X", re.compile(r"\bhow did\b.*\b(human|people|ancient|medieval|caveman|cavemen|romans?|egyptians?|vikings?|they)\b", re.I)),
-    ("Why we never eat X", re.compile(r"\bwhy (we|you|people|humans)\b.*\b(never|don'?t|stopped|no longer)\b.*\b(eat|drink)", re.I)),
-    ("Why it sucked to be X", re.compile(r"\b(why )?it sucked to be\b|\bsucked\b|\bworst (job|time|thing)s?\b", re.I)),
-    ("What ancient humans actually did", re.compile(r"\bwhat\b.*\b(ancient|medieval|prehistoric|cave ?m[ae]n|people|humans)\b.*\b(actually|really|used to|did)\b", re.I)),
+    ("Why it sucked to be X", re.compile(r"\bsucked to be\b|\bworst (jobs?|time|things?)\b", re.I)),
+    ("Why we never eat X", re.compile(r"\bwhy (we|you|people|humans)\b.*\b(never|don'?t|stopped|no longer)\b.*\b(eat|eating|drink)", re.I)),
+    ("What ancient humans actually did", re.compile(r"\bwhat (did )?" + WHO + r"\b.*\b(actually|really|do|did|used to)\b", re.I)),
+    ("Why did humans start X", re.compile(r"\bwhy did " + WHO + r"\b.*\bstart", re.I)),
+    ("How did humans X", re.compile(r"\bhow (did |the )?" + r"(\w+ )?" + WHO + r"\b", re.I)),
 ]
 
 
