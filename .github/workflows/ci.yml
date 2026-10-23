@@ -141,6 +141,8 @@ jobs:
     needs: [test, pay-image-smoke, e2e-admin, ci-bypass-lint]
     if: ${{ !cancelled() }}
     runs-on: [self-hosted, release]
+    permissions:
+      actions: write  # t_b1429246: перезапуск jobs (rerun API) требует write на actions
     steps:
       - uses: actions/checkout@v4
       - name: re-run jobs killed by runner transport failure
