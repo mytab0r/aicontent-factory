@@ -10,11 +10,14 @@ Plain script, no pytest:
 Stdlib + ffmpeg/ffprobe CLI + tempfile only.  Prints 'test_qg_windows OK' at end.
 """
 import importlib.util
+import io
+import json
 import os
 import subprocess
 import sys
 import tempfile
 import wave
+from contextlib import redirect_stdout
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -94,11 +97,19 @@ def zcr_critic(good, bad, noisy_zcr=3000.0, block=0.5):
 
 
 def run_main(args, cwd):
-    """qg.main() with cwd parked in the temp dir (main may drop side files)."""
+    """qg.main() with cwd parked in the temp dir (main may drop side files).
+
+    root-cause: t_d9bbeebf — main() печатает `::error::quality gate: …` для
+    ожидаемо разваливающихся негативных фикстур (case_a: sine+noise, скачок
+    17.3 LU by design). GitHub вешает это на FAILURE-аннотации job'а, их собирает
+    recurrence_scan и плодит фантомные карточки. stdout сюда не попадает в CI-лог.
+    """
     prev = os.getcwd()
     os.chdir(cwd)
+    buf = io.StringIO()
     try:
-        return qg.main([str(a) for a in args])
+        with redirect_stdout(buf):
+            return qg.main([str(a) for a in args])
     finally:
         os.chdir(prev)
 
