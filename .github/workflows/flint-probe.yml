@@ -27,9 +27,9 @@ jobs:
           set -e
           if docker run --rm -v $M:/m alpine:3.20 sh -c "test \$(stat -c %s /m/$GGUF 2>/dev/null || echo 0) -eq $SIZE"; then echo HAVE; exit 0; fi
           sh deploy/gpu-pc/disk_gate.sh c 26
-          # busybox wget в сети раннера получает от HF 404 (сплит-DNS); контейнер в default bridge
-          # использует DNS хоста и качает нормально. curl: докачка -C - и retry из коробки.
-          docker run --rm -v $M:/m -w /m alpine:3.20 sh -ec '
+          # 404 прошлых прогонов: $GGUF не передавался в контейнер -> URL .../resolve/main/ . -e GGUF обязателен.
+          docker run --rm -e GGUF -v $M:/m -w /m alpine:3.20 sh -ec '
+            [ -n "$GGUF" ] || { echo "GGUF empty"; exit 1; }
             apk add -q curl >/dev/null 2>&1 || true
             i=0; while [ $i -lt 10 ]; do
               i=$((i+1))
@@ -62,8 +62,9 @@ jobs:
           echo; docker stats --no-stream flint
       - name: eval 5 tasks
         run: |
-          docker run --rm --network comfynet -v "$PWD/deploy/gpu-pc/flint:/e" python:3.12-slim \
-            python3 /e/flint_eval.py $EP/v1 flint | tee flint_eval_local.jsonl
+          # раннер в контейнере: $PWD не виден демону хоста -> скрипт через stdin
+          docker run --rm -i --network comfynet python:3.12-slim \
+            python3 - $EP/v1 flint < deploy/gpu-pc/flint/flint_eval.py | tee flint_eval_local.jsonl
           docker logs flint 2>&1 | grep -E 'eval time' | tail -30
           docker stats --no-stream flint
       - uses: actions/upload-artifact@v4
