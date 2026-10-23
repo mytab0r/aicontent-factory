@@ -153,10 +153,10 @@ def test_target_grows_until_largest_group_has_margin():
     битые -> 19 < 20 -> nobank, а генератор стоит: цель считалась по общему числу файлов.
     Цель растёт, пока в одной группе нет need+margin сегментов (запас на битые)."""
     c = {(92, "G major"): 12, (89, "F major"): 21, (82, "D major"): 6}
-    assert bank.effective_target(40, 40, c, 20) == 41  # 21 -> 22: +1
-    assert bank.effective_target(40, 40, {(89, "F major"): 25}, 20) == 40
-    assert bank.effective_target(40, 10, {}, 20) == 40  # пустой банк: цель как была (>= 22)
-    assert bank.effective_target(10, 30, {(1, "C major"): 5}, 20) == 47
+    assert bank.effective_target(40, 40, c, 20) == 43  # 21 -> 24: +3 (запас = need+MARGIN)
+    assert bank.effective_target(40, 40, {(89, "F major"): 25}, 20) == 40  # 25 >= need+4: запас есть
+    assert bank.effective_target(40, 10, {}, 20) == 40  # пустой банк: цель как была (>= 24)
+    assert bank.effective_target(10, 30, {(1, "C major"): 5}, 20) == 49
     src = (Path(__file__).resolve().parent / "bank.py").read_text(encoding="utf-8").split("def main", 1)[1]
     assert "effective_target(" in src, "main() обязан пересчитывать цель через effective_target"
     assert "need + MARGIN" in src, "choose_prompt обязан добивать группу до need + MARGIN"
