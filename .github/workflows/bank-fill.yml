@@ -28,11 +28,13 @@ jobs:
         with:
           clean: true
       - uses: astral-sh/setup-uv@v3
+        with:
+          cache-local-path: /tmp/acf-uv-cache  # P23: кэш переживает прогон
       - name: install deps
         run: |
           command -v ffmpeg
           uv venv .venv
-          uv pip install --python .venv/bin/python pillow gradio_client numpy yt-dlp
+          for i in 1 2 3; do UV_HTTP_TIMEOUT=120 uv pip install --python .venv/bin/python pillow gradio_client numpy yt-dlp && break; [ $i = 3 ] && exit 1; sleep 30; done
       - name: disk gate (C:)
         run: sh deploy/gpu-pc/disk_gate.sh c 1
       - name: ACE-Step up (start only, wait health)
