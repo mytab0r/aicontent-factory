@@ -107,6 +107,26 @@ def strip_off_season(title: str, today: date) -> str:
     return re.sub(r"\s{2,}", " ", title).strip()
 
 
+# V15 (аудит 23.10): LLM смешал сезоны «Snowy Café Window 🎃 Cozy Halloween» в октябре.
+# Группа сезонных слов -> месяцы, когда она уместна; слово вне сезона в title = повтор LLM.
+# ponytail: фикс. словарь; расширять при новых жалобах (CLIP по обложке — V13).
+SEASON_WORDS = {
+    frozenset({11, 12, 1, 2}): r"snow(?:y|fall|flakes?)?|winter|wintry|christmas|xmas|🎄|❄️?|new year",
+    frozenset({9, 10, 11}): r"autumn(?:al)?|pumpkins?|halloween|spooky|🎃|🍂",
+    frozenset({3, 4, 5}): r"spring|sakura|cherry blossoms?|🌸",
+    frozenset({6, 7, 8}): r"summer(?:y|time)?|cicadas?|fireworks?",
+}
+
+
+def season_conflict(title: str, today: date) -> list:
+    """Сезонные слова title вне сезона даты (пусто = согласовано)."""
+    bad = []
+    for months, pat in SEASON_WORDS.items():
+        if today.month not in months:
+            bad += re.findall(r"(?<!\w)(?:" + pat + r")(?!\w)", title, flags=re.I)
+    return bad
+
+
 def ensure_genre_word(title: str, mood: str) -> str:
     """Гарантия слова жанра в title: guard дублей (watchdog.already_published)
     ищет маркер жанра в заголовке; если LLM его не принёс — дописываем
@@ -235,8 +255,14 @@ def main() -> None:
             break
         idea["title"] = ensure_genre_word(strip_off_season(idea.get("title", ""), date.today()), mood)
         dup = dup_title(idea["title"], recent, date.today())
-        if not dup:
+        off = season_conflict(idea["title"], date.today())
+        if not dup and not off:
             break
+        if off:
+            print(f"V15 сезон не совпадает: {idea['title']!r} {off}"[:300])
+            prompt += f"\nНЕ используй вне сезона: {', '.join(off)}. Только сезон: {season_hint(date.today())}."
+            idea = None
+            continue
         print(f"M1 дубль сцены: {idea['title']!r} ~ {dup!r} (попытка {attempt + 1})"[:300])
         prompt += f"\nНЕ повторяй сцену из заголовка: {dup}. Выбери другое место/время."
         idea = None
@@ -246,7 +272,7 @@ def main() -> None:
         print(f"LLM недоступен/повторы ({err}); детерминированный фолбэк"[:300])
         for _ in range(len(SCENES) * len(USES)):
             idea = fallback_idea(mood, STATE_DIR)
-            if not dup_title(idea["title"], recent, date.today()):
+            if not dup_title(idea["title"], recent, date.today()) and not season_conflict(idea["title"], date.today()):
                 break
     if channel == "dd":
         idea["channel"] = "dd"
