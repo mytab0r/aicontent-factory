@@ -30,7 +30,7 @@ export function toMicro(quantRaw, decimals) {
   return q * 10n ** BigInt(6 - decimals);
 }
 
-async function tronMatches(pair, address, dueMicro, createdMs) {
+export async function tronMatches(pair, address, dueMicro, createdMs) {
   const url =
     'https://apilist.tronscanapi.com/api/token_trc20/transfers?limit=50&start=0&sort=-timestamp' +
     '&relatedAddress=' + encodeURIComponent(address) +

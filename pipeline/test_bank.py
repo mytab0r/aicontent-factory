@@ -163,7 +163,25 @@ def test_target_grows_until_largest_group_has_margin():
     assert ".mp3.part" in src and '"mv"' in src, "put: cp во временное имя + атомарный mv (обрыв прогона = нет битого .mp3)"
 
 
+
+def test_hung_ace_restarts_when_no_release():
+    """23.10: ace-step завис с 10:05 (VAE на CPU, VRAM держал flint), банк 5 прогонов выходил чисто
+    без рестарта -> генератор стоял 4 ч. Рестарт запрещён только когда выпуск идёт/в очереди."""
+    calls = []
+    guard = bank.restart_guard(lambda: False, lambda *a, **k: calls.append(1))
+    guard()
+    assert calls == [1]
+    guard = bank.restart_guard(lambda: True, lambda *a, **k: calls.append(2))
+    try:
+        guard()
+    except bank.BankYield:
+        assert calls == [1]
+        return
+    raise AssertionError("при выпуске рестарт обязан уступить")
+
+
 if __name__ == "__main__":
+    test_hung_ace_restarts_when_no_release()
     test_release_check_network_error_yields_not_crash()
     test_fill_stops_at_target_and_skips_rejects()
     test_fill_yields_to_release()

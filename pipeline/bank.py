@@ -92,6 +92,17 @@ def release_busy(repo=None, token=None, sleep=time.sleep, tries=3) -> bool:
     return False
 
 
+def restart_guard(busy, restart):
+    """Рестарт ace-step банку разрешён, только если выпуска нет: иначе убьём его задачу.
+    23.10: полный запрет оставил зависший ace-step (VAE на CPU) на 4 ч, банк 5 раз выходил пустым."""
+    def guard(*a, **k):
+        if busy():
+            raise BankYield("ace-step не ответил, выпуск в работе — рестарт не делаю")
+        print("банк: ace-step завис, выпуска нет — рестарт")
+        return restart(*a, **k)
+    return guard
+
+
 def guarded_scores(paths, busy, batch):
     """Критик чистит общий /app/output/qg в ace-step: при выпуске он чужой -> не запускаем.
     Старт выпуска = чистый выход (BankYield), не RuntimeError: повторный busy() в fill мог
@@ -211,9 +222,7 @@ def main():
     music = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(music)
 
-    def no_restart(*a, **k):
-        raise BankYield("ace-step не ответил, рестарт банку запрещён (приоритет выпуска)")
-    music.ace_restart = no_restart
+    music.ace_restart = restart_guard(release_busy, music.ace_restart)
 
     from quality_gate import ce_windows_batch, objective
     prompt, ref = music.GENRE_PROMPTS[genre], os.environ.get("ACE15_REF_AUDIO") or None
