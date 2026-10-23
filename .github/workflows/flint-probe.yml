@@ -26,7 +26,10 @@ jobs:
         run: |
           set -e
           if docker run --rm -v $M:/m alpine:3.20 sh -c "test \$(stat -c %s /m/$GGUF 2>/dev/null || echo 0) -eq $SIZE"; then echo HAVE; exit 0; fi
-          sh deploy/gpu-pc/disk_gate.sh c 26
+          # need = остаток докачки (flint.part уже на диске), а не весь файл заново
+          PART=$(docker run --rm -v $M:/m alpine:3.20 sh -c "stat -c %s /m/flint.part 2>/dev/null || echo 0")
+          NEED_GB=$(( (SIZE - PART) / 1000000000 + 1 ))
+          sh deploy/gpu-pc/disk_gate.sh c $NEED_GB
           # 404 прошлых прогонов: $GGUF не передавался в контейнер -> URL .../resolve/main/ . -e GGUF обязателен.
           docker run --rm -e GGUF -v $M:/m -w /m alpine:3.20 sh -ec '
             [ -n "$GGUF" ] || { echo "GGUF empty"; exit 1; }
