@@ -1,0 +1,12 @@
+name: ace-step diag (read-only)
+on:
+  workflow_dispatch:
+jobs:
+  diag:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 10
+    steps:
+      - name: logs + http probe
+        run: |
+          docker inspect ace-step --format 'state={{.State.Status}} health={{.State.Health.Status}} started={{.State.StartedAt}}'
+          docker logs --tail 120 ace-step 2>&1 | tail -120
