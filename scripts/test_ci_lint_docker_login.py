@@ -23,5 +23,9 @@ got = lint.lint_text(no_retry)
 assert (1, "push-no-retry") in got and (1, "push-no-prepull") in got, got
 with_retry = "run: |\n  for n in 1 2 3 4; do docker pull -q \"$B\" && break; done\n  for n in 1 2 3 4; do docker buildx build --push -t ghcr.io/x/y:latest . && exit 0; done\n"
 assert lint.lint_text(with_retry) == [], lint.lint_text(with_retry)
+# t_6758c86f: сетевой шаг без timeout-minutes = FAIL
+assert (1, "net-step-timeout") in lint.lint_net_timeout("      - uses: astral-sh/setup-uv@v3\n      - name: x\n        run: y\n".splitlines())
+assert (1, "net-step-timeout") in lint.lint_net_timeout("      - uses: actions/cache/restore@v4\n        with:\n          path: a\n".splitlines())
+assert not [x for x in lint.lint_net_timeout("      - name: a\n        uses: actions/cache@v4\n        timeout-minutes: 15\n        with:\n          path: a\n".splitlines()) if x[1] == "net-step-timeout"]
 assert lint.main(str(ROOT)) == 0
 print("ok")

@@ -27,6 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
+        timeout-minutes: 5  # t_6758c86f: сетевой шаг не висит до таймаута джобы
       - name: install deps
         run: |
           command -v ffmpeg || { sudo apt-get update -y && sudo apt-get install -y ffmpeg; }
@@ -79,6 +80,7 @@ jobs:
         if: steps.guard.outputs.go == '1'
         continue-on-error: true  # квота artifact storage репо (22:03 18.10) не должна валить выпуск  # root-cause: t_f95a06da
         uses: actions/upload-artifact@v4  # artifact-ok: логи прогона; доставка результата вне артефактов
+        timeout-minutes: 15  # t_6758c86f: сетевой шаг не висит до таймаута джобы
         with:
           name: owning-${{ github.run_id }}
           path: |

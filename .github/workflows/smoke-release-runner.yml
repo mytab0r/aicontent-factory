@@ -12,6 +12,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: astral-sh/setup-uv@v3
+        timeout-minutes: 5  # t_6758c86f: сетевой шаг не висит до таймаута джобы
       - run: echo "runner=$RUNNER_NAME temp=$RUNNER_TEMP"
       - run: uv --version && grep -E " $RUNNER_TEMP| /tmp/runner" /proc/mounts || true
       - name: ace-step reachable (daily-video зависимость)

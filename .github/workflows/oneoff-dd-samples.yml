@@ -13,6 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
+        timeout-minutes: 5  # t_6758c86f: сетевой шаг не висит до таймаута джобы
       - name: deps
         run: |
           uv venv .venv
@@ -24,6 +25,7 @@ jobs:
       - name: upload artifact (даже при неполном результате)
         if: always()
         uses: actions/upload-artifact@v4  # artifact-ok: логи прогона; доставка результата вне артефактов
+        timeout-minutes: 15  # t_6758c86f: сетевой шаг не висит до таймаута джобы
         with:
           name: dd-samples-${{ github.run_id }}
           path: samples_candidates/dd_*.mp3

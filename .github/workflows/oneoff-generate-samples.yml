@@ -13,6 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
+        timeout-minutes: 5  # t_6758c86f: сетевой шаг не висит до таймаута джобы
       - name: deps
         run: |
           uv venv .venv
@@ -113,6 +114,7 @@ jobs:
               print(f"GAVE UP on: {list(remaining)}", flush=True)
           PY
       - uses: actions/upload-artifact@v4  # artifact-ok: логи прогона; доставка результата вне артефактов
+        timeout-minutes: 15  # t_6758c86f: сетевой шаг не висит до таймаута джобы
         with:
           retention-days: 1  # t_9d452170: доставка вне артефактов (TG/git); квота storage 500MB
           name: candidate-samples

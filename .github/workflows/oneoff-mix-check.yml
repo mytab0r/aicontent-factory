@@ -51,6 +51,7 @@ jobs:
         run: python3 watchdog.py --guard
 
       - uses: astral-sh/setup-uv@v3
+        timeout-minutes: 5  # t_6758c86f: сетевой шаг не висит до таймаута джобы
         if: steps.guard.outputs.published != '1'
 
       - name: install deps
@@ -125,6 +126,7 @@ jobs:
           ffmpeg -loglevel error -y -t 60 -i "$d/track.mp3" -codec:a libmp3lame -b:a 192k out/start_60s.mp3
           ffmpeg -hide_banner -i "$d/track.mp3" -af silencedetect=n=-50dB:d=1,ebur128=peak=true -f null - 2>&1 | grep -E 'silence_|I:|Peak:' | tail -12
       - uses: actions/upload-artifact@v4  # artifact-ok: логи прогона; доставка результата вне артефактов
+        timeout-minutes: 15  # t_6758c86f: сетевой шаг не висит до таймаута джобы
         with:
           retention-days: 1  # t_9d452170: доставка вне артефактов (TG/git); квота storage 500MB
           name: mix-check
