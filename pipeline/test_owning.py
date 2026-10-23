@@ -127,8 +127,42 @@ def test_tts_retries_transient_failure():
         oc.subprocess.run = orig
 
 
+def test_tts_falls_back_to_alternate_voice():
+    """t_33aa9813: ретраи исчерпаны на прод-голосе — переход на запасной, а не падение выпуска."""
+    import subprocess as sp
+    calls = []
+
+    def fake(cmd, **k):
+        calls.append(cmd)
+        if "edge_tts" in cmd:
+            if "en-US-AndrewNeural" in cmd:
+                raise sp.CalledProcessError(1, cmd)
+            return sp.CompletedProcess(cmd, 0, "", "")
+        return sp.CompletedProcess(cmd, 0, "1.5" + chr(10), "")
+    orig, oc.subprocess.run = oc.subprocess.run, fake
+    try:
+        assert oc.tts("hi", Path("x.mp3"), sleep=lambda s: None) == 1.5
+        andrew = [c for c in calls if "en-US-AndrewNeural" in c]
+        guy = [c for c in calls if "en-US-GuyNeural" in c]
+        assert len(andrew) == oc.tts.__defaults__[1], "нет ретраев на прод-голосе"
+        assert len(guy) == 1, "фолбэк-голос не использован"
+    finally:
+        oc.subprocess.run = orig
+
+
+def test_render_filter_has_no_upscale():
+    """t_33aa9813: SIGKILL=OOM от scale=1188:2112 перед zoompan — рендер сразу в целевом разрешении."""
+    import inspect
+    src = inspect.getsource(oc.render)
+    assert "scale=1188:2112" not in src, "upscale перед zoompan вернул OOM"
+    assert "zoompan=" in src and "-threads" in src, "zoompan и threads cap должны остаться"
+    assert "peak child RSS" in inspect.getsource(oc), "нет лога пиковой памяти рендера"
+
+
 if __name__ == "__main__":
     test_tts_retries_transient_failure()
+    test_tts_falls_back_to_alternate_voice()
+    test_render_filter_has_no_upscale()
     test_count_today()
     test_rotation_varies_topic_hook_structure()
     test_prompt_carries_plan()
