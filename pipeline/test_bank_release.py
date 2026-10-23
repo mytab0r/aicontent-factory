@@ -220,6 +220,23 @@ def test_bank_main_skips_disabled_prompts():
             bank.refpool = saved
 
 
+def test_take_quarantines_broken_segment_in_bank():
+    """run 39905560585: битые сегменты исключались только в памяти выпуска и оставались в банке ->
+    генератор считал их годными, группа навсегда «полная». Битый уезжает в bank/<жанр>/broken."""
+    now = time.time()
+    ents = [meta(n, 89, "F major") for n in ("a", "b", "c")]
+    names = "".join(e["name"] + ".mp3\n" for e in ents)
+    metas = {f"/app/output/bank/anime-lofi/{e['name']}.json": json.dumps(
+        {"prompt": e["prompt"], "seed": e["seed"]}) for e in ents}
+    dk = FakeDocker({**metas, "/app/output/bank/anime-lofi": names})
+    ok = lambda p: Path(p).stat().st_size > 0
+    with tempfile.TemporaryDirectory() as td:
+        bank_release.take("anime lofi", 2, td, docker_sh=_cp(dk, broken={"b"}), now=now,
+                          rng=random.Random(1), valid=ok)
+    mv = [op[1] for op in dk.ops if "mv " in op[1]]
+    assert len(mv) == 1 and "/b.mp3" in mv[0] and "/b.json" in mv[0] and "/broken" in mv[0], dk.ops
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for f in fns:

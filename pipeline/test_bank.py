@@ -148,6 +148,21 @@ def test_persistent_failure_without_release_raises():
     raise AssertionError("устойчивый сбой должен ронять прогон")
 
 
+def test_target_grows_until_largest_group_has_margin():
+    """run 39905560585: банк 40/40 (цель достигнута), но самая большая группа 21 (89 F), 2 сегмента
+    битые -> 19 < 20 -> nobank, а генератор стоит: цель считалась по общему числу файлов.
+    Цель растёт, пока в одной группе нет need+margin сегментов (запас на битые)."""
+    c = {(92, "G major"): 12, (89, "F major"): 21, (82, "D major"): 6}
+    assert bank.effective_target(40, 40, c, 20) == 41  # 21 -> 22: +1
+    assert bank.effective_target(40, 40, {(89, "F major"): 25}, 20) == 40
+    assert bank.effective_target(40, 10, {}, 20) == 40  # пустой банк: цель как была (>= 22)
+    assert bank.effective_target(10, 30, {(1, "C major"): 5}, 20) == 47
+    src = (Path(__file__).resolve().parent / "bank.py").read_text(encoding="utf-8").split("def main", 1)[1]
+    assert "effective_target(" in src, "main() обязан пересчитывать цель через effective_target"
+    assert "need + MARGIN" in src, "choose_prompt обязан добивать группу до need + MARGIN"
+    assert ".mp3.part" in src and '"mv"' in src, "put: cp во временное имя + атомарный mv (обрыв прогона = нет битого .mp3)"
+
+
 if __name__ == "__main__":
     test_release_check_network_error_yields_not_crash()
     test_fill_stops_at_target_and_skips_rejects()
@@ -161,4 +176,5 @@ if __name__ == "__main__":
     test_generator_completes_largest_open_group()
     test_transient_failure_without_release_is_retried()
     test_persistent_failure_without_release_raises()
+    test_target_grows_until_largest_group_has_margin()
     print("ok test_bank")

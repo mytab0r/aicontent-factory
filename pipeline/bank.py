@@ -21,6 +21,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 BANK_ROOT = "/app/output/bank"
 CAP_FILES = 400  # ~4 МБ/сегмент -> ~1.6 ГБ, ниже лимита 15 ГБ спецификации
+MARGIN = 2  # запас сегментов в группе сверх need: битый сегмент не обнуляет выпуск (run 39905560585)
 
 
 class BankYield(Exception):
@@ -172,6 +173,13 @@ def choose_prompt(variants, counts, need, day_prompt, key):
     return max(open_, key=lambda v: counts[key(v)]) if open_ else day_prompt
 
 
+def effective_target(target, have, counts, need):
+    """Цель по общему числу файлов слепа к группам: 40/40 при группе 21 из need=20 и 2 битых ->
+    nobank, генератор стоит (run 39905560585). Растим цель, пока в одной группе нет need+MARGIN."""
+    gap = need + MARGIN - max(counts.values(), default=0)
+    return max(target, have + gap) if gap > 0 else target
+
+
 def group_counts(genre, docker_sh, now=None):
     """Свободные (не использованные 14 дней) сегменты банка по группам (bpm, key)."""
     import bank_release as br
@@ -215,9 +223,10 @@ def main():
         need = -(-int(os.environ.get("TRACK_DURATION_SEC", "3600")) // 180)
         try:
             counts = group_counts(genre, lambda *a: _sh("docker", *a))
-            prompt = choose_prompt(refpool.PROMPT_VARIANTS, counts, need, pair["prompt"],
+            prompt = choose_prompt(refpool.PROMPT_VARIANTS, counts, need + MARGIN, pair["prompt"],
                                    lambda v: (music.prompt_bpm(v), music.prompt_key(v)))
-            print(f"bank: группы {counts}, нужно {need} -> промпт {prompt[-30:]}")
+            target = effective_target(target, have(), counts, need)
+            print(f"bank: группы {counts}, нужно {need}+{MARGIN} -> промпт {prompt[-30:]}, цель {target}")
         except Exception as e:  # листинг банка недоступен -> промпт дня
             print(f"bank: группы не прочитаны ({type(e).__name__}: {e}); промпт дня")
             prompt = pair["prompt"]
@@ -241,7 +250,10 @@ def main():
         meta.write_text(json.dumps({"genre": genre, "prompt": prompt, "ref": ref, "seed": seed,
                                     "src": Path(p).name, "ts": int(time.time())}, ensure_ascii=False))
         _sh("docker", "cp", str(meta), f"ace-step:{d}/{name}.json")
-        _sh("docker", "cp", str(p), f"ace-step:{d}/{name}.mp3")  # mp3 последним: есть mp3 = есть meta
+        # mp3 последним: есть mp3 = есть meta. cp во временное имя + mv: обрыв/отмена прогона посреди
+        # cp оставлял битый .mp3, который считался годным (run 39905560585)
+        _sh("docker", "cp", str(p), f"ace-step:{d}/{name}.mp3.part")
+        _sh("docker", "exec", "ace-step", "mv", f"{d}/{name}.mp3.part", f"{d}/{name}.mp3")
         Path(p).unlink(missing_ok=True)
 
     n = fill(target, have, gen, put, release_busy)
