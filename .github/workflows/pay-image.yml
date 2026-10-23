@@ -17,11 +17,14 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+      # root-cause: t_0deb6ad8 -- docker/login-action = daemon-side ping https://ghcr.io/v2/ via Docker Desktop
+      # proxy, hard ~15s timeout, no retry; PC egress stalls fail the job. buildx sends creds client-side.
+      - name: ghcr auth (client-side config, no daemon ping)
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          d="$RUNNER_TEMP/docker"; mkdir -p "$d"; echo "DOCKER_CONFIG=$d" >> "$GITHUB_ENV"
+          printf '{"auths":{"ghcr.io":{"auth":"%s"}}}\n' "$(printf '%s:%s' "$GITHUB_ACTOR" "$GHCR_TOKEN" | base64 -w0)" > "$d/config.json"
       - uses: docker/build-push-action@v6
         with:
           context: .
