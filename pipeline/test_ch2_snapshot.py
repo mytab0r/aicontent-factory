@@ -29,6 +29,7 @@ def fake_collect(at):
 m.pa.collect = fake_collect
 m.pa.metric = lambda at, ids, start, name: {"v1": 7.0 if name == "views" else 1.0}
 m.traffic_sources = lambda at, vid, start: {"SEARCH": 3}
+m.v2_impressions = lambda at, ids, start: {"v1": (999, 9.9)}
 out = m.snapshot("at")
 assert "показы=1200" in out, out
 assert "CTR=4.2%" in out, out
@@ -44,6 +45,11 @@ for wf in ("daily-listshow.yml", "daily-whatif.yml"):
     for step in re.split(r"\n      - name: ", y)[1:]:
         if step.startswith(("token", "publish")):
             assert "if: steps.gate.outputs.go == '1'" in step, (wf, step.splitlines()[0])
+# reach пуст -> показы/CTR из Analytics v2
+m.pa.collect = lambda at: ([{"id": "v1", "title": "T1", "published": dt.datetime(2026, 10, 20, tzinfo=dt.timezone.utc),
+                             "retention": None, "ctr": None}], None)
+out = m.snapshot("at")
+assert "показы=999" in out and "CTR=9.9%" in out, out
 def fake_empty(at):
     return [], None
 m.pa.collect = fake_empty

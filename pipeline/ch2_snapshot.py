@@ -43,18 +43,33 @@ def traffic_sources(at, vid, start) -> dict:
     return {r[0]: int(r[1]) for r in rows}
 
 
+def v2_impressions(at, ids, start) -> dict:
+    """Analytics v2 videoThumbnailImpressions(+ClickRate) — запасной путь, когда reach-отчёт 403.
+    Ошибка = {} (н/д), не 0: пустой замер не сигнал."""
+    try:
+        q = urllib.parse.urlencode({"ids": "channel==MINE", "startDate": start, "endDate": dt.date.today().isoformat(),
+                                    "metrics": "videoThumbnailImpressions,videoThumbnailImpressionsClickRate",
+                                    "dimensions": "video", "filters": "video==" + ",".join(ids), "maxResults": 200})
+        return {r[0]: (int(r[1]), float(r[2]) * (100 if float(r[2]) <= 1 else 1))
+                for r in pa.api(pa.YTA + q, at).get("rows") or []}
+    except Exception as e:  # noqa: BLE001
+        print("v2 impressions unavailable:", type(e).__name__, e, file=sys.stderr)
+        return {}
+
+
 def snapshot(at) -> str:
     vids, ctr_note = pa.collect(at)
     if not vids:
         return "канал пуст: снапшотить нечего"
     ids, s0 = [v["id"] for v in vids], min(v["published"] for v in vids).date().isoformat()
     views, subs = (pa.metric(at, ids, s0, m) for m in ("views", "subscribersGained"))
+    v2 = v2_impressions(at, ids, s0)
     lines = [f"# ch2 снапшот {dt.datetime.now(dt.timezone.utc):%Y-%m-%d %H:%M}Z ({len(vids)} роликов)", ""]
     for v in vids:
         start = v["published"].date().isoformat()
         ts = traffic_sources(at, v["id"], start)
         top_ts = ", ".join(f"{k}={n}" for k, n in sorted(ts.items(), key=lambda x: -x[1])[:4])
-        imp, ctr = (v["ctr"] or (None, None)) if v["ctr"] else (None, None)
+        imp, ctr = v["ctr"] or v2.get(v["id"]) or (None, None)
         ret = v["retention"]
         lines.append(
             f"- {v['title']} ({v['id']}, {start}): просмотры={int(views.get(v['id'], 0))}, "
