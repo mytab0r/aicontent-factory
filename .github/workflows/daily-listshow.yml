@@ -83,7 +83,7 @@ jobs:
             runs/*/idea.json
             runs/*/render.json
             runs/*/published.json
-          retention-days: 14
+          retention-days: 1  # t_9d452170: доставка вне артефактов (TG/git); квота storage 500MB
       - name: cleanup token
         if: always()
         run: rm -f .state/youtube_token.json

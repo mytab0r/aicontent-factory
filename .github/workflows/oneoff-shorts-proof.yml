@@ -36,5 +36,6 @@ jobs:
           cat shorts-proof.json
       - uses: actions/upload-artifact@v4  # artifact-ok: логи прогона; доставка результата вне артефактов
         with:
+          retention-days: 1  # t_9d452170: доставка вне артефактов (TG/git); квота storage 500MB
           name: shorts-proof
           path: shorts-proof.json

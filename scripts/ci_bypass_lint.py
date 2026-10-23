@@ -19,9 +19,12 @@ DOCKER_LOGIN = re.compile(r"uses:\s*docker/login-action@|\bdocker\s+login\b")
 UPLOAD = re.compile(r"uses:\s*actions/upload-artifact@")
 ROOT_CAUSE = re.compile(r"#\s*root-cause:\s*t_[0-9a-f]{6,}")
 ARTIFACT_OK = re.compile(r"#\s*artifact-ok:\s*\S")
+# t_9d452170: каждый upload обязан иметь retention-days: 1 (квота storage 500MB/account; доставка вне артефактов)
+RETENTION_1 = re.compile(r"^\s*retention-days:\s*['\"]?1['\"]?\s*(#.*)?$")
+UPLOAD_CTX = 8  # между uses и retention бывают if:/continue-on-error: строки
 
 
-def _rules(line):
+def _rules(line, lines=None, i=0):
     if COE.match(line):
         yield "continue-on-error", ROOT_CAUSE
     m = OR_TRUE.search(line)
@@ -30,6 +33,8 @@ def _rules(line):
     if DOCKER_LOGIN.search(line) and not line.lstrip().startswith("#"):
         yield "docker-login", ROOT_CAUSE
     if UPLOAD.search(line):
+        if not any(RETENTION_1.match(x) for x in (lines or [])[i + 1:i + 1 + UPLOAD_CTX]):
+            yield "upload-retention", ROOT_CAUSE
         yield "upload-artifact", ARTIFACT_OK
 
 
@@ -44,7 +49,7 @@ def lint_text(text):
                 ctx.append(lines[j]); j -= 1
             if not any(ROOT_CAUSE.search(c) for c in ctx):
                 out.append((i + 1, "buildx-driver"))
-        for rule, waiver in _rules(line):
+        for rule, waiver in _rules(line, lines, i):
             ctx, j = [line], i - 1
             while j >= 0 and lines[j].strip().startswith("#"):
                 ctx.append(lines[j])

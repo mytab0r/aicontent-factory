@@ -19,6 +19,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
+          retention-days: 1  # t_9d452170: доставка вне артефактов (TG/git); квота storage 500MB
           python-version: "3.12"
       - name: download loop.mp4 из артефакта прогона 38151431259
         env:
@@ -162,6 +163,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4  # artifact-ok: логи прогона; доставка результата вне артефактов
         with:
+          retention-days: 1  # t_9d452170: доставка вне артефактов (TG/git); квота storage 500MB
           name: loop-final
           path: |
             runs/loopgen/run.json
