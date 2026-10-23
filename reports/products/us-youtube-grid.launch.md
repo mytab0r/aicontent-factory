@@ -1,5 +1,7 @@
 # us-youtube-grid (ch1 Owning) — launch gate (23.10.2026)
 
+Дата гейта: 2026-10-23
+
 Продукт: ch1 «Economics of Owning» (@OwningItMath, UC82JHx5Cl_kuxND-qHHwzTg) — нарративные Shorts
 (скрипт 9router + edge-tts + PIL/ffmpeg-инфографика), воркфлоу `.github/workflows/daily-owning.yml`,
 2 слота/день (15:00 и 21:00 UTC). Директива владельца 22.10: публикация только после GO гейта запуска.

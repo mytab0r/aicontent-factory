@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Launch gate: GO only if /opt/data/reports/products/<product>.launch.md has every required section,
-was updated within MAX_AGE_H, and ends with a critic line 'ВЕРДИКТ: GO'. Usage: launch_gate.py <product>"""
-import os, re, subprocess, sys, time
+has 'Дата гейта: YYYY-MM-DD' within MAX_AGE_H, and ends with a critic line 'ВЕРДИКТ: GO'. Usage: launch_gate.py <product>"""
+import calendar, os, re, sys, time
 from pathlib import Path
 
 REQUIRED = ["Счётчик открытий", "Премортем", "Симуляция", "Сухой прогон", "Критик"]
@@ -14,9 +14,11 @@ def gate(path):
     missing = [s for s in REQUIRED if not re.search(r"^#+ .*" + s, text, re.M)]
     if missing:
         return f"NO-GO: нет разделов {missing}"
-    ts = subprocess.run(["git", "log", "-1", "--format=%ct", "--", os.path.basename(path)], cwd=os.path.dirname(path),
-                        capture_output=True, text=True).stdout.strip()  # CI checkout сбрасывает mtime
-    age_h = (time.time() - (int(ts) if ts else os.path.getmtime(path))) / 3600
+    # Возраст — из явной строки в отчёте: mtime и git log в shallow CI-checkout дают дату HEAD, не файла.
+    m = re.search(r"^Дата гейта:\s*(\d{4}-\d{2}-\d{2})\s*$", text, re.M)
+    if not m:
+        return "NO-GO: нет строки 'Дата гейта: YYYY-MM-DD'"
+    age_h = (time.time() - calendar.timegm(time.strptime(m.group(1), "%Y-%m-%d"))) / 3600
     if age_h > MAX_AGE_H:
         return f"NO-GO: отчёт старше {MAX_AGE_H} ч ({age_h:.0f} ч) — повторить гейт"
     verdicts = re.findall(r"ВЕРДИКТ:\s*(GO|NO-GO)", text)
