@@ -31,10 +31,12 @@ def slug(genre: str) -> str:
     return genre.replace(" ", "-")
 
 
-def fill(target, have, make, put, busy, log=print, max_iter=40):
+def fill(target, have, make, put, busy, log=print, max_iter=40, max_consecutive_fail=3):
     """Наполнить банк до target. make(i) -> путь прошедшего гейт сегмента или None (брак).
-    busy() = выпуск идёт/в очереди -> выход. Сбой генерации при занятом GPU = уступили, без ошибки."""
-    n, i = have(), 0
+    busy() = выпуск идёт/в очереди -> выход. Сбой генерации при занятом GPU = уступили, без ошибки.
+    Сбой без выпуска (run 39884870081: oneMKL transient 0/21 на 39/40) = повтор, прогон роняем
+    только после max_consecutive_fail сбоев подряд — устойчивая поломка остаётся ошибкой."""
+    n, i, fails = have(), 0, 0
     while n < min(target, CAP_FILES) and i < max_iter:
         if busy():
             log(f"банк: выпуск в работе — уступаю GPU (в банке {n})")
@@ -48,8 +50,13 @@ def fill(target, have, make, put, busy, log=print, max_iter=40):
             if busy():
                 log(f"банк: сбой {type(e).__name__} во время выпуска — выхожу (в банке {n})")
                 break
-            raise
+            fails += 1
+            if fails >= max_consecutive_fail:
+                raise
+            log(f"банк: сбой {type(e).__name__} ({fails}/{max_consecutive_fail}) — повторяю: {e}")
+            continue
         i += 1
+        fails = 0
         if p:
             put(p)
             n += 1

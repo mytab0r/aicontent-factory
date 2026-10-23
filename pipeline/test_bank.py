@@ -125,3 +125,39 @@ if __name__ == "__main__":
     test_daily_state_commit_survives_parallel_matrix_conflict()
     test_generator_completes_largest_open_group()
     print("ok test_bank")
+
+
+def test_transient_failure_without_release_is_retried():
+    """run 39884870081: одноразовый сбой критика (oneMKL: Cannot load libtorch_cpu.so, 0/21)
+    на 39/40 уронил многочасовой прогон. Сбой без выпуска = повтор; падаем только после
+    max_consecutive_fail сбоев подряд (устойчивая поломка всё ещё роняет прогон)."""
+    fails = {"n": 0}
+    seen = {}
+
+    def make(i):
+        if i == 2 and not seen.get(i):  # transient: один раз, повтор успешен
+            seen[i] = True
+            fails["n"] += 1
+            raise RuntimeError("критик не отработал (0/21): oneMKL FATAL")
+        return f"s{i}"
+
+    put = []
+    n = bank.fill(4, lambda: 0, make, put.append, lambda: False, log=Q)
+    assert n == 4 and fails["n"] == 1, (n, fails)
+    assert put == ["s0", "s1", "s2", "s3"], put
+
+
+def test_persistent_failure_without_release_raises():
+    calls = {"n": 0}
+
+    def make(i):
+        calls["n"] += 1
+        raise RuntimeError("persistent breakage")
+
+    try:
+        bank.fill(5, lambda: 0, make, Q, lambda: False, log=Q)
+    except RuntimeError:
+        assert calls["n"] == 3, calls  # max_consecutive_fail по умолчанию
+        return
+    raise AssertionError("устойчивый сбой должен ронять прогон")
+
