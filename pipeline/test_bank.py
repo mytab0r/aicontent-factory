@@ -148,6 +148,18 @@ def test_persistent_failure_without_release_raises():
     raise AssertionError("устойчивый сбой должен ронять прогон")
 
 
+
+def test_ready_counts_only_full_free_groups():
+    """run 39905560585: в банке 40 файлов (цель 40) -> fill ничего не делал, но группа 89 F
+    имела 21, из них 2 битых -> 19 < 20 -> слот пропущен. Цель = готовые к выпуску сегменты
+    (полные группы по need), не число файлов."""
+    assert bank.ready({(92, "G major"): 12, (89, "F major"): 19, (82, "D major"): 7}, 20) == 0
+    assert bank.ready({(89, "F major"): 21, (82, "D major"): 6}, 20) == 20
+    assert bank.ready({(89, "F major"): 41, (82, "D major"): 20}, 20) == 60
+    src = (Path(__file__).resolve().parent / "bank.py").read_text(encoding="utf-8")
+    assert "ready(counts" in src.split("def main", 1)[1], "have() обязан считать полные группы"
+
+
 if __name__ == "__main__":
     test_release_check_network_error_yields_not_crash()
     test_fill_stops_at_target_and_skips_rejects()
@@ -161,4 +173,5 @@ if __name__ == "__main__":
     test_generator_completes_largest_open_group()
     test_transient_failure_without_release_is_retried()
     test_persistent_failure_without_release_raises()
+    test_ready_counts_only_full_free_groups()
     print("ok test_bank")

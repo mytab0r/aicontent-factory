@@ -98,6 +98,9 @@ def test_take_skips_broken_segment_and_refills():
                                 rng=random.Random(1), valid=ok)
         assert got is not None and len(got) == 2 and "b" not in {p.stem for p in got}, got
         assert sorted(x.name for x in Path(td).iterdir()) == sorted(p.name for p in got)
+        # битый удаляется из банка, иначе вечно занимает место в группе и fill его не заменяет
+        assert any("b.mp3" in " ".join(a) and "b.json" in " ".join(a) for a, c in dk.ops
+                   if a and a[0] == "exec" and "rm" in a), dk.ops
     with tempfile.TemporaryDirectory() as td:
         assert bank_release.take("anime lofi", 2, td, docker_sh=_cp(dk, broken={"a", "b"}), now=now,
                                  rng=random.Random(1), valid=ok) is None

@@ -151,6 +151,8 @@ def take(genre: str, need: int, run_dir: str, docker_sh=None, now=None, rng=None
                         dst.unlink()
                     except OSError:
                         pass
+                    # битый убираем из банка: иначе он вечно занимает место в группе (run 39905560585)
+                    docker_sh("exec", "ace-step", "rm", "-f", f"{d}/{n}.mp3", f"{d}/{n}.json")
                     break
                 good[n] = dst
             out.append(good[n])

@@ -172,6 +172,12 @@ def choose_prompt(variants, counts, need, day_prompt, key):
     return max(open_, key=lambda v: counts[key(v)]) if open_ else day_prompt
 
 
+def ready(counts: dict, need: int) -> int:
+    """Сегменты, готовые к выпуску: только полные группы (по need). Число файлов врёт: 40 файлов
+    в 3 группах по 12/21/6 (2 битых) = 0 выпусков (run 39905560585)."""
+    return sum(c // need * need for c in counts.values())
+
+
 def group_counts(genre, docker_sh, now=None):
     """Свободные (не использованные 14 дней) сегменты банка по группам (bpm, key)."""
     import bank_release as br
@@ -215,9 +221,11 @@ def main():
         need = -(-int(os.environ.get("TRACK_DURATION_SEC", "3600")) // 180)
         try:
             counts = group_counts(genre, lambda *a: _sh("docker", *a))
+            # цель = готовые к выпуску сегменты, не файлы: дефицит полных групп догенерируем
+            target = have() + max(0, target - ready(counts, need))
             prompt = choose_prompt(refpool.PROMPT_VARIANTS, counts, need, pair["prompt"],
                                    lambda v: (music.prompt_bpm(v), music.prompt_key(v)))
-            print(f"bank: группы {counts}, нужно {need} -> промпт {prompt[-30:]}")
+            print(f"bank: группы {counts}, нужно {need}, готово {ready(counts, need)} -> цель файлов {target}, промпт {prompt[-30:]}")
         except Exception as e:  # листинг банка недоступен -> промпт дня
             print(f"bank: группы не прочитаны ({type(e).__name__}: {e}); промпт дня")
             prompt = pair["prompt"]
