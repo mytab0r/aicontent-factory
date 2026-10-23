@@ -26,7 +26,7 @@ jobs:
     env:
       ROUTER_BASE_URL: https://9router.pxbt.app/v1
       ROUTER_API_KEY: ${{ secrets.ROUTER_API_KEY }}
-      LIST2D: ${{ vars.LIST2D }}
+      LIST2D: ${{ inputs.dryrun && '1' || vars.LIST2D }}  # dryrun = private, публики нет даже при LIST2D=0
       CH2_PRIVACY: ${{ inputs.dryrun && 'private' || 'public' }}
     steps:
       - name: flag
