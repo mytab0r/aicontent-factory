@@ -136,7 +136,9 @@ async function tronWallet() {
   const p = window.tron || window.tronLink || (window.tronWeb ? { tronWeb: window.tronWeb } : null);
   if (!p) throw Object.assign(new Error('кошелёк не найден'), { nowallet: true });
   if (p.request) {
-    const r = await p.request({ method: p === window.tron ? 'eth_requestAccounts' : 'tron_requestAccounts' });
+    let r;
+    try { r = await p.request({ method: p === window.tron ? 'eth_requestAccounts' : 'tron_requestAccounts' }); }
+    catch (e) { throw Object.assign(new Error('подключение отклонено'), { code: (e && e.code) || 4001, connect: true }); }
     if (r && (r.code === 4001 || r.code === 4000)) throw Object.assign(new Error('подключение отклонено'), { code: 4001, connect: true });
   }
   const tw = p.tronWeb || window.tronWeb;
