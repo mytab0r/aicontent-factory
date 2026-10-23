@@ -105,9 +105,21 @@ jobs:
             rm -rf /tmp/xlrun runs && mkdir -p /tmp/xlrun; SKIP_GEN=0
           fi
           docker exec ace-step ls -la /app/output/lora/out/final
+          # root-cause: t_849a846a — сумма таймаутов вариантов (2700+1500+3x2700 + рестарты по 18 мин)
+          # превышала timeout-minutes шага (150): при воркере-зомби каждый вариант жёг таймаут целиком,
+          # и шаг убивал GitHub (39071696001, 39084115119, 39095339812). Теперь таймаут варианта
+          # режется остатком бюджета шага; 1200 с резерв = рестарт ace-step (до 18 мин) + сборка A/B.
+          # Инвариант проверяет pipeline/test_xl_probe_budget.py (прогон gen() с заглушками).
+          STEP_END=$((SECONDS + 140 * 60))
           gen() {  # $1 = имя, далее env прод-варианта; TO= секунд timeout (по умолч. 2700)
             local name=$1; shift
+            local left=$((STEP_END - SECONDS - 1200))
             local to=${TO:-2700}
+            [ "$to" -le "$left" ] || to=$left
+            if [ "$to" -lt 300 ]; then
+              echo "::error::BUDGET: $name не запущен — до конца бюджета шага ${left} с (<300)"
+              return 0
+            fi
             local t0=$SECONDS
             d=runs/$(date -u +%Y%m%d_%H%M%S)_$name; mkdir -p "$d"
             echo '{"mood": "cozy lofi"}' > "$d/idea.json"
