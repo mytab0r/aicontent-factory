@@ -5,6 +5,10 @@ on:
   push:
     branches: [master]
   pull_request:
+# Вытеснение by design (t_7461c726): группа = одна ветка PR (или master), новый коммит отменяет прогон старого
+# с аннотацией «Canceling since a higher priority waiting request for ci-<ветка> exists» — это НЕ ошибка,
+# итог ветки судит прогон её HEAD. Ключ не огрублять (чужие ветки не должны делить группу), push не расширять
+# за master (иначе дубль push+PR на каждый коммит). Инвариант: pipeline/test_ci_concurrency.py.
 concurrency:
   group: ci-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
