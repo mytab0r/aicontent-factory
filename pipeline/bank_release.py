@@ -144,8 +144,13 @@ def take(genre: str, need: int, run_dir: str, docker_sh=None, now=None, rng=None
             n = e["name"]
             if n not in good:
                 dst = Path(run_dir) / f"{n}.mp3"
-                docker_sh("cp", f"ace-step:{d}/{n}.mp3", str(dst))
-                if not (dst.exists() and valid(dst)):
+                ok = False
+                for attempt in (1, 2):  # cp из контейнера бывает рваный (битые имена не
+                    docker_sh("cp", f"ace-step:{d}/{n}.mp3", str(dst))  # повторяются между прогонами) — одна повторная попытка до карантина
+                    if dst.exists() and valid(dst):
+                        ok = True
+                        break
+                if not ok:
                     bad.add(n)
                     # карантин в банке: иначе генератор считает битый годным и группа «полная»
                     # навсегда (run 39905560585); broken/ = обратимо, файлы не удаляем

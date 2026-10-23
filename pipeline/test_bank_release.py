@@ -237,6 +237,30 @@ def test_take_quarantines_broken_segment_in_bank():
     assert len(mv) == 1 and "/b.mp3" in mv[0] and "/b.json" in mv[0] and "/broken" in mv[0], dk.ops
 
 
+def test_take_retries_ragged_cp_before_quarantine():
+    """Битые имена не повторяются между прогонами (39905560585 vs 39908989867) -> это рваный
+    docker cp, а не битый файл. Первая попытка битая, вторая норм: сегмент берётся, карантина нет."""
+    now = time.time()
+    ents = [meta(n, 89, "F major") for n in ("a", "b")]
+    names = "".join(e["name"] + ".mp3\n" for e in ents)
+    metas = {f"/app/output/bank/anime-lofi/{e['name']}.json": json.dumps(
+        {"prompt": e["prompt"], "seed": e["seed"]}) for e in ents}
+    dk = FakeDocker({**metas, "/app/output/bank/anime-lofi": names})
+    tries = {"b": 0}
+
+    def valid(p):
+        if Path(p).stem == "b":
+            tries["b"] += 1
+            return tries["b"] > 1  # первая копия рваная
+        return True
+    with tempfile.TemporaryDirectory() as td:
+        got = bank_release.take("anime lofi", 2, td, docker_sh=_cp(dk), now=now,
+                                rng=random.Random(1), valid=valid)
+        assert got is not None and len(got) == 2, got
+    mv = [op[1] for op in dk.ops if "mv " in op[1]]
+    assert mv == [], mv
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for f in fns:
