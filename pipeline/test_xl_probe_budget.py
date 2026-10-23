@@ -49,5 +49,18 @@ def test_variants_fit_step_budget():
     assert end <= budget - 120, f"худший случай {end} с > бюджет шага {budget} с - 120 (сборка A/B)"
 
 
+def test_have_pipeline_survives_set_e():
+    """t_849a846a: HAVE=$(find ... | wc -l) без || echo 0 при set -e+pipefail убивал шаг
+    мгновенно (каталог /tmp/xlrun отсутствует после rm -rf на свежем раннере, find rc=1),
+    exit 1 без единой строки вывода. Строка обязана пережить отсутствие каталога."""
+    wf = (ROOT / ".github/workflows/xl-probe.yml").read_text()
+    line = next(l for l in wf.splitlines() if "HAVE=$(find /tmp/xlrun" in l)
+    assert "|| echo 0" in line, f"HAVE-строка должна гасить rc=1 find: {line.strip()}"
+    # поведенческая проверка того же класса: bash -e + pipefail, каталог не существует
+    r = subprocess.run(["bash", "-c", "set -e\nset -o pipefail\n" + line.strip().lstrip() + "\necho alive $HAVE"],
+                       capture_output=True, text=True)
+    assert r.returncode == 0 and "alive" in r.stdout, f"rc={r.returncode} out={r.stdout!r} err={r.stderr!r}"
+
+
 if __name__ == "__main__":
-    test_variants_fit_step_budget(); print("ok")
+    test_variants_fit_step_budget(); test_have_pipeline_survives_set_e(); print("ok")

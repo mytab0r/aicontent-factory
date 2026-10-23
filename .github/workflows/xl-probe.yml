@@ -98,7 +98,8 @@ jobs:
           set -e
           set -o pipefail   # if pipe|tee: код python, не tee
           # reuse: сырые варианты прошлого прогона целы на раннере -> не генерим заново (часы GPU)
-          HAVE=$(find /tmp/xlrun -maxdepth 1 -name '*.mp3' ! -name 'versija_*' 2>/dev/null | wc -l)
+          # root-cause: t_849a846a — find без каталога при set -e+pipefail ронял шаг мгновенно (exit 1 без вывода)
+          HAVE=$(find /tmp/xlrun -maxdepth 1 -name '*.mp3' ! -name 'versija_*' 2>/dev/null | wc -l || echo 0)
           if [ "${{ inputs.reuse }}" = true ] && [ "$HAVE" -ge 2 ]; then
             echo "REUSE: $HAVE готовых вариантов в /tmp/xlrun"; SKIP_GEN=1
           else
