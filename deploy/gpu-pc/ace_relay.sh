@@ -28,14 +28,10 @@ while read -r dg size; do
     [ "$waited" -ge 10800 ] && { echo "::error::blob $hex.blob not on HF after 3h"; exit 1; }
     echo "waiting blob $n ($hex) ${waited}s"
   done
-  ok=""
-  for att in 1 2 3 4 5 6 7 8; do
-    if curl -fSL --retry 5 --retry-delay 5 --retry-all-errors -C - -H "Authorization: Bearer $TOK" "https://huggingface.co/datasets/$REPO/resolve/main/$hex.blob" -o "$f.part"; then ok=1; break; fi
-    echo "download attempt $att failed (SSL/eof), resuming from $(stat -c %s "$f.part" 2>/dev/null || echo 0) bytes"
-    sleep 10
-  done
-  [ -n "$ok" ] || { echo "::error::download $hex failed after retries"; exit 1; }
-  mv "$f.part" "$f"
+  # root-cause t_5dccab9e: HF CDN closes any single connection after ~205 s (runs 39289005487/39290291128:
+  # "SSL_read: unexpected eof" at 1996 MiB -> "download <id> failed"). Ranged download, no retry loop.
+  sh "$(dirname "$0")/hf_get.sh" "https://huggingface.co/datasets/$REPO/resolve/main/$hex.blob" "$f" -H "Authorization: Bearer $TOK" \
+    || { echo "::error::download $hex failed (see hf_get range error above)"; exit 1; }
   [ "$(stat -c %s "$f")" = "$size" ] || { echo "::error::size mismatch $hex"; exit 1; }
   sha256sum "$f" | grep -q "$hex" || { echo "::error::sha mismatch $hex"; exit 1; }
   now=$(date +%s); dt=$((now-start)); [ "$dt" -lt 1 ] && dt=1

@@ -14,6 +14,24 @@ jobs:
       - uses: actions/checkout@v4
       - name: relay bloblist regression (t_d80ff074)
         run: python3 deploy/gpu-pc/test_ace_relay.py
+      - name: HF ranged download regression (t_5dccab9e)
+        run: python3 pipeline/test_hf_get.py
+      - name: relay blob download proof (t_5dccab9e)
+        # real HF download of the blob that failed in runs 39289005487/39290291128; on demand via commit tag
+        if: contains(github.event.head_commit.message, '[relay-proof]')
+        timeout-minutes: 60
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          set -eu
+          hex=05ef786fe0dd8c118faee7c6964d759a1ae47576a86cfe8d0a76379b9ef9a2b3
+          D=/work/dockerlocal/ace-relay/proof
+          trap 'docker exec hermes-runner rm -rf $D' EXIT
+          printf '%s' "$HF_TOKEN" | docker exec -i hermes-runner sh -c "mkdir -p $D && umask 077 && cat > $D/.tok"
+          docker cp deploy/gpu-pc/hf_get.sh hermes-runner:$D/hf_get.sh
+          free=$(docker exec hermes-runner df -BG --output=avail /work | tail -1 | tr -dc 0-9)
+          echo "D: free ${free}G"; [ "$free" -ge 50 ] || { echo "::error::D: free ${free}G < 50G floor+blob"; exit 1; }
+          docker exec hermes-runner sh -c "cd $D && sh hf_get.sh https://huggingface.co/datasets/mytab0r/ace-step-relay/resolve/main/$hex.blob $hex.blob -H \"Authorization: Bearer \$(cat .tok)\" && ls -l $hex.blob && sha256sum $hex.blob | grep -q $hex && echo PROOF_OK $hex"
       - name: ensure ace-step
         timeout-minutes: 280
         env:
