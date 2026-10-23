@@ -37,6 +37,7 @@ STRUCTURES = [
 ]  # 3
 MAX_PER_DAY = 2
 VOICE = "en-US-AndrewNeural"  # ponytail: один голос = узнаваемость канала; смена только через sample gate
+FALLBACK_VOICE = "en-US-GuyNeural"  # запасной, только если edge-tts недоступен на основном; прод = Andrew
 MAX_SPEECH_WORDS = 150  # ~55 с при 165 wpm: Short <= 60 с
 
 AI_NOTE = "AI-generated narration and visuals (synthetic content)."
@@ -177,16 +178,30 @@ def card(path: Path, title: str, big: str, label: str, say: str, pal, step: int,
     im.save(path)
 
 
-def tts(text: str, out: Path, sleep=None, tries=4) -> float:
+def _run_ffmpeg(cmd: list) -> None:
+    """ffmpeg + пик памяти детей в лог (t_33aa9813: SIGKILL=OOM на release-раннере, run 39874830908)."""
+    try:
+        import resource
+    except ImportError:
+        resource = None
+    subprocess.run(cmd, check=True)
+    if resource:  # ru_maxrss = пик RSS детей, KB на Linux; в рендере доминирует ffmpeg
+        print(f"peak child RSS: {resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss / 1024:.0f} MB")
+
+
+def tts(text: str, out: Path, sleep=None, tries=4, voice=VOICE) -> float:
     import time
     sleep = sleep or time.sleep
     for k in range(tries):  # edge_tts NoAudioReceived = сбой сервиса, повтор с паузой (run 39659160544)
         try:
-            subprocess.run([sys.executable, "-m", "edge_tts", "--voice", VOICE, "--rate", "+6%",
+            subprocess.run([sys.executable, "-m", "edge_tts", "--voice", voice, "--rate", "+6%",
                             "--text", text, "--write-media", str(out)], check=True)
             break
         except subprocess.CalledProcessError:
             if k == tries - 1:
+                if voice == VOICE:  # t_33aa9813: ретраи исчерпаны -> фолбэк-голос, выпуск не падает
+                    print(f"edge_tts недоступен на {VOICE} после {tries} попыток, фолбэк на {FALLBACK_VOICE}")
+                    return tts(text, out, sleep=sleep, tries=3, voice=FALLBACK_VOICE)
                 raise
             sleep(15 * (k + 1))
     dur = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(out)],
@@ -210,11 +225,11 @@ def render(run_dir: Path) -> Path:
         card(img, s["title"], b["big"], b.get("label", ""), b["say"], pal, i, len(beats))
         n = int(dur * 30)
         # лёгкий zoom-in: кадр не статичен
-        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-i", str(img), "-i", str(a),
-                        "-filter_complex", f"[0:v]scale=1188:2112,zoompan=z='1+0.06*on/{n}':d={n}:s=1080x1920:fps=30"
+        _run_ffmpeg(["ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-i", str(img), "-i", str(a),
+                     "-filter_complex", f"[0:v]zoompan=z='1+0.06*on/{n}':d={n}:s=1080x1920:fps=30"
                         f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)',format=yuv420p[v];[1:a]apad=pad_dur=0.25[a]",
                         "-map", "[v]", "-map", "[a]", "-t", f"{dur:.2f}", "-c:v", "libx264", "-preset", "veryfast",
-                        "-c:a", "aac", "-ar", "44100", "-ac", "2", str(seg)], check=True)
+                     "-threads", "2", "-c:a", "aac", "-ar", "44100", "-ac", "2", str(seg)])
         segs.append(seg)
     import localize
     localize.write_cues(run_dir / "cues.json", said)  # тайминги реплик для ES/PT субтитров (t_b9eb61b2)
