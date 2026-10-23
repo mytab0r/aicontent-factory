@@ -32,13 +32,20 @@ def slug(genre: str) -> str:
     return genre.replace(" ", "-")
 
 
-def fill(target, have, make, put, busy, log=print, max_iter=40, max_consecutive_fail=3):
+def fill(target, have, make, put, busy, log=print, max_iter=40, max_consecutive_fail=3, deadline=None):
     """Наполнить банк до target. make(i) -> путь прошедшего гейт сегмента или None (брак).
     busy() = выпуск идёт/в очереди -> выход. Сбой генерации при занятом GPU = уступили, без ошибки.
     Сбой без выпуска (run 39884870081: oneMKL transient 0/21 на 39/40) = повтор, прогон роняем
-    только после max_consecutive_fail сбоев подряд — устойчивая поломка остаётся ошибкой."""
+    только после max_consecutive_fail сбоев подряд — устойчивая поломка остаётся ошибкой.
+    deadline = monotonic-метка: после неё чистый выход (root-cause t_c10bb82c: runs 39693436157 /
+    39821580626 — банк не следит за бюджетом джобы, 170 мин съедается на CE-гейтах CPU, GitHub
+    режет джобу по таймауту и весь прогон впустую; банковские mp3 уже в контейнере, но хвост
+    + логи/алерты теряются)."""
     n, i, fails = have(), 0, 0
     while n < min(target, CAP_FILES) and i < max_iter:
+        if deadline and time.monotonic() > deadline:
+            log(f"банк: бюджет джобы исчерпан — выхожу чисто (в банке {n})")
+            break
         if busy():
             log(f"банк: выпуск в работе — уступаю GPU (в банке {n})")
             break
@@ -293,7 +300,9 @@ def main():
         _sh("docker", "exec", "ace-step", "mv", f"{d}/{name}.mp3.part", f"{d}/{name}.mp3")
         Path(p).unlink(missing_ok=True)
 
-    n = fill(target, have, gen, put, release_busy)
+    dmin = float(os.environ.get("BANK_DEADLINE_MIN", "0") or 0)
+    deadline = time.monotonic() + dmin * 60 if dmin else None
+    n = fill(target, have, gen, put, release_busy, deadline=deadline)
     print(f"банк {genre}: {n} сегментов (цель {target})")
 
 

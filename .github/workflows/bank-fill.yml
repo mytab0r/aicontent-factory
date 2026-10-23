@@ -5,6 +5,11 @@ on:
   schedule:
     - cron: "20 */2 * * *"
   workflow_dispatch:
+    inputs:
+      deadline_min:  # root-cause t_c10bb82c: быстрый прогон механизма бюджета без 150 мин
+        description: "Бюджет fill, минут (0 = без бюджета)"
+        default: "150"
+        type: string
 concurrency:
   group: bank-fill
   cancel-in-progress: false
@@ -33,6 +38,7 @@ jobs:
       ACE15_REF_AUDIO: ${{ matrix.ref }}
       ACE15_BESTOF: "3"      # t_ba72c7aa R5: отбор best-of живёт в генераторе, не в слоте публикации
       ACE15_SEG_EXTRA: "2"
+      BANK_DEADLINE_MIN: ${{ inputs.deadline_min || '150' }}  # root-cause t_c10bb82c: бюджет < timeout 170, иначе отмена посреди CPU-работы
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4

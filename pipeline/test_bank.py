@@ -17,6 +17,23 @@ def test_fill_stops_at_target_and_skips_rejects():
     assert n == 3 and put == ["s1", "s2"], (n, put)
 
 
+def test_fill_exits_cleanly_at_deadline():
+    # t_c10bb82c: runs 39693436157/39821580626 — GitHub режет джобу по таймауту посреди fill.
+    # Бюджет исчерпан -> чистый выход с уже собранными сегментами, без отмены.
+    import time as _t
+    deadline = _t.monotonic() - 1  # уже в прошлом
+    put, made = [], []
+    def make(i):
+        made.append(i)
+        return f"s{i}"
+    n = bank.fill(5, lambda: 0, make, put.append, lambda: False, log=Q, deadline=deadline)
+    assert n == 0 and not put and not made, (n, put, made)
+    put.clear()
+    n = bank.fill(5, lambda: 0, lambda i: "x", put.append, lambda: False, log=Q,
+                  deadline=_t.monotonic() + 60)
+    assert n == 5 and put == ["x"] * 5  # живой бюджет работу не ломает
+
+
 def test_fill_yields_to_release():
     calls = []
     n = bank.fill(9, lambda: 0, lambda i: calls.append(i) or "x", Q, lambda: True, log=Q)
