@@ -13,13 +13,24 @@ permissions:
   actions: read
 jobs:
   fill:
+    # 23.10: GENRE был захардкожен = anime lofi -> у chill phonk генератора не было, все его слоты nobank.
+    # Матрица = жанры daily-video (test_every_release_genre_has_bank_generator); один GPU -> по очереди.
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        include:
+          - genre: "anime lofi"
+            ref: /tmp/acf-ref/ref1.wav
+          - genre: "chill phonk"
+            ref: ""  # phonk одобрен без эталона (noref), как в daily-video
     runs-on: [self-hosted, pc]
     timeout-minutes: 170
     env:
-      GENRE: anime lofi
+      GENRE: ${{ matrix.genre }}
       BANK_TARGET: "40"  # t_ba72c7aa R3: >= 2 выпуска вперёд (40 x 180с = 2 x час)
       ACE15_ENDPOINT: http://ace-step:8001  # ACE-Step 1.5 REST на ПК (comfynet)
-      ACE15_REF_AUDIO: /tmp/acf-ref/ref1.wav
+      ACE15_REF_AUDIO: ${{ matrix.ref }}
       ACE15_BESTOF: "3"      # t_ba72c7aa R5: отбор best-of живёт в генераторе, не в слоте публикации
       ACE15_SEG_EXTRA: "2"
       GH_TOKEN: ${{ github.token }}
@@ -48,6 +59,7 @@ jobs:
           echo "::error::ace-step не healthy за 10 мин: $(docker inspect -f '{{.State.Status}}' ace-step 2>&1)"; docker logs --tail 80 ace-step 2>&1 || true; exit 1
       - name: reference audio (cache)
         run: |
+          [ -z "$ACE15_REF_AUDIO" ] && exit 0  # noref-жанр
           [ -s "$ACE15_REF_AUDIO" ] && exit 0
           mkdir -p /tmp/acf-ref
           .venv/bin/yt-dlp -q -f bestaudio -o '/tmp/acf-ref/raw1.%(ext)s' https://youtu.be/CYZeAfaj3pc || exit 0

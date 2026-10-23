@@ -191,6 +191,21 @@ def effective_target(target, have, counts, need):
     return max(target, have + gap) if gap > 0 else target
 
 
+def pin_prompt(prompt, counts, need, seed):
+    """Жанр без «NN BPM, X major» в промпте (chill phonk): bpm/key брались из seed КАЖДОГО сегмента ->
+    банк размазан по группам, 20 совместимых не набрать (слоты phonk 22-23.10 все nobank).
+    Фиксируем пару в тексте: добиваем самую большую незакрытую группу, иначе пара из seed."""
+    import importlib.util as _u
+    spec = _u.spec_from_file_location("music_pin", HERE / "03_music.py")
+    m = _u.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    if m.prompt_bpm(prompt) and m.prompt_key(prompt):
+        return prompt
+    open_ = [k for k, n in counts.items() if k[0] and k[1] and 0 < n < need]
+    bpm, key = max(open_, key=counts.get) if open_ else (70 + seed % 21, m.ACE15_KEYS[seed % len(m.ACE15_KEYS)])
+    return f"{prompt}, {bpm} BPM, {key}"
+
+
 def group_counts(genre, docker_sh, now=None):
     """Свободные (не использованные 14 дней) сегменты банка по группам (bpm, key)."""
     import bank_release as br
@@ -226,10 +241,22 @@ def main():
 
     from quality_gate import ce_windows_batch, objective
     prompt, ref = music.GENRE_PROMPTS[genre], os.environ.get("ACE15_REF_AUDIO") or None
+    seed = random.randrange(2**31)
+    need = -(-int(os.environ.get("TRACK_DURATION_SEC", "3600")) // 180)
+    if genre != "anime lofi":  # refpool = семейство ab_1/ab_3 + эталоны только для lofi; phonk одобрен noref
+        try:
+            counts = group_counts(genre, lambda *a: _sh("docker", *a))
+        except Exception as e:
+            print(f"bank: группы не прочитаны ({type(e).__name__}: {e})")
+            counts = {}
+        prompt = pin_prompt(prompt, counts, need + MARGIN, seed)
+        target = effective_target(target, have(), counts, need)
+        print(f"bank {genre}: группы {counts} -> промпт ...{prompt[-24:]}, цель {target}")
     try:
+        if genre != "anime lofi":
+            raise LookupError("refpool только для anime lofi")
         import refpool
         pair = refpool.pick()
-        need = -(-int(os.environ.get("TRACK_DURATION_SEC", "3600")) // 180)
         try:
             counts = group_counts(genre, lambda *a: _sh("docker", *a))
             prompt = choose_prompt(refpool.PROMPT_VARIANTS, counts, need + MARGIN, pair["prompt"],
@@ -241,12 +268,13 @@ def main():
             prompt = pair["prompt"]
         refpool.ensure_ref(pair)
         ref = pair["ref_path"]
+    except LookupError:
+        pass
     except Exception as e:  # как в 03_music: эталон дня недоступен -> ref1
         print(f"refpool: {type(e).__name__}: {e}; fallback ref1")
     if ref and not Path(ref).is_file():
         ref = None
     run_dir = Path(tempfile.mkdtemp(prefix="bank_"))
-    seed = random.randrange(2**31)
     def scores(paths):
         return guarded_scores(paths, release_busy, ce_windows_batch)
 
