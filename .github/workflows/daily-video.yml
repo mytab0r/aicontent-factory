@@ -168,6 +168,17 @@ jobs:
           fi
           exit "$rc"
 
+      # P20 (аудит 23.10): пустой банк = зелёный прогон без выпуска, только ::warning — простой не виден.
+      - name: TG alert nobank (слот пропущен)
+        if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank == '1'
+        working-directory: pipeline
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          TG_THREAD_ID: ${{ secrets.TG_THREAD_ID }}
+        run: |
+          python3 -c "from common import tg_send; tg_send('⚠️ daily-video (${{ matrix.genre }}): банк сегментов пуст — слот пропущен, выпуска нет. Лог: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}')"
+
       # 16.10: на канал ушла «каша» (LRA 1.4), проверялись только тишина/LUFS. Критик: эталон жанра + audiobox CE.
       # FAIL = выпуск не публикуется (TG alert ниже); следующий слот жанра генерирует заново.
       - name: 03c quality gate (критик, FAIL = не публиковать)
