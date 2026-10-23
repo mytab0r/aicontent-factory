@@ -24,6 +24,15 @@ export function defaultConfig() {
   return { addresses: {}, pairs: {} };
 }
 
+/**
+ * Переопределение контракта пары через окружение (тесты / Nile): PAY_PAIR_<ID>_TOKEN.
+ * На проде env-переменных нет -> возвращается mainnet-контракт из PAIRS, поведение не меняется.
+ */
+export function pairToken(pairId) {
+  const ov = globalThis.PAY_PAIR_TOKEN_ENV && globalThis.PAY_PAIR_TOKEN_ENV(pairId);
+  return ov || PAIRS[pairId]?.token;
+}
+
 /** Адрес какой цепочки нужен паре; null если пара невалидна/выключена/нет адреса. */
 export function pairEndpoint(cfg, pairId) {
   const meta = PAIRS[pairId];
