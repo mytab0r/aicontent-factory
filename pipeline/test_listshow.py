@@ -231,6 +231,45 @@ def test_idea_retries_after_short_plan_then_broken_json():
         _wf.router_stream, ls.STATE = orig, old_state
 
 
+def test_verify_dryrun_private_and_mismatch():
+    """t_f807dc99: сухой прогон — private, title=idea.json, плейлист, длина файла, ссылка на long у Shorts."""
+    import json as _json
+    d = Path(tempfile.mkdtemp())
+    (d / "idea.json").write_text(_json.dumps({"title": "Ten Things"}))
+    (d / "render.json").write_text(_json.dumps({"long": "L.mp4", "shorts": ["S1.mp4"]}))
+    long_url = "https://www.youtube.com/watch?v=L1"
+    (d / "published.json").write_text(_json.dumps({"long": long_url, "short_1": "https://www.youtube.com/watch?v=S1"}))
+    vids = {"L1": {"snippet": {"title": "Ten Things", "description": "x"}, "status": {"privacyStatus": "private"},
+                   "contentDetails": {"duration": "PT10M2S"}},
+            "S1": {"snippet": {"title": "Ten Things (part 1) #Shorts", "description": "Full video: " + long_url},
+                   "status": {"privacyStatus": "private"}, "contentDetails": {"duration": "PT45S"}}}
+
+    class Req:
+        def __init__(self, r): self.r = r
+        def execute(self): return self.r
+
+    class Y:
+        def playlists(self): return self
+        def playlistItems(self): return self
+        def videos(self): return self
+        def list(self, **kw):
+            if "id" in kw:
+                return Req({"items": [vids[kw["id"]]] if kw["id"] in vids else []})
+            if "playlistId" in kw:
+                return Req({"items": [{"snippet": {"resourceId": {"videoId": v}}} for v in ("L1", "S1")]})
+            return Req({"items": [{"id": "PL", "snippet": {"title": ls.PLAYLIST}}]})
+
+    os.environ["CH2_PRIVACY"] = "private"
+    probe = {"L.mp4": 601.5, "S1.mp4": 45.0}.get
+    assert ls.verify(d, Y(), probe) == []
+    vids["S1"]["snippet"]["description"] = "no link"
+    vids["L1"]["status"]["privacyStatus"] = "public"
+    bad = ls.verify(d, Y(), lambda f: 300.0 if f == "L.mp4" else 45.0)
+    assert any("privacy" in b for b in bad) and any("длина" in b for b in bad) and any("ссылки" in b for b in bad), bad
+    os.environ.pop("CH2_PRIVACY")
+    assert ls.privacy() == "public"
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

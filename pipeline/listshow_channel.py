@@ -348,6 +348,59 @@ def upload_limit_hit(e: Exception) -> bool:
     return "uploadLimitExceeded" in str(e)
 
 
+def privacy() -> str:
+    """CH2_PRIVACY=private|unlisted = сухой прогон launch-гейта (t_f807dc99); иначе public."""
+    v = os.environ.get("CH2_PRIVACY", "public")
+    assert v in ("public", "private", "unlisted"), v
+    return v
+
+
+def verify(run_dir: Path, y=None, probe=None) -> list:
+    """Автосверка выложенного: title = idea.json, privacy = privacy(), ролик в плейлисте, длина = файл ±2 с,
+    у Shorts в описании ссылка на long. Возвращает список расхождений (пусто = зелёно)."""
+    import re
+    s = json.loads((run_dir / "idea.json").read_text(encoding="utf-8"))
+    meta = json.loads((run_dir / "render.json").read_text())
+    done = json.loads((run_dir / "published.json").read_text())
+    if y is None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("pub", Path(__file__).parent / "05_publish.py")
+        pub = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(pub)
+        y = pub._get_youtube_service()
+    probe = probe or (lambda f: float(subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(f)],
+        capture_output=True, text=True, check=True).stdout))
+    want = {"long": (meta["long"], s["title"][:100])}
+    for k, path in enumerate(meta["shorts"], 1):
+        want[f"short_{k}"] = (path, f"{s['title'][:80]} (part {k}) #Shorts"[:100])
+    pid = _playlist(y)
+    in_pl = {i["snippet"]["resourceId"]["videoId"] for i in
+             y.playlistItems().list(part="snippet", playlistId=pid, maxResults=50).execute().get("items", [])}
+    bad = []
+    for key, url in done.items():
+        vid = url.rsplit("=", 1)[1]
+        it = (y.videos().list(part="snippet,status,contentDetails", id=vid).execute().get("items") or [None])[0]
+        if not it:
+            bad.append(f"{key}: видео {vid} не найдено")
+            continue
+        path, title = want[key]
+        m = re.fullmatch(r"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", it["contentDetails"]["duration"])
+        dur = sum(int(g or 0) * k for g, k in zip(m.groups(), (3600, 60, 1))) if m else -1
+        checks = {"title": (it["snippet"]["title"], title), "privacy": (it["status"]["privacyStatus"], privacy()),
+                  "playlist": (vid in in_pl, True)}
+        for name, (got, exp) in checks.items():
+            if got != exp:
+                bad.append(f"{key}: {name} {got!r} != {exp!r}")
+        if abs(dur - probe(path)) > 2:
+            bad.append(f"{key}: длина {dur} с != файл {probe(path):.0f} с")
+        if key.startswith("short_") and "long" in done and done["long"] not in it["snippet"]["description"]:
+            bad.append(f"{key}: нет ссылки на long в описании")
+        print(f"verify {key} {vid}: title/privacy/playlist/длина {dur} с")
+    print("VERIFY:", "OK" if not bad else bad)
+    return bad
+
+
 def publish(run_dir: Path) -> dict:
     import importlib.util
     from googleapiclient.http import MediaFileUpload
@@ -364,7 +417,7 @@ def publish(run_dir: Path) -> dict:
     def up(path, title, desc):
         body = {"snippet": {"title": title[:100], "description": desc, "tags": s.get("tags", [])[:15],
                             "categoryId": "24", "defaultLanguage": "en", "defaultAudioLanguage": "en"},
-                "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False,
+                "status": {"privacyStatus": privacy(), "selfDeclaredMadeForKids": False,
                            "containsSyntheticMedia": True}}
         req = y.videos().insert(part="snippet,status", body=body,
                                 media_body=MediaFileUpload(str(path), mimetype="video/mp4",
@@ -403,11 +456,12 @@ def publish(run_dir: Path) -> dict:
 
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""
-    if cmd not in ("idea", "render", "publish"):
+    if cmd not in ("idea", "render", "publish", "verify"):
         sys.exit(__doc__)
     if not enabled():
         print(f"listshow disabled (LIST2D!=1): {cmd} skipped")
         sys.exit(0)
     from common import latest_run_dir
     {"idea": lambda: idea(), "render": lambda: render(latest_run_dir()),
-     "publish": lambda: publish(latest_run_dir())}[cmd]()
+     "publish": lambda: publish(latest_run_dir()),
+     "verify": lambda: sys.exit(1 if verify(latest_run_dir()) else 0)}[cmd]()
