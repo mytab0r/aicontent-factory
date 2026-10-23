@@ -2,15 +2,20 @@
  * GET /admin — админка: подключение кошельков (подпись), галочки пар.
  * Защита: CF Access на пути /admin (email владельца) — настраивается в CF Zero Trust,
  * здесь никакой парольной логики нет; доступ к /api/admin/* тоже закрывается CF Access.
+ *
+ * Кошельки — Reown AppKit (WalletConnect), одна кнопка <appkit-button>:
+ * мобила = список установленных кошельков (SafePal, Trust, MetaMask, OKX...), деск = расширения/QR.
+ * EVM-подпись personal_sign через универсальный EIP-1193 провайдер AppKit;
+ * Solana — window-провайдер (Phantom/SafePal); Tron — прямой TIP-1193 (AppKit Tron-адаптера нет).
+ * projectId приходит из env.REOWN_PROJECT_ID (прод: secrets.json; e2e: инжект).
  */
 import { PAIRS } from '../lib/config.js';
-import { qrcodeFactory } from '../vendor/qrcode/qrcode.js';
 
-// JSON внутрь <script>: экранируем '<', чтобы данные не закрыли тег
 const inline = (v) => JSON.stringify(v).replace(/</g, '\\u003c');
 
 export async function onRequestGet({ env } = {}) {
   const providers = (env && env.PROVIDERS) || [];
+  const projectId = (env && env.REOWN_PROJECT_ID) || '';
   const html = `<!doctype html>
 <html lang="ru"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -24,20 +29,30 @@ export async function onRequestGet({ env } = {}) {
  .addr{font-family:monospace;word-break:break-all}
  #log{white-space:pre-wrap;color:#8a92a3;font-size:13px;margin-top:12px}
  label.pairline{display:block;margin:8px 0}
-</style></head><body>
+ appkit-button{margin:4px 0}
+</style>
+<script type="module">
+ try {
+  const [{ createAppKit }, { WagmiAdapter }] = await Promise.all([
+    import('https://esm.sh/@reown/appkit@1.7.18'),
+    import('https://esm.sh/@reown/appkit-adapter-wagmi@1.7.18'),
+  ]);
+  const projectId = ${inline(projectId)};
+  const networks = [{ id: 8453, name: 'Base', nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: ['https://mainnet.base.org'] } } }];
+  const wagmiAdapter = new WagmiAdapter({ networks, projectId });
+  const modal = createAppKit({ adapters: [wagmiAdapter], networks, projectId, features: { analytics: false } });
+  window.__appkit = { modal, wagmiConfig: wagmiAdapter.wagmiConfig };
+ } catch (e) { window.__appkitError = String(e && e.message || e); }
+</script></head><body>
 <h1>pay.pxbt.app</h1>
 <div class="card">
  <h3>1. Подключить кошелёк (подпись = доказательство владения)</h3>
- <button id="connect-evm" onclick="claim('evm')">EVM (MetaMask/инжектед)</button>
- <button id="connect-tron" onclick="claim('tron')">Tron (TronLink)</button>
- <button id="connect-solana" onclick="claim('solana')">Solana (Phantom)</button>
+ <appkit-button></appkit-button>
+ <button id="connect-evm" onclick="claim('evm')">Подписать (EVM)</button>
+ <button id="connect-solana" onclick="claim('solana')">Подписать (Solana)</button>
+ <button id="connect-tron" onclick="claim('tron')">Подписать (Tron)</button>
  <div id="addresses" class="addr"></div>
- <div id="nowallet" hidden>
-  <p>Расширение кошелька в этом браузере не найдено. Откройте страницу в мобильном кошельке:
-  отсканируйте QR телефоном или нажмите ссылку, затем подпишите там.</p>
-  <p><a class="deeplink" target="_blank" rel="noopener"></a></p>
-  <div class="qr" style="background:#fff;width:200px;padding:8px"></div>
- </div>
+ <div id="nowallet" hidden><p id="nowallet-msg"></p></div>
 </div>
 <div class="card">
  <h3>2. Какие пары показывать клиенту</h3>
@@ -49,10 +64,7 @@ export async function onRequestGet({ env } = {}) {
 <script>
 const PAIRS = ${inline(PAIRS)};
 const PROVIDERS = ${inline(providers)};
-const CHAINS = { evm: 'evm', tron: 'tron', solana: 'solana' };
 const log = (m) => document.getElementById('log').textContent += m + '\\n';
-
-const qrcode = (${qrcodeFactory.toString()})();
 const API_TIMEOUT = 15000;
 const api = async (url, body) => {
   const ac = new AbortController();
@@ -64,91 +76,92 @@ const api = async (url, body) => {
   finally { clearTimeout(t); }
 };
 const hexUtf8 = (s) => '0x' + Array.from(new TextEncoder().encode(s), (b) => b.toString(16).padStart(2, '0')).join('');
-const rejected = (e) => e && (e.code === 4001 || /declined|reject|denied|cancel/i.test(String(e.message || e)));
+const rejected = (e) => e && (e.code === 4001 || /declined|reject|denied|cancel/i.test(String((e && e.message) || e)));
+const nonceMsg = (nonce) => 'pay.pxbt.app: claim ' + nonce + '\\nвладелец pxbt.app';
 
-function eip6963() {
-  return new Promise((res) => {
-    let first = null;
-    const on = (ev) => { if (!first && ev.detail && ev.detail.provider) first = ev.detail; };
-    window.addEventListener('eip6963:announceProvider', on);
-    window.dispatchEvent(new Event('eip6963:requestProvider'));
-    setTimeout(() => { window.removeEventListener('eip6963:announceProvider', on); res(first); }, 300);
-  });
-}
-const WALLETS = {
-  evm: {
-    async find() {
-      const d = await eip6963();
-      if (d) { log('evm: кошелёк ' + d.info.rdns); return d.provider; }
-      return window.ethereum || null;
+const wagmiCore = () => import('https://esm.sh/@wagmi/core@2');
+
+// EVM: адрес/подпись через AppKit (WalletConnect + инжектед)
+async function evmWallet() {
+  if (window.__appkitError) throw new Error('AppKit: ' + window.__appkitError);
+  const kit = window.__appkit;
+  if (!kit) throw new Error('AppKit не загрузился');
+  const { getAccount, getWalletClient } = await wagmiCore();
+  let acc = getAccount(kit.wagmiConfig);
+  if (!acc.address) {
+    kit.modal.open();
+    for (let i = 0; i < 240; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      acc = getAccount(kit.wagmiConfig);
+      if (acc.address) break;
+    }
+    if (!acc.address) throw Object.assign(new Error('подключение не завершено'), { code: 4001 });
+  }
+  return {
+    address: acc.address,
+    async sign(msg) {
+      const client = await getWalletClient(kit.wagmiConfig);
+      return client.request({ method: 'personal_sign', params: [hexUtf8(msg), acc.address] });
     },
-    async connect(p) { return (await p.request({ method: 'eth_requestAccounts' }))[0]; },
-    sign: (p, msg, address) => p.request({ method: 'personal_sign', params: [hexUtf8(msg), address] }),
-  },
-  tron: {
-    async find() { return window.tron || window.tronLink || (window.tronWeb ? { tronWeb: window.tronWeb } : null); },
-    async connect(p) {
-      if (p.request) {
-        const r = await p.request({ method: p === window.tron ? 'eth_requestAccounts' : 'tron_requestAccounts' });
-        if (r && (r.code === 4001 || r.code === 4000)) throw { code: 4001 };
-      }
-      const tw = p.tronWeb || window.tronWeb;
-      if (!tw || !tw.defaultAddress || !tw.defaultAddress.base58) throw new Error('TronLink заблокирован: разблокируйте кошелёк');
-      return tw.defaultAddress.base58;
-    },
-    sign: (p, msg) => (p.tronWeb || window.tronWeb).trx.signMessageV2(msg),
-  },
-  solana: {
-    async find() { return (window.phantom && window.phantom.solana) || window.solana || null; },
-    async connect(p) { return (await p.connect()).publicKey.toString(); },
-    async sign(p, msg) {
-      const signed = await p.signMessage(new TextEncoder().encode(msg), 'utf8');
-      return btoa(String.fromCharCode(...(signed.signature || signed)));
-    },
-  },
-};
-function deeplink(chain) {
-  const u = location.href.split('#')[0];
-  if (chain === 'evm') return 'https://link.metamask.io/dapp/' + location.host + location.pathname;
-  if (chain === 'tron') return 'tronlinkoutside://pull.activity?param=' + encodeURIComponent(JSON.stringify({ url: u, action: 'open', protocol: 'tronlink', version: '1.0' }));
-  return 'https://phantom.com/ul/browse/' + encodeURIComponent(u) + '?ref=' + encodeURIComponent(location.origin);
+  };
 }
-function showNoWallet(chain) {
-  const box = document.getElementById('nowallet');
-  const href = deeplink(chain);
-  const a = box.querySelector('a.deeplink');
-  a.href = href; a.textContent = 'Открыть в кошельке (' + chain + ')';
-  const q = qrcode(0, 'M'); q.addData(href); q.make();
-  box.querySelector('.qr').innerHTML = q.createSvgTag({ scalable: true, margin: 2 });
-  box.hidden = false;
+
+// Solana: window-провайдер (SafePal/Phantom в dApp-браузере, расширение на десктопе)
+async function solanaWallet() {
+  const p = (window.phantom && window.phantom.solana) || window.solana;
+  if (!p) throw Object.assign(new Error('кошелёк не найден'), { nowallet: true });
+  const res = await p.connect();
+  const pk = (res && res.publicKey) || p.publicKey;
+  if (!pk) throw new Error('кошелёк не вернул адрес');
+  return {
+    address: pk.toString(),
+    async sign(msg) {
+      const s = await p.signMessage(new TextEncoder().encode(msg), 'utf8');
+      return btoa(String.fromCharCode(...(s.signature || s)));
+    },
+  };
 }
+
+// Tron: TIP-1193 напрямую (TronLink/SafePal dApp-браузер)
+async function tronWallet() {
+  const p = window.tron || window.tronLink || (window.tronWeb ? { tronWeb: window.tronWeb } : null);
+  if (!p) throw Object.assign(new Error('кошелёк не найден'), { nowallet: true });
+  if (p.request) {
+    const r = await p.request({ method: p === window.tron ? 'eth_requestAccounts' : 'tron_requestAccounts' });
+    if (r && (r.code === 4001 || r.code === 4000)) throw { code: 4001 };
+  }
+  const tw = p.tronWeb || window.tronWeb;
+  if (!tw || !tw.defaultAddress || !tw.defaultAddress.base58) throw new Error('TronLink заблокирован: разблокируйте кошелёк');
+  return { address: tw.defaultAddress.base58, async sign(msg) { return tw.trx.signMessageV2(msg); } };
+}
+
+const WALLETS = { evm: evmWallet, solana: solanaWallet, tron: tronWallet };
 
 async function claim(chain) {
   const btn = document.getElementById('connect-' + chain);
   btn.disabled = true;
-  let step = 'connect';
   try {
-    const w = WALLETS[chain];
-    const p = await w.find();
-    if (!p) { log('✘ ' + chain + ': кошелёк не найден'); showNoWallet(chain); return; }
-    document.getElementById('nowallet').hidden = true;
-    const address = await w.connect(p);
+    const w = await WALLETS[chain]();
+    const address = w.address;
     if (!address) throw new Error('кошелёк не вернул адрес');
-    step = 'nonce';
     const { nonce, message } = await api('/api/claim/nonce', { chain });
     if (!nonce) throw new Error('сервер не выдал nonce');
-    step = 'sign';
-    const signature = await w.sign(p, message, address);
-    step = 'verify';
+    const signature = await w.sign(message || nonceMsg(nonce));
     const j = await api('/api/claim/verify', { chain, address, signature, nonce });
     if (j.ok) { log('✔ ' + chain + ': адрес сохранён ' + j.address); await loadConfig(); }
     else log('✘ ' + chain + ': ' + (j.error || 'отказ') + (j.detail ? ' — ' + j.detail : ''));
   } catch (e) {
     if (e && e.net) log('✘ ' + chain + ': сеть недоступна');
-    else if (rejected(e)) log('✘ ' + chain + ': ' + (step === 'connect' ? 'подключение отклонено в кошельке' : 'подпись отклонена в кошельке'));
+    else if (rejected(e)) log('✘ ' + chain + ': подпись отклонена в кошельке');
+    else if (e && e.nowallet) {
+      log('✘ ' + chain + ': кошелёк не найден');
+      document.getElementById('nowallet-msg').textContent = 'Откройте pay.pxbt.app/admin во встроенном браузере кошелька (SafePal: Discover → ввести адрес) и повторите.';
+      document.getElementById('nowallet').hidden = false;
+    }
     else log('✘ ' + chain + ': ' + ((e && e.message) || String(e)));
   } finally { btn.disabled = false; }
 }
+window.claim = claim;
 
 async function loadConfig() {
   const cfg = await (await fetch('/api/admin/config')).json();
@@ -167,6 +180,7 @@ async function savePairs() {
   const r = await fetch('/api/admin/config', { method: 'PUT', headers: {'content-type':'application/json'}, body: JSON.stringify({ pairs }) });
   log(r.ok ? '✔ пары сохранены' : '✘ ошибка сохранения');
 }
+window.savePairs = savePairs;
 // Провайдеры с полями описаны данными (config/payment-providers.json): новый провайдер = новая запись, UI не трогаем.
 function renderProviders(list) {
   const root = document.getElementById('providers');
@@ -179,45 +193,38 @@ function renderProviders(list) {
       let inp;
       if (f.type === 'select') {
         inp = document.createElement('select');
-        for (const o of f.options) { const op = document.createElement('option'); op.value = op.textContent = o; inp.appendChild(op); }
-        inp.value = p.values[f.key] || f.options[0];
+        for (const o of f.options) { const op = document.createElement('option'); op.value = o; op.textContent = o; if (p.values[f.key] === o) op.selected = true; inp.appendChild(op); }
       } else {
         inp = document.createElement('input');
         inp.type = f.type === 'secret' ? 'password' : 'text';
-        if (f.type === 'secret') { inp.value = ''; inp.placeholder = p.values[f.key] ? p.values[f.key] + ' (сохранён; пусто = не менять)' : 'не задан'; }
-        else inp.value = p.values[f.key] || '';
+        inp.value = p.values[f.key] || '';
+        inp.autocomplete = 'off';
       }
-      inp.id = 'pv_' + p.id + '_' + f.key; inp.autocomplete = 'off';
+      inp.dataset.field = f.key; inp.dataset.provider = p.id;
       lab.appendChild(inp); card.appendChild(lab);
     }
-    const save = document.createElement('button'); save.className = 'primary'; save.textContent = 'Сохранить';
-    save.onclick = async () => {
+    const b = document.createElement('button');
+    b.textContent = 'Сохранить и проверить';
+    b.onclick = async () => {
       const body = {};
-      for (const f of p.fields) body[f.key] = document.getElementById('pv_' + p.id + '_' + f.key).value;
+      for (const i of card.querySelectorAll('[data-field]')) body[i.dataset.field] = i.value;
       const r = await fetch('/api/admin/providers/' + p.id, { method: 'PUT', headers: {'content-type':'application/json'}, body: JSON.stringify(body) });
-      const j = await r.json();
-      log(r.ok ? '✔ ' + p.title + ': сохранено' : '✘ ' + p.title + ': ' + (j.error || r.status));
-      if (r.ok) loadProviders();
+      if (!r.ok) { log('✘ ' + p.title + ': ' + (await r.json()).error); return; }
+      const c = await fetch('/api/admin/providers/' + p.id + '/check', { method: 'POST' });
+      const j = await c.json();
+      log(j.ok ? '✔ ' + p.title + ': ok (' + (j.mode || '') + ')' : '✘ ' + p.title + ': ' + j.error);
+      loadProviders();
     };
-    card.appendChild(save);
-    if (p.check) {
-      const chk = document.createElement('button'); chk.textContent = 'Проверить';
-      chk.onclick = async () => {
-        const j = await (await fetch('/api/admin/providers/' + p.id + '/check', { method: 'POST' })).json();
-        log(j.ok ? '✔ ' + p.title + ': ключи рабочие' + (j.mode ? ' (' + j.mode + ')' : '') : '✘ ' + p.title + ': ' + j.error);
-      };
-      card.appendChild(chk);
-    }
+    card.appendChild(b);
     root.appendChild(card);
   }
 }
 async function loadProviders() {
-  const r = await fetch('/api/admin/providers');
-  if (r.ok) renderProviders(await r.json());
+  const list = await (await fetch('/api/admin/providers')).json();
+  renderProviders(list);
 }
-renderProviders(PROVIDERS);
-loadConfig();
-</script>
-</body></html>`;
-  return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } });
+loadConfig().catch((e) => log('✘ конфиг: ' + e.message));
+loadProviders().catch(() => {});
+</script></body></html>`;
+  return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
 }
