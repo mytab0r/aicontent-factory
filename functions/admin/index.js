@@ -94,32 +94,21 @@ function injectedEvm() {
 }
 async function evmWallet() {
   const inj = await injectedEvm();
-  if (inj) {
-    const p = inj.provider;
-    const accs = await p.request({ method: 'eth_requestAccounts' });
-    const address = accs && accs[0];
-    if (!address) throw new Error('кошелёк не вернул адрес');
-    return { address, async sign(msg) { return p.request({ method: 'personal_sign', params: [hexUtf8(msg), address] }); } };
+  if (!inj) {
+    if (window.__appkitError || !window.__appkit) throw Object.assign(new Error('кошелёк не найден'), { nowallet: true });
+    throw Object.assign(new Error('кошелёк не найден — нажмите кнопку подключения выше (WalletConnect: SafePal, Trust, MetaMask, OKX и другие)'), { nowallet: true });
   }
-  if (window.__appkitError) throw new Error('AppKit: ' + window.__appkitError);
-  const kit = window.__appkit;
-  if (!kit) throw new Error('AppKit не загрузился');
-  const { getAccount, getWalletClient } = await wagmiCore();
-  let acc = getAccount(kit.wagmiConfig);
-  if (!acc.address) {
-    kit.modal.open();
-    for (let i = 0; i < 240; i++) {
-      await new Promise((r) => setTimeout(r, 500));
-      acc = getAccount(kit.wagmiConfig);
-      if (acc.address) break;
-    }
-    if (!acc.address) throw Object.assign(new Error('подключение не завершено'), { code: 4001 });
-  }
+  const p = inj.provider;
+  let accs;
+  try { accs = await p.request({ method: 'eth_requestAccounts' }); }
+  catch (e) { throw Object.assign(new Error('подключение отклонено'), { code: 4001, connect: true }); }
+  const address = accs && accs[0];
+  if (!address) throw new Error('кошелёк не вернул адрес');
   return {
-    address: acc.address,
+    address,
     async sign(msg) {
-      const client = await getWalletClient(kit.wagmiConfig);
-      return client.request({ method: 'personal_sign', params: [hexUtf8(msg), acc.address] });
+      try { return await p.request({ method: 'personal_sign', params: [hexUtf8(msg), address] }); }
+      catch (e) { throw Object.assign(new Error('подпись отклонена'), { code: (e && e.code) || 4001 }); }
     },
   };
 }
@@ -170,7 +159,7 @@ async function claim(chain) {
     else log('✘ ' + chain + ': ' + (j.error || 'отказ') + (j.detail ? ' — ' + j.detail : ''));
   } catch (e) {
     if (e && e.net) log('✘ ' + chain + ': сеть недоступна');
-    else if (rejected(e)) log('✘ ' + chain + ': подпись отклонена в кошельке');
+    else if (rejected(e)) log('✘ ' + chain + ': ' + (e && e.connect ? 'подключение отклонено в кошельке' : 'подпись отклонена в кошельке'));
     else if (e && e.nowallet) {
       log('✘ ' + chain + ': кошелёк не найден');
       document.getElementById('nowallet-msg').textContent = 'Откройте pay.pxbt.app/admin во встроенном браузере кошелька (SafePal: Discover → ввести адрес) и повторите.';
