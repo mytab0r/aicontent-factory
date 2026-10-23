@@ -8,12 +8,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: {ref: master}
+      - uses: astral-sh/setup-uv@v3
       - name: restore + instrumented take
         working-directory: pipeline
         run: |
+          uv venv .venv
+          uv pip install --python .venv/bin/python pillow gradio_client numpy
           d=/app/output/bank/anime-lofi
           docker exec ace-step sh -c "cd $d/broken 2>/dev/null && for f in *.mp3; do s=\${f%.mp3}; mv -f \$s.mp3 \$s.json $d/; done; ls $d | grep -c mp3$"
-          mkdir -p /tmp/tk && python3 - <<'PY'
+          ./.venv/bin/python - <<'PY'
           import bank_release as br, subprocess, pathlib
           def sh(*a):
               r=subprocess.run(["docker",*a],capture_output=True,text=True)
@@ -24,8 +27,6 @@ jobs:
               ok=r.returncode==0 and float(r.stdout.strip() or 0)>1.0
               if not ok: print("INVALID",p.name,pathlib.Path(p).stat().st_size,r.returncode,repr(r.stdout[:40]),r.stderr[:200])
               return ok
-          br.docker_sh=sh
-          orig=br.take
           real_sh=sh
           def sh2(*a):
               if a[0]=="exec" and "mv -f" in a[-1]: print("WOULD-QUARANTINE",a[-1][-90:]); return ""
