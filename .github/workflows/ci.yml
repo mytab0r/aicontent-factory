@@ -131,4 +131,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: ci-bypass-lint («Повтор = класс»)
-        run: python3 scripts/ci_bypass_lint.py . && python3 scripts/test_ci_lint_docker_login.py
+        run: python3 scripts/ci_bypass_lint.py . && python3 scripts/test_ci_lint_docker_login.py && python3 scripts/test_launch_gate.py
