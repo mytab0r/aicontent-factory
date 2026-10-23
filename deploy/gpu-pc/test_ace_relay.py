@@ -11,4 +11,13 @@ assert out.splitlines() == [d("c") + " 20094", d("a") + " 10", d("b") + " 7"], o
 assert subprocess.run(guard, shell=True, input=out, text=True).returncode == 0
 bad = d("c") + "\n" + d("a") + " 10\n"   # the exact t_d80ff074 shape: config without size
 assert subprocess.run(guard, shell=True, input=bad, capture_output=True, text=True).returncode != 0
-print("ok: bloblist has sizes, guard rejects sizeless line")
+# t_a75ee36f: relay must not depend on ghcr (the path it replaces); pinned manifest must match its digest
+import hashlib
+assert "https://ghcr.io" not in src, "ace_relay.sh calls ghcr before packing (t_a75ee36f)"
+pin = re.search(r"^MAN_DIGEST=sha256:([0-9a-f]{64})$", src, re.M).group(1)
+here = os.path.dirname(os.path.abspath(__file__))
+assert hashlib.sha256(open(os.path.join(here, "ace-step-manifest.json"), "rb").read()).hexdigest() == pin
+assert "ace-step-manifest.json" in open(os.path.join(here, "ensure_ace_step.sh")).read(), "manifest not copied to hermes-runner"
+real = subprocess.run(gen, shell=True, input=open(os.path.join(here, "ace-step-manifest.json")).read(), capture_output=True, text=True, check=True).stdout
+assert subprocess.run(guard, shell=True, input=real, text=True).returncode == 0 and len(real.splitlines()) == 18
+print("ok: bloblist has sizes, guard rejects sizeless line, relay is ghcr-free with pinned manifest")

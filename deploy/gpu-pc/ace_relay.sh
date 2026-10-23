@@ -7,12 +7,13 @@ RELAY=/work/dockerlocal/ace-relay
 REPO=mytab0r/ace-step-relay
 TOK=$(cat /work/hermes-codex/.relay-token)
 mkdir -p "$RELAY/blobs/sha256"
-GH_TOK=$(curl -fsSL "https://ghcr.io/token?scope=repository:ace-step/ace-step-1.5:pull" | python3 -c 'import json,sys;print(json.load(sys.stdin)["token"])')
-API="https://ghcr.io/v2/ace-step/ace-step-1.5"
-mf=$(curl -fsSL -H "Authorization: Bearer $GH_TOK" -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json" $API/manifests/latest)
-amd=$(echo "$mf" | python3 -c 'import json,sys;m=json.load(sys.stdin);print([x["digest"] for x in m["manifests"] if x["platform"]["architecture"]=="amd64"][0])')
-man=$(curl -fsSL -H "Authorization: Bearer $GH_TOK" -H "Accept: application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json" $API/manifests/$amd)
-echo "$man" > "$RELAY/manifest.json"
+# root-cause t_a75ee36f: relay is the fallback for a broken PC->ghcr path, yet it fetched the manifest
+# from ghcr on the PC (run 39273454007: "curl: (6) Could not resolve host: ghcr.io" -> "pull + relay failed").
+# Manifest is pinned in the repo (= blobs uploaded to HF); relay touches only HF.
+MAN_DIGEST=sha256:c289cb5c0cbc60d428baa9283a49966d2fe54ecf2028fa254f99f164f3953159
+cp "$(dirname "$0")/ace-step-manifest.json" "$RELAY/manifest.json"
+sha256sum "$RELAY/manifest.json" | grep -q "^${MAN_DIGEST#sha256:} " || { echo "::error::pinned manifest digest mismatch"; exit 1; }
+man=$(cat "$RELAY/manifest.json")
 echo "$man" | python3 -c 'import json,sys;m=json.load(sys.stdin);print(m["config"]["digest"],m["config"]["size"]);[print(l["digest"],l["size"]) for l in m["layers"]]' > "$RELAY/bloblist.txt"
 # root-cause t_d80ff074: config line once lacked size -> size="" -> "[: Illegal number" -> "download ... incomplete".
 # Every line must be "<sha256:hex> <bytes>"; fail before any download otherwise.
