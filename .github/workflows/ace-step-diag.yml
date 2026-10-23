@@ -8,5 +8,4 @@ jobs:
     steps:
       - name: logs + http probe
         run: |
-          docker inspect ace-step --format 'state={{.State.Status}} health={{.State.Health.Status}} started={{.State.StartedAt}}'
-          docker logs --tail 120 ace-step 2>&1 | tail -120
+          docker logs --since 6h ace-step 2>&1 | grep -viE 'GET /health|POST /query_result' | tail -150
