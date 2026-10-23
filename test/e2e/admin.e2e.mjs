@@ -129,7 +129,7 @@ const HOST = process.env.E2E_HOST || '127.0.0.1';
 
 async function setup({ wallets = true, reject = null } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pay-e2e-'));
-  const srv = makeServer({ dataDir: dir, ownerEmail: 'o@example.com', proxySecret: SSO });
+  const srv = makeServer({ dataDir: dir, ownerEmail: 'o@example.com', proxySecret: SSO, extraEnv: { REOWN_PROJECT_ID: 'e2e-project-id' } });
   await new Promise((r) => srv.listen(0, '0.0.0.0', r));
   const base = `http://${HOST}:${srv.address().port}`;
   const ctx = await browser.newContext({ extraHTTPHeaders: { 'x-pay-proxy-auth': SSO } });
@@ -181,7 +181,7 @@ for (const chain of CHAINS) await scenario(`S1 ${chain}: привязка, ад�
   } finally { await env.close(); }
 });
 
-// S2: кошелька нет — понятное сообщение, deeplink + QR, ни одного nonce
+// S2: кошелька нет — понятное сообщение с путём (dApp-браузер кошелька), ни одного nonce
 for (const chain of CHAINS) await scenario(`S2 ${chain}: кошелька нет`, async () => {
   const env = await setup({ wallets: false });
   try {
@@ -189,18 +189,8 @@ for (const chain of CHAINS) await scenario(`S2 ${chain}: кошелька нет
     await logHas(env.page, `✘ ${chain}: кошелёк не найден`);
     await notDefined(env);
     assert.ok(await env.page.locator('#nowallet').isVisible(), '#nowallet видим');
-    const href = await env.page.locator('#nowallet a.deeplink').getAttribute('href');
-    const u = new URL(env.base + '/admin');
-    if (chain === 'evm') assert.strictEqual(href, `https://link.metamask.io/dapp/${u.host}${u.pathname}`);
-    if (chain === 'solana') assert.strictEqual(href, `https://phantom.com/ul/browse/${encodeURIComponent(u.href)}?ref=${encodeURIComponent(u.origin)}`);
-    if (chain === 'tron') {
-      const pre = 'tronlinkoutside://pull.activity?param=';
-      assert.ok(href.startsWith(pre), href);
-      const param = JSON.parse(decodeURIComponent(href.slice(pre.length)));
-      assert.strictEqual(param.url, u.href);
-      assert.strictEqual(param.action, 'open');
-    }
-    assert.ok(await env.page.locator('#nowallet svg').count() > 0, 'QR отрисован');
+    const msg = await env.page.locator('#nowallet-msg').textContent();
+    assert.ok(/admin/.test(msg) && /кошелька/.test(msg), 'сообщение содержит путь решения: ' + msg);
     assert.strictEqual(env.nonceReqs.length, 0, 'без кошелька nonce не запрашивается');
     noPageErrors(env, chain);
   } finally { await env.close(); }
