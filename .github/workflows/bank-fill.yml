@@ -17,9 +17,11 @@ jobs:
     timeout-minutes: 170
     env:
       GENRE: anime lofi
-      BANK_TARGET: "30"
+      BANK_TARGET: "40"  # t_ba72c7aa R3: >= 2 выпуска вперёд (40 x 180с = 2 x час)
       ACE15_ENDPOINT: http://ace-step:8001  # ACE-Step 1.5 REST на ПК (comfynet)
       ACE15_REF_AUDIO: /tmp/acf-ref/ref1.wav
+      ACE15_BESTOF: "3"      # t_ba72c7aa R5: отбор best-of живёт в генераторе, не в слоте публикации
+      ACE15_SEG_EXTRA: "2"
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
@@ -31,6 +33,8 @@ jobs:
           command -v ffmpeg
           uv venv .venv
           uv pip install --python .venv/bin/python pillow gradio_client numpy yt-dlp
+      - name: disk gate (C:)
+        run: sh deploy/gpu-pc/disk_gate.sh c 1
       - name: ACE-Step up (start only, wait health)
         run: |
           docker start ace-step >/dev/null 2>&1 || true

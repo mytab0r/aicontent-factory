@@ -162,6 +162,14 @@ def test_publish_descriptions_original_and_linked():
     assert "Full video: https://www.youtube.com/watch?v=abc" in short_d
 
 
+def test_upload_limit_detected():
+    """run 39727033513: long вышел, 1-й Short упал 400 uploadLimitExceeded -> весь выпуск exit 1."""
+    e = Exception('<HttpError 400 returned "The user has exceeded the number of videos they may upload.". '
+                  "Details: \"[{'reason': 'uploadLimitExceeded'}]\">")
+    assert ls.upload_limit_hit(e)
+    assert not ls.upload_limit_hit(Exception("HttpError 500 backendError"))
+
+
 def test_idea_survives_router_exception_and_retries(monkeypatch=None):
     """IncompleteRead/любое сетевое исключение от одной модели не валит idea: круг повторов."""
     calls = {"n": 0}
@@ -198,6 +206,29 @@ def test_idea_survives_router_exception_and_retries(monkeypatch=None):
     finally:
         _wf.router_stream = orig
         ls.STATE = old_state
+
+
+def test_idea_retries_after_short_plan_then_broken_json():
+    """Run 39713369774: короткий план (562 с), затем битый JSON у всех - не SystemExit, а новый круг."""
+    import json as _json
+    import tempfile
+    from pathlib import Path as _P
+    import whatif_channel as _wf
+
+    def script(words):
+        return _json.dumps({"title": "Things That Will Be Banned In Your Lifetime", "description": "d", "tags": ["t"],
+                            "items": [{"title": f"P{k}", "text": " ".join(["fact"] * words) + ".",
+                                       "place": ["city", "nature", "space"][k % 3]} for k in range(13)]})
+    answers = iter([script(100), '{"title": "Things', script(110)])
+    orig, old_state = _wf.router_stream, ls.STATE
+    _wf.router_stream = lambda m, prompt, mt, timeout=600: next(answers)
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            ls.STATE = _P(td)
+            out = ls.idea(models=["m1"])
+            assert out.exists()
+    finally:
+        _wf.router_stream, ls.STATE = orig, old_state
 
 
 if __name__ == "__main__":

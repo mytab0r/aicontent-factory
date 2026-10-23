@@ -178,40 +178,24 @@ def to_scene(it: dict, k: int, plan: dict) -> dict:
 
 def idea(models=None) -> Path:
     from common import new_run_dir
-    models = models or ["glm/glm-5.3-flash", "gemini/gemini-3.8-flash", "auto-worker-combo", "cx/gpt-5.5"]
+    models = models or ["glm/glm-5.3-flash", "gemini/gemini-3.8-flash", "auto-worker-combo"]
     plan = next_plan()
     prompt = script_prompt(plan)
     s = None
     err = None
     for round_ in range(3):  # роутер/модели бывают недоступны короткими окнами: 3 круга по списку
-        for m in models:
+        for m in models:  # битый JSON, обрыв SSE и короткий план - одна и та же попытка: следующая модель
             try:
-                s = parse_json(wf.router_stream(m, prompt, 8000))
+                s = validate_script(parse_json(wf.router_stream(m, prompt, 12000)))
                 break
-            except Exception as e:  # router: HTTP/525/429, обрыв SSE (IncompleteRead), битый JSON
+            except Exception as e:  # router: HTTP/525/429, IncompleteRead, битый JSON, ValueError валидации
                 print(f"model {m}: {type(e).__name__}: {e}"[:300])
                 err = e
+                s = None
         if s is not None:
             break
     if s is None:
-        raise SystemExit(f"нет валидного ответа LLM: {err}")
-    for attempt in range(3):
-        try:
-            s = validate_script(json.loads(json.dumps(s)))
-            break
-        except ValueError as e:
-            print(f"script attempt {attempt + 1}: {e}")
-            s = None
-            for m in models:  # перевалидация не удалась: новый ответ
-                try:
-                    s = parse_json(wf.router_stream(m, prompt, 8000))
-                    break
-                except Exception as e:
-                    print(f"model {m}: {type(e).__name__}: {e}"[:300])
-            if s is None:
-                raise SystemExit("нет валидного ответа LLM")
-    if s is None:
-        raise SystemExit("сценарий не прошёл валидацию 3 раза")
+        raise SystemExit(f"нет валидного сценария за 3 круга: {err}")
     s.update(channel="listshow", plan=plan, topic=plan["topic"])
     out = new_run_dir() / "idea.json"
     out.write_text(json.dumps(s, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -359,6 +343,11 @@ def _playlist(y) -> str:
         "status": {"privacyStatus": "public"}}).execute()["id"]
 
 
+def upload_limit_hit(e: Exception) -> bool:
+    """Суточный лимит загрузок YouTube (400 uploadLimitExceeded): не ошибка выпуска long."""
+    return "uploadLimitExceeded" in str(e)
+
+
 def publish(run_dir: Path) -> dict:
     import importlib.util
     from googleapiclient.http import MediaFileUpload
@@ -399,7 +388,14 @@ def publish(run_dir: Path) -> dict:
     for k, path in enumerate(meta["shorts"], 1):
         key = f"short_{k}"
         if key not in done:
-            done[key] = up(path, f"{s['title'][:80]} (part {k}) #Shorts", short_d)
+            try:
+                done[key] = up(path, f"{s['title'][:80]} (part {k}) #Shorts", short_d)
+            except Exception as e:
+                if not upload_limit_hit(e):
+                    raise
+                # ponytail: суточный лимит загрузок канала; long уже вышел, Shorts пропускаем до завтра
+                print(f"shorts stop: uploadLimitExceeded after {k - 1} shorts")
+                break
             done_f.write_text(json.dumps(done, indent=2))
     print(json.dumps(done, indent=2))
     return done

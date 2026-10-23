@@ -93,3 +93,8 @@ assert "next_hook(" in (Path(__file__).parent / "07_shorts.py").read_text(encodi
 print("test_shorts hook-rotation OK")
 assert "short_why(" in (Path(__file__).parent / "07_shorts.py").read_text(encoding="utf-8").split("def main")[1]
 print("test_shorts V3 gate wired OK")
+
+# A24: render накладывает фейды гейта, main проверяет края шортса до заливки
+_src = (Path(__file__).parent / "07_shorts.py").read_text(encoding="utf-8")
+assert "SHORT_FADES" in _src.split("def render")[1].split("def ")[0], "render без фейдов A24"
+assert "short_edge_why(" in _src.split("def main")[1], "main без проверки краёв A24"

@@ -5,7 +5,7 @@
    Тишина/LUFS/TP «кашу» не ловят: 16.10 на канал ушло LRA 1.4 при эталоне 10.9.
 2) Модель-критик Meta audiobox-aesthetics, CE (предсказание «понравится ли»), в контейнере ace-step.
    Замеры: рефы ниши CE 7.07-7.91, брак base-модели 2.1-3.6.
-Запуск: quality_gate.py [track.mp3 genre] [--no-ce] [--final] [--seams=t1,t2]; без аргументов = последний runs/*/track.mp3.
+Запуск: quality_gate.py [track.mp3 genre] [--no-ce] [--final] [--seams=t1,t2] | --video [run_dir] (P19); без аргументов = последний runs/*/track.mp3.
 --final (шаг 04b) = целостность mp4 (V2/V3: потоки, длительность, синхрон) + тот же объективный гейт и CE по окнам/стыкам ФИНАЛЬНОГО video.mp4 (AAC после 04 assemble):
    17.10 YouTube-копия p-kkEmLGviU дала TP +1.3..+1.9 dBTP — перекодирование добавляет пики, мерить надо то, что уходит.
 """
@@ -328,6 +328,18 @@ def cover_why(png):
     return [f"обложка пересвечена: яркость {y:.0f} > {COVER_YMAX} из 255"] if y > COVER_YMAX else []
 
 
+def fallback_why(d):
+    """V14: [причина], если 02_cover поставил градиент-заглушку (image API упал) — пустая картинка не публикуется."""
+    f = os.path.join(str(d), "cover_fallback.json")
+    if not os.path.exists(f):
+        return []
+    try:
+        r = json.load(open(f, encoding="utf-8")).get("reason", "")
+    except ValueError:
+        r = "маркер повреждён"
+    return [f"обложка-заглушка без арта (image API: {r[:120]})"]
+
+
 # V3: шортс = вертикаль 9:16, <= 60 с, есть видео+звук; иначе YouTube не кладёт его в ленту Shorts.
 SHORT_MAX, SHORT_AR, SHORT_AR_TOL = 60.0, 9 / 16, 0.01
 
@@ -343,6 +355,22 @@ def short_why(f):
     d = float(j.get("format", {}).get("duration") or 0)
     why = [] if h and abs(w / h - SHORT_AR) <= SHORT_AR_TOL else [f"шортс {w}x{h} не 9:16"]
     return why + ([f"шортс {d:.1f} с > {SHORT_MAX:.0f} с"] if d > SHORT_MAX else [])
+
+
+# A24: шортс режется из середины трека; без фейдов старт/конец = щелчок в ленте Shorts. 07 накладывает SHORT_FADES,
+# гейт проверяет края: первые/последние EDGE_WIN с тише всего шортса минимум на EDGE_DROP дБ.
+SHORT_FADE_IN, SHORT_FADE_OUT = 0.5, 1.5
+SHORT_FADES = "afade=t=in:d=0.5,afade=t=out:st={st:.2f}:d=1.5"
+EDGE_WIN, EDGE_DROP = 0.05, 12.0
+
+
+def short_edge_why(f):
+    """A24: [причины], если шортс начинается/кончается скачком (нет фейда)."""
+    d = duration(f)
+    whole = rms_db(f, 0, d)
+    head, tail = rms_db(f, 0, EDGE_WIN) - whole, rms_db(f, d - EDGE_WIN, EDGE_WIN) - whole
+    why = [f"шортс: резкое начало {head:+.1f} дБ к шортсу (нужно < -{EDGE_DROP})"] if head > -EDGE_DROP else []
+    return why + ([f"шортс: резкий конец {tail:+.1f} дБ к шортсу (нужно < -{EDGE_DROP})"] if tail > -EDGE_DROP else [])
 
 
 def end_why(f):
@@ -422,6 +450,27 @@ def tuning_why(f):
             f"(окно {dev.index(max(dev)) * TUNE_WIN:.0f} с против {dev.index(min(dev)) * TUNE_WIN:.0f} с)"] if spread > TUNE_MAX else []
 
 
+
+def video_why(d):
+    """P19: гейт речевых видео-форматов (listshow/whatif: render.json long+shorts; owning: video.mp4 = Short) до заливки.
+    Целостность/синхрон (V2/V3), чёрный кадр (V1), формат шортса (V3), обложка (V9). Музыкальные эталоны тут не применимы."""
+    d = str(d)
+    rj = os.path.join(d, "render.json")
+    if os.path.exists(rj):
+        meta = json.load(open(rj, encoding="utf-8"))
+        longs, shorts = [x for x in [meta.get("long")] if x], list(meta.get("shorts") or [])
+    else:
+        longs, shorts = [], [os.path.join(d, "video.mp4")]
+    why = []
+    for f in longs + shorts:
+        if not os.path.exists(str(f)):
+            why.append(f"нет файла {os.path.basename(str(f))}")
+            continue
+        tag = os.path.basename(str(f))
+        why += [f"{tag}: {w}" for w in integrity_why(f) + black_why(f) + (short_why(f) if f in shorts else [])]
+    return why + cover_why(os.path.join(d, "cover.png"))
+
+
 def target(d, final):
     """--final: финальный файл после 04 assemble (то, что заливается), иначе трек после 03."""
     return d / ("video.mp4" if final else "track.mp3")
@@ -429,6 +478,12 @@ def target(d, final):
 
 def main(argv):
     args = [a for a in argv[1:] if not a.startswith("--")]
+    if "--video" in argv:  # P19: речевые форматы (listshow/whatif/owning) — тот же стоп до заливки
+        from common import latest_run_dir
+        why = video_why(args[0] if args else latest_run_dir())
+        for w in why:
+            print(f"::error::quality gate: {w}")
+        return 1 if why else 0
     expect, seams = None, []
     if args:
         f, genre = args[0], args[1]
@@ -451,6 +506,7 @@ def main(argv):
     if "--final" in argv:
         why += integrity_why(f, expect) + black_why(f)
         why += cover_why(os.path.join(os.path.dirname(str(f)), "cover.png"))  # V9
+        why += fallback_why(os.path.dirname(str(f)))  # V14
     if "--no-ce" not in argv:  # R4: окна CE/дрейф/стыки и на финальном mp4 (04b) — мерим то, что заливается
         w, rep = full_ce_why(f, seams)
         why += w

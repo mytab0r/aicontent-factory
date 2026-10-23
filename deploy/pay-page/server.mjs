@@ -115,7 +115,7 @@ async function paypalCheck(v) {
 }
 const CHECKS = { paypal_oauth: paypalCheck };
 
-export function makeServer({ dataDir, ownerEmail, apiToken, accessTeam, accessAud, proxySecret }) {
+export function makeServer({ dataDir, ownerEmail, apiToken, accessTeam, accessAud, proxySecret, extraEnv = {} }) {
   fs.mkdirSync(dataDir, { recursive: true });
   // fail fast: root-owned bind-mount иначе даёт EACCES/500 на первой записи
   try { fs.accessSync(dataDir, fs.constants.W_OK); } catch { throw new Error(`DATA_DIR ${dataDir} не доступен на запись uid ${process.getuid?.()}: chown 1000:1000 на хосте`); }
@@ -126,7 +126,7 @@ export function makeServer({ dataDir, ownerEmail, apiToken, accessTeam, accessAu
   const psFile = path.join(dataDir, 'proxy_auth_secret');
   if (!proxySecret && fs.existsSync(psFile)) proxySecret = fs.readFileSync(psFile, 'utf8').trim();
   const readSecrets = () => (fs.existsSync(secretsFile) ? JSON.parse(fs.readFileSync(secretsFile, 'utf8')) : {});
-  const env = { KV: kv };
+  const env = { KV: kv, REOWN_PROJECT_ID: extraEnv.REOWN_PROJECT_ID ?? (readSecrets().reown || {}).project_id ?? process.env.REOWN_PROJECT_ID ?? '' };
   const auth = { team: accessTeam, aud: accessAud, owner: ownerEmail };
 
   async function route(request) {
