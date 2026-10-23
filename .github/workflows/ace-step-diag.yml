@@ -6,6 +6,13 @@ jobs:
     runs-on: [self-hosted, pc]
     timeout-minutes: 10
     steps:
-      - name: logs + http probe
+      - name: logs raw tail
         run: |
-          docker logs --since 6h ace-step 2>&1 | grep -viE 'GET /health|POST /query_result' | tail -150
+          docker logs --since 8h ace-step 2>&1 | tail -400
+      - name: request stats
+        run: |
+          docker logs --since 8h ace-step 2>&1 | grep -oE '"(GET|POST) /[^ "]*' | sort | uniq -c | sort -rn | head -20
+      - name: container state
+        run: |
+          docker inspect ace-step --format '{{.State.Status}} started={{.State.StartedAt}} restarts={{.RestartCount}}'
+          docker inspect ace-step --format '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}'
