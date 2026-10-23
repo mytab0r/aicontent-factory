@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Самопроверка quality_gate: раздавленный трек FAIL, живой lofi проходит LRA-гейт; сам мастер lofi проходит гейт."""
-import subprocess, sys, tempfile
+import contextlib, io, subprocess, sys, tempfile
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import quality_gate as qg, mastering
@@ -23,7 +23,13 @@ with tempfile.TemporaryDirectory() as td:
     mastering.master(live, mastered, genre="anime lofi")
     w_m, m_m = qg.objective(mastered, "anime lofi")
     assert not any("LRA" in w for w in w_m), f"lofi-мастер сам создаёт кашу: {m_m}"
-    assert qg.main(["x", crushed, "anime lofi", "--no-ce"]) == 1
+    # t_43131126: qg.main печатает ::error:: диагностику FAIL-фикстуры прямо в лог CI;
+    # GitHub вешает FAILURE-аннотации на check-run теста, recurrence_scan собирает их как
+    # прод-падения («полоса N-N Гц +N.N дБ к эталону»). Фикстура обязана падать молча:
+    # глотаем её вывод, наружу — только результат assert.
+    sink = io.StringIO()
+    with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
+        assert qg.main(["x", crushed, "anime lofi", "--no-ce"]) == 1
 
 # Жалоба владельца 17.10 (phonk p-kkEmLGviU, отрезок 300-420 с с YouTube): мелодия 1-5 кГц на 2-3 дБ тише,
 # 150-400 Гц на 2 дБ громче одобренного v2. Старый гейт (5 полос ±3 дБ) это пропустил — новый обязан отклонить.
@@ -64,7 +70,9 @@ with tempfile.TemporaryDirectory() as td:
                     "-c:v", "libx264", "-c:a", "aac", "-b:a", "192k", "-shortest", v], check=True)
     w_v, m_v = qg.objective(v, "phonk")
     assert any("true peak" in w for w in w_v), (w_v, m_v)
-    assert qg.main(["x", v, "phonk", "--final"]) == 1
+    # t_43131126: тот же класс — негативный контроль фонка молчит (::error:: judge-фикстуры не в лог CI).
+    with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
+        assert qg.main(["x", v, "phonk", "--final"]) == 1
 # A6: обрыв 3 с посреди трека = FAIL; штатное затухание в хвосте (ref1: тишина 6.5 с в последние 10 с) проходит
 with tempfile.TemporaryDirectory() as td:
     gap, tail = f"{td}/gap.wav", f"{td}/tail.wav"
