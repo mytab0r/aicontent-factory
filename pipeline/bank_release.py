@@ -105,8 +105,23 @@ def pick(entries_: list[dict], need: int, now: float, used_lines=None, rng=None)
     return best[:need]
 
 
-def take(genre: str, need: int, run_dir: str, docker_sh=None, now=None, rng=None) -> list[Path] | None:
-    """Выбрать и скопировать need сегментов в run_dir. None = банк/совместимость недостатны."""
+def _valid_audio(path) -> bool:
+    """Скопированный сегмент читается ffprobe и длится > 1 с (битый/недописанный mp3 = False)."""
+    import subprocess
+    try:
+        r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                            "-of", "csv=p=0", str(path)], capture_output=True, text=True, timeout=60)
+        return r.returncode == 0 and float(r.stdout.strip() or 0) > 1.0
+    except Exception:
+        return False
+
+
+def take(genre: str, need: int, run_dir: str, docker_sh=None, now=None, rng=None,
+         valid=None) -> list[Path] | None:
+    """Выбрать и скопировать need сегментов в run_dir. None = банк/совместимость недостатны.
+    Битый сегмент (cp не удался / mp3 недописан, run 39848167892) исключается и добирается
+    другим; битых не хватает на замену = None (слот пропускается, не падает)."""
+    valid = valid or _valid_audio
     d = bank_dir(genre)
     ents = entries(genre, docker_sh=docker_sh)
     used_path = ROOT / ".state/bank_used.jsonl"
@@ -115,15 +130,35 @@ def take(genre: str, need: int, run_dir: str, docker_sh=None, now=None, rng=None
         used_lines = used_path.read_text(encoding="utf-8").splitlines()
     except OSError:
         pass
-    got = pick(ents, need, now if now is not None else time.time(), used_lines, rng)
-    if got is None:
-        return None
-    out = []
-    for e in got:
-        dst = Path(run_dir) / f"{e['name']}.mp3"
-        docker_sh("cp", f"ace-step:{d}/{e['name']}.mp3", str(dst))
-        out.append(dst)
-    return out
+    t = now if now is not None else time.time()
+    bad: set[str] = set()
+    good: dict[str, Path] = {}
+    while True:
+        got = pick([e for e in ents if e["name"] not in bad], need, t, used_lines, rng)
+        if got is None:
+            if bad:
+                print(f"::warning::банк {genre}: битые сегменты исключены: {sorted(bad)}")
+            return None
+        out = []
+        for e in got:
+            n = e["name"]
+            if n not in good:
+                dst = Path(run_dir) / f"{n}.mp3"
+                docker_sh("cp", f"ace-step:{d}/{n}.mp3", str(dst))
+                if not (dst.exists() and valid(dst)):
+                    bad.add(n)
+                    try:
+                        dst.unlink()
+                    except OSError:
+                        pass
+                    break
+                good[n] = dst
+            out.append(good[n])
+        else:
+            for n, pth in list(good.items()):
+                if pth not in out:
+                    pth.unlink(missing_ok=True)
+            return out
 
 
 def used_record(names: list[str], now: float, state_path: Path | None = None) -> None:
