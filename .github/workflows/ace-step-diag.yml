@@ -9,18 +9,19 @@ jobs:
       - uses: actions/checkout@v4
         with: {ref: master}
       - uses: astral-sh/setup-uv@v3
-      - name: restore + instrumented take
+      - name: restore + instrumented take (mkdir ok)
         working-directory: pipeline
         run: |
           uv venv .venv
           uv pip install --python .venv/bin/python pillow gradio_client numpy
           d=/app/output/bank/anime-lofi
           docker exec ace-step sh -c "cd $d/broken 2>/dev/null && for f in *.mp3; do s=\${f%.mp3}; mv -f \$s.mp3 \$s.json $d/; done; ls $d | grep -c mp3$"
+          mkdir -p /tmp/tk
           ./.venv/bin/python - <<'PY'
           import bank_release as br, subprocess, pathlib
           def sh(*a):
               r=subprocess.run(["docker",*a],capture_output=True,text=True)
-              if a[0]=="cp" and r.returncode: print("CP-ERR",a[1][-40:],r.returncode,r.stderr.strip()[:200])
+              if a[0]=="cp" and r.returncode: print("CP-ERR",a[1][-50:],r.returncode,r.stderr.strip()[:200])
               return r.stdout
           def valid(p):
               r=subprocess.run(["ffprobe","-v","error","-show_entries","format=duration","-of","csv=p=0",str(p)],capture_output=True,text=True,timeout=60)
@@ -29,9 +30,9 @@ jobs:
               return ok
           real_sh=sh
           def sh2(*a):
-              if a[0]=="exec" and "mv -f" in a[-1]: print("WOULD-QUARANTINE",a[-1][-90:]); return ""
+              if a[0]=="exec" and "mv -f" in a[-1]: print("WOULD-QUARANTINE",a[-1][-100:]); return ""
               return real_sh(*a)
           got=br.take("anime lofi",20,"/tmp/tk",docker_sh=sh2,valid=valid)
           print("RESULT", None if got is None else len(got))
           PY
-          docker exec ace-step sh -c "ls $d | grep -c mp3$"
+          ls /tmp/tk | head -3
