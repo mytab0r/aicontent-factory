@@ -23,11 +23,24 @@ jobs:
         run: |
           d="$RUNNER_TEMP/docker"; mkdir -p "$d"; echo "DOCKER_CONFIG=$d" >> "$GITHUB_ENV"
           printf '{"auths":{"ghcr.io":{"auth":"%s"}}}\n' "$(printf '%s:%s' "$GITHUB_ACTOR" "$GHCR_TOKEN" | base64 -w0)" > "$d/config.json"
-      - uses: docker/build-push-action@v6
-        with:
-          context: deploy/gpu-pc
-          push: true
-          tags: ghcr.io/mytab0r/ace-step-cu128:latest
+      # root-cause t_0a4cae59: build-push-action не ретраится; transport-обрыв egress ПК (EOF/timeout
+      # к ghcr или CloudFront на слоях базы) валил джобу с наскока. Механика класса: pre-pull базы
+      # с 4 попытками + buildx --push с 4 попытками (слои докачиваются, не дублируются).
+      - name: pre-pull base (4 attempts, resumable layers)
+        run: |
+          B=$(sed -n 's/^FROM //p' deploy/gpu-pc/Dockerfile | head -1)
+          for n in 1 2 3 4; do docker pull -q "$B" && break; [ $n = 4 ] && exit 1; echo "pull $B: попытка $n не удалась, повтор через $((n*20)) с"; sleep $((n*20)); done
+      - name: build + push (retry on registry transport errors)
+        run: |
+          set -e
+          for n in 1 2 3 4; do
+            if docker buildx build --push \
+                 -f deploy/gpu-pc/Dockerfile \
+                 -t ghcr.io/mytab0r/ace-step-cu128:latest \
+                 deploy/gpu-pc; then exit 0; fi
+            [ $n = 4 ] && exit 1
+            echo "build-push: попытка $n не удалась, повтор через $((n*20)) с"; sleep $((n*20))
+          done
       # ponytail: build on PC docker (self-hosted); layer cache stays local.
       # Remove only dangling layers and build cache older than 7d; live images untouched.
       - name: prune garbage

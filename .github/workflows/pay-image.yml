@@ -32,11 +32,25 @@ jobs:
       - uses: docker/setup-buildx-action@v3
         with:
           driver: docker
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: deploy/pay-page/Dockerfile
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/pay-pxbt:latest
-            ghcr.io/${{ github.repository_owner }}/pay-pxbt:sha-${{ github.event.workflow_run.head_sha }}
+      # root-cause t_0a4cae59: transport-обрывы egress ПК (WSL NAT / Docker Desktop proxy) роняли сборку на
+      # живом GET слоя базы (httpReadSeeker unexpected EOF -> failed to compute cache key) и push к ghcr
+      # (oauth token EOF). driver=docker (t_a41372f5) убрал пустой BuildKit, но базу, которой нет в store,
+      # демон всё равно тянет одним GET без ретраев. Механика класса: 1) базу тянем отдельно с 4 попытками
+      # (слои докачиваются, не дублируются), как в ci/e2e-admin; 2) build-push повторяем целиком до 4 раз
+      # только на transport-ошибках registry (EOF / timeout / connection reset), не маскируя другие отказы.
+      - name: pre-pull base (4 attempts, resumable layers)
+        run: |
+          B=$(sed -n 's/^FROM //p' deploy/pay-page/Dockerfile | head -1)
+          for n in 1 2 3 4; do docker pull -q "$B" && break; [ $n = 4 ] && exit 1; echo "pull $B: попытка $n не удалась, повтор через $((n*20)) с"; sleep $((n*20)); done
+      - name: build + push (retry on registry transport errors only)
+        run: |
+          set -e
+          for n in 1 2 3 4; do
+            if docker buildx build --push \
+                 -f deploy/pay-page/Dockerfile \
+                 -t ghcr.io/${{ github.repository_owner }}/pay-pxbt:latest \
+                 -t ghcr.io/${{ github.repository_owner }}/pay-pxbt:sha-${{ github.event.workflow_run.head_sha }} \
+                 .; then exit 0; fi
+            [ $n = 4 ] && exit 1
+            echo "build-push: попытка $n не удалась, повтор через $((n*20)) с"; sleep $((n*20))
+          done
