@@ -4,10 +4,33 @@ on:
 jobs:
   diag:
     runs-on: [self-hosted, release]
-    timeout-minutes: 10
+    timeout-minutes: 25
     steps:
-      - name: restore intact quarantined + groups
+      - uses: actions/checkout@v4
+        with: {ref: master}
+      - name: restore + instrumented take
+        working-directory: pipeline
         run: |
           d=/app/output/bank/anime-lofi
-          docker exec ace-step sh -c "cd $d/broken && for f in *.mp3; do s=\${f%.mp3}; dur=\$(ffprobe -v error -show_entries format=duration -of csv=p=0 \$f); case \$dur in 17[5-9]*|18[0-5]*) mv -f \$s.mp3 \$s.json $d/ && echo restored \$s;; *) echo keep-broken \$s \$dur;; esac; done"
-          docker exec ace-step sh -c "cd $d && for j in *.json; do grep -o '[0-9]* BPM, [A-G][#b]* m[a-z]*' \$j | head -1; done | sort | uniq -c"
+          docker exec ace-step sh -c "cd $d/broken 2>/dev/null && for f in *.mp3; do s=\${f%.mp3}; mv -f \$s.mp3 \$s.json $d/; done; ls $d | grep -c mp3$"
+          mkdir -p /tmp/tk && python3 - <<'PY'
+          import bank_release as br, subprocess, pathlib
+          def sh(*a):
+              r=subprocess.run(["docker",*a],capture_output=True,text=True)
+              if a[0]=="cp" and r.returncode: print("CP-ERR",a[1][-40:],r.returncode,r.stderr.strip()[:200])
+              return r.stdout
+          def valid(p):
+              r=subprocess.run(["ffprobe","-v","error","-show_entries","format=duration","-of","csv=p=0",str(p)],capture_output=True,text=True,timeout=60)
+              ok=r.returncode==0 and float(r.stdout.strip() or 0)>1.0
+              if not ok: print("INVALID",p.name,pathlib.Path(p).stat().st_size,r.returncode,repr(r.stdout[:40]),r.stderr[:200])
+              return ok
+          br.docker_sh=sh
+          orig=br.take
+          real_sh=sh
+          def sh2(*a):
+              if a[0]=="exec" and "mv -f" in a[-1]: print("WOULD-QUARANTINE",a[-1][-90:]); return ""
+              return real_sh(*a)
+          got=br.take("anime lofi",20,"/tmp/tk",docker_sh=sh2,valid=valid)
+          print("RESULT", None if got is None else len(got))
+          PY
+          docker exec ace-step sh -c "ls $d | grep -c mp3$"
