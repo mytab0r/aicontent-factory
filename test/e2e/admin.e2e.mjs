@@ -233,7 +233,7 @@ await scenario('S4b evm: verify не отвечает', async () => {
   try {
     const seen = new Promise((res) => env.page.route('**/api/claim/verify', () => res())); // не отвечаем
     const t0 = Date.now();
-    await env.page.evaluate(() => claimChain('evm'));
+    await env.page.evaluate(() => { claimChain('evm'); }); // не ждём завершения: клик по кнопке тоже не ждёт
     await seen;
     assert.ok(await env.page.locator('#connect-all').isDisabled(), 'кнопка disabled, пока claim идёт');
     await logHas(env.page, '✘ evm: сеть недоступна', 20_000);
