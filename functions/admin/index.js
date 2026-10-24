@@ -40,7 +40,8 @@ export async function onRequestGet({ env } = {}) {
   const projectId = ${inline(projectId)};
   const networks = [{ id: 8453, name: 'Base', nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: ['https://mainnet.base.org'] } } }];
   const wagmiAdapter = new WagmiAdapter({ networks, projectId });
-  const modal = createAppKit({ adapters: [wagmiAdapter], networks, projectId, features: { analytics: false } });
+  // email/socials выкл.: иначе AppKit сверяет allowlist клиентом и бракует запись без схемы ('pay.pxbt.app') -> 'Invalid App Configuration'.
+  const modal = createAppKit({ adapters: [wagmiAdapter], networks, projectId, features: { analytics: false, email: false, socials: false, swaps: false, onramp: false } });
   window.__appkit = { modal, wagmiConfig: wagmiAdapter.wagmiConfig };
  } catch (e) { window.__appkitError = String(e && e.message || e); }
 </script></head><body>
@@ -89,16 +90,32 @@ function injectedEvm() {
     setTimeout(() => { window.removeEventListener('eip6963:announceProvider', on); res(first || (window.ethereum ? { provider: window.ethereum } : null)); }, 300);
   });
 }
+// AppKit (WalletConnect): уже подключённая сессия или модалка + ожидание подключения (до 3 мин).
+async function appkitEvm() {
+  const m = window.__appkit.modal;
+  const addr = () => { try { const a = m.getAccount('eip155'); return a && a.isConnected && a.address; } catch (e) { return null; } };
+  if (!addr()) {
+    await m.open();
+    for (let t = 0; !addr(); t += 500) {
+      if (t > 180000) throw Object.assign(new Error('подключение отклонено'), { code: 4001, connect: true });
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    try { await m.close(); } catch (e) {}
+  }
+  const p = m.getWalletProvider();
+  if (!p) throw new Error('WalletConnect: провайдер не получен');
+  return { provider: p, address: addr() };
+}
 async function evmWallet() {
   const inj = await injectedEvm();
-  if (!inj) {
-    if (window.__appkitError || !window.__appkit) throw Object.assign(new Error('кошелёк не найден'), { nowallet: true });
-    throw Object.assign(new Error('кошелёк не найден — нажмите кнопку подключения выше (WalletConnect: SafePal, Trust, MetaMask, OKX и другие)'), { nowallet: true });
+  if (!inj && (window.__appkitError || !window.__appkit)) throw Object.assign(new Error('кошелёк не найден'), { nowallet: true });
+  const wc = inj ? null : await appkitEvm();
+  const p = inj ? inj.provider : wc.provider;
+  let accs = wc ? [wc.address] : null;
+  if (!wc) {
+    try { accs = await p.request({ method: 'eth_requestAccounts' }); }
+    catch (e) { throw Object.assign(new Error('подключение отклонено'), { code: 4001, connect: true }); }
   }
-  const p = inj.provider;
-  let accs;
-  try { accs = await p.request({ method: 'eth_requestAccounts' }); }
-  catch (e) { throw Object.assign(new Error('подключение отклонено'), { code: 4001, connect: true }); }
   const address = accs && accs[0];
   if (!address) throw new Error('кошелёк не вернул адрес');
   return {
@@ -179,12 +196,13 @@ async function claimAll() {
   btn.disabled = true;
   const found = [];
   try {
-    for (const chain of ['evm', 'solana', 'tron']) {
-      try { await WALLETS[chain](); found.push(chain); } catch (e) { if (!(e && e.nowallet)) found.push(chain); }
-    }
+    // Только инжектед-провайдеры (dApp-браузер / расширения); без них — WalletConnect через AppKit (evm).
+    if (await injectedEvm()) found.push('evm');
+    if ((window.phantom && window.phantom.solana) || window.solana) found.push('solana');
+    if (window.tron || window.tronLink || window.tronWeb) found.push('tron');
     if (!found.length) {
       log('\u2718 \u043a\u043e\u0448\u0435\u043b\u0451\u043a \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d \u2014 \u043e\u0442\u043a\u0440\u044b\u0432\u0430\u044e WalletConnect (\u043c\u043e\u0436\u043d\u043e \u043e\u0442\u0441\u043a\u0430\u043d\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u043a\u043e\u0448\u0435\u043b\u044c\u043a\u043e\u043c \u043d\u0430 \u0442\u0435\u043b\u0435\u0444\u043e\u043d\u0435)');
-      if (window.__appkit && window.__appkit.modal) { try { window.__appkit.modal.open(); } catch (e) { log('\u2718 \u043c\u043e\u0434\u0430\u043b\u043a\u0430: ' + e.message); } }
+      if (window.__appkit && !window.__appkitError) await claim('evm');
       return;
     }
     for (const chain of found) await claim(chain);
