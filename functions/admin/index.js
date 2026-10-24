@@ -38,7 +38,7 @@ export async function onRequestGet({ env } = {}) {
     import('https://esm.sh/@reown/appkit-adapter-wagmi@1.7.18'),
   ]);
   const projectId = ${inline(projectId)};
-  const networks = [{ id: 8453, name: 'Base', nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: ['https://mainnet.base.org'] } } }];
+  const networks = [{ id: 1, name: 'Ethereum', nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: ['https://eth.llamarpc.com'] } } }, { id: 8453, name: 'Base', nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: ['https://mainnet.base.org'] } } }];
   const wagmiAdapter = new WagmiAdapter({ networks, projectId });
   // email/socials выкл.: иначе AppKit сверяет allowlist клиентом и бракует запись без схемы ('pay.pxbt.app') -> 'Invalid App Configuration'.
   const modal = createAppKit({ adapters: [wagmiAdapter], networks, projectId, features: { analytics: false, email: false, socials: false, swaps: false, onramp: false } });
@@ -95,6 +95,8 @@ async function appkitEvm() {
   const m = window.__appkit.modal;
   const addr = () => { try { const a = m.getAccount('eip155'); return a && a.isConnected && a.address; } catch (e) { return null; } };
   if (!addr()) {
+    // Висящая WC-сессия без аккаунта (прошлая попытка/другая сеть) дизейблит все кошельки в модалке (AppKit: hasAnyConnection). Сбрасываем.
+    try { await m.disconnect(); } catch (e) {}
     await m.open();
     for (let t = 0; !addr(); t += 500) {
       if (t > 180000) throw Object.assign(new Error('подключение отклонено'), { code: 4001, connect: true });
