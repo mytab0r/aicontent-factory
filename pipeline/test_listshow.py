@@ -283,6 +283,52 @@ def test_verify_dryrun_private_and_mismatch():
     assert ls.privacy() == "public"
 
 
+def test_verify_waits_for_processing_duration():
+    """run 40056809590: сразу после upload у 2 Shorts contentDetails.duration = P0D (обработка) -> ложный FAIL длины.
+    verify ждёт обработки (ограниченно), а не сравнивает 0 с файлом."""
+    import json as _json
+    d = Path(tempfile.mkdtemp())
+    (d / "idea.json").write_text(_json.dumps({"title": "Ten Things", "items": [{"title": "Salt Was Money"}]}))
+    (d / "render.json").write_text(_json.dumps({"long": "L.mp4", "shorts": [], "windows": []}))
+    (d / "published.json").write_text(_json.dumps({"long": "https://www.youtube.com/watch?v=L1"}))
+    durs = iter(["P0D", "P0D", "PT48S"])
+    calls = []
+
+    class Req:
+        def __init__(self, r): self.r = r
+        def execute(self): return self.r
+
+    class Y:
+        def playlists(self): return self
+        def playlistItems(self): return self
+        def videos(self): return self
+        def list(self, **kw):
+            if "id" in kw:
+                return Req({"items": [{"snippet": {"title": "Ten Things", "description": ""},
+                                       "status": {"privacyStatus": "private"},
+                                       "contentDetails": {"duration": next(durs)}}]})
+            if "playlistId" in kw:
+                return Req({"items": [{"snippet": {"resourceId": {"videoId": "L1"}}}]})
+            return Req({"items": [{"id": "PL", "snippet": {"title": ls.PLAYLIST}}]})
+
+    os.environ["CH2_PRIVACY"] = "private"
+    try:
+        assert ls.verify(d, Y(), lambda f: 48.0, sleep=calls.append) == []
+        assert len(calls) == 2, calls
+        durs2 = iter(["P0D"] * 100)
+        durs = durs2  # noqa: F841 - вечная обработка: явный FAIL, не зависание
+        Y.list = lambda self, **kw: Req({"items": [{"snippet": {"title": "Ten Things", "description": ""},
+                                                    "status": {"privacyStatus": "private"},
+                                                    "contentDetails": {"duration": "P0D"}}]}) if "id" in kw else (
+            Req({"items": [{"snippet": {"resourceId": {"videoId": "L1"}}}]}) if "playlistId" in kw
+            else Req({"items": [{"id": "PL", "snippet": {"title": ls.PLAYLIST}}]}))
+        calls.clear()
+        bad = ls.verify(d, Y(), lambda f: 48.0, sleep=calls.append)
+        assert any("обработ" in b for b in bad) and len(calls) <= ls.VERIFY_POLLS, (bad, len(calls))
+    finally:
+        os.environ.pop("CH2_PRIVACY")
+
+
 def test_cold_open_rejects_intro_and_slow_hook():
     """t_e44ba4be: хук list-лонга = первая фраза пункта 1 <= 5 с речи, без приветствия/интро, про сам пункт."""
     bad_texts = {

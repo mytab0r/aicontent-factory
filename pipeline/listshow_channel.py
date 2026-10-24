@@ -405,10 +405,15 @@ def privacy() -> str:
     return v
 
 
-def verify(run_dir: Path, y=None, probe=None) -> list:
+VERIFY_POLLS = 20  # x30 с = 10 мин ожидания обработки YouTube на ролик
+
+
+def verify(run_dir: Path, y=None, probe=None, sleep=None) -> list:
     """Автосверка выложенного: title = idea.json, privacy = privacy(), ролик в плейлисте, длина = файл ±2 с,
     у Shorts в описании ссылка на long. Возвращает список расхождений (пусто = зелёно)."""
     import re
+    import time
+    sleep = sleep or (lambda _: time.sleep(30))
     s = json.loads((run_dir / "idea.json").read_text(encoding="utf-8"))
     meta = json.loads((run_dir / "render.json").read_text())
     done = json.loads((run_dir / "published.json").read_text())
@@ -430,13 +435,20 @@ def verify(run_dir: Path, y=None, probe=None) -> list:
     bad = []
     for key, url in done.items():
         vid = url.rsplit("=", 1)[1]
-        it = (y.videos().list(part="snippet,status,contentDetails", id=vid).execute().get("items") or [None])[0]
+        for n in range(VERIFY_POLLS + 1):  # P0D = YouTube ещё обрабатывает: ждём, не сравниваем 0 с файлом
+            it = (y.videos().list(part="snippet,status,contentDetails", id=vid).execute().get("items") or [None])[0]
+            m = it and re.fullmatch(r"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", it["contentDetails"]["duration"])
+            dur = sum(int(g or 0) * k for g, k in zip(m.groups(), (3600, 60, 1))) if m else 0
+            if not it or dur > 0 or n == VERIFY_POLLS:
+                break
+            sleep(n)
         if not it:
             bad.append(f"{key}: видео {vid} не найдено")
             continue
+        if dur <= 0:
+            bad.append(f"{key}: длина не появилась за {VERIFY_POLLS} опросов (не обработано YouTube)")
+            continue
         path, title = want[key]
-        m = re.fullmatch(r"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", it["contentDetails"]["duration"])
-        dur = sum(int(g or 0) * k for g, k in zip(m.groups(), (3600, 60, 1))) if m else -1
         checks = {"title": (it["snippet"]["title"], title), "privacy": (it["status"]["privacyStatus"], privacy()),
                   "playlist": (vid in in_pl, True)}
         for name, (got, exp) in checks.items():
