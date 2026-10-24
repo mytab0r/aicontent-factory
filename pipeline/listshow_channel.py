@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 STATE = ROOT / ".state"
 FPS = wf.FPS
 MIN_ITEMS, MAX_ITEMS = 12, 15
-WORDS_PER_SEC = 2.5  # ~150 wpm TTS
+WORDS_PER_SEC = 2.8  # замер run 40050580825: 1444 слова = 518 с речи edge-tts rate +4% (2.5 давало план 584 с при факте 525 с)
 ITEM_GAP_SEC = 0.45  # как в whatif: пауза между сценами
 TARGET_MIN_SEC = 570.0  # 9.5 мин плана; published long проверяется >= 540
 LONG_MIN_SEC = 540.0  # приёмка публикации: >= 9 мин
@@ -86,9 +86,9 @@ def next_plan(state_dir: Path | None = None) -> dict:
 def script_prompt(plan: dict) -> str:
     return f"""You write narration for a faceless YouTube channel of list-style fact videos (10-11 minutes).
 Video: "{plan['topic']}". Angle: {plan['angle']}.
-Rules: total narration 1400-1600 words (about 10 minutes at a natural pace), plain vivid US English,
+Rules: total narration 1650-1850 words (about 10-11 minutes at a natural pace; under 1650 words is rejected), plain vivid US English,
 second person where natural, grounded in real history/science/economics, no hype, no "like and subscribe".
-Split into 13-15 list items, each 95-115 words of narration with its own short punchy item title (2-6 words).
+Split into 13-15 list items, each 120-135 words of narration with its own short punchy item title (2-6 words).
 Every item must stand alone: its own angle, its own example, no repeated filler phrasing between items.
 Write everything in your own words; do not copy phrasing from other channels or websites.
 Item 1 must hook in its first sentence. The final item lands a one-line takeaway.

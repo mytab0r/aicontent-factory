@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import listshow_channel as ls
 
 
-def item(n_words=110, **kw):
+def item(n_words=130, **kw):  # середина 120-135 слов из промпта
     d = {"title": f"Point number {n_words}", "text": " ".join(["fact"] * n_words) + "."}
     d.update(kw)
     return d
@@ -100,6 +100,8 @@ def test_long_duration_target():
     """План хронометража: сумма оценочной длительности пунктов >= 570 с (9.5 мин)."""
     d = ls.planned_duration_sec([item() for _ in range(13)])
     assert d >= ls.TARGET_MIN_SEC, d
+    # run 40050580825: 14 пунктов / ~1444 слова дали 525 с реального TTS -> план обязан быть < 540, иначе рендер падает после 10 мин работы
+    assert ls.planned_duration_sec([item(n_words=103) for _ in range(14)]) < ls.LONG_MIN_SEC
     # 12 пунктов по 40 слов = слишком коротко -> валидатор должен отказать
     try:
         ls.validate_script({**GOOD, "items": [item(title=f"P{k}", n_words=40) for k in range(12)]})
@@ -185,7 +187,7 @@ def test_idea_survives_router_exception_and_retries(monkeypatch=None):
         import json as _json
         payload = _json.dumps({"title": "Things That Will Be Banned In Your Lifetime",
                                "description": "d", "tags": ["t"],
-                               "items": [{"title": f"P{k}", "text": " ".join(["fact"] * 110) + ".",
+                               "items": [{"title": f"P{k}", "text": " ".join(["fact"] * 130) + ".",
                                           "place": ["city", "nature", "space"][k % 3]} for k in range(13)]})
         import whatif_channel as _wf
         return _wf.sse_content([f'data: {{"choices":[{{"delta":{{"content":{_json.dumps(payload)}}}}}]}}'.encode(),
@@ -219,7 +221,7 @@ def test_idea_retries_after_short_plan_then_broken_json():
         return _json.dumps({"title": "Things That Will Be Banned In Your Lifetime", "description": "d", "tags": ["t"],
                             "items": [{"title": f"P{k}", "text": " ".join(["fact"] * words) + ".",
                                        "place": ["city", "nature", "space"][k % 3]} for k in range(13)]})
-    answers = iter([script(100), '{"title": "Things', script(110)])
+    answers = iter([script(100), '{"title": "Things', script(130)])
     orig, old_state = _wf.router_stream, ls.STATE
     _wf.router_stream = lambda m, prompt, mt, timeout=600: next(answers)
     try:
