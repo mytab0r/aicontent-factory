@@ -227,6 +227,16 @@ def _music_mod():
     return m
 
 
+def master_final(track: str, genre: str) -> None:
+    """t_cron1024b (run 40087548227): сегменты мастерились поодиночке, но concat перекодирует
+    и поднимает пики — TP склейки -0.8 dBTP > порога гейта -1.0 (клиппинг). Финальная склейка
+    мастерится так же, как сгенерированный микс: mastering.master по жанру + fade_end."""
+    m = _music_mod()
+    import mastering
+    mastering.master(track, track, genre=genre)
+    m.fade_end(track)
+
+
 def assemble(paths: list[Path], run_dir: Path, metas: list[dict], genre: str, out: str = "track.mp3") -> dict:
     """Склейка сегментов банка тем же кодом, что час-микс (prep_segments + concat_tracks)."""
     m = _music_mod()
@@ -238,6 +248,7 @@ def assemble(paths: list[Path], run_dir: Path, metas: list[dict], genre: str, ou
     m.prep_segments([str(p) for p in paths], log=print)
     durs = [m._probe_sec(p) for p in paths]
     m.concat_tracks([str(p) for p in paths], str(Path(run_dir) / out))
+    master_final(str(Path(run_dir) / out), genre)
     chapters = m.chapters(durs, m.track_names(len(paths), seed), xfade=m.XFADE)
     seams = m.seam_times(durs)
     duration = int(sum(durs) - m.XFADE * (len(durs) - 1))
