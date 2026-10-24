@@ -27,5 +27,16 @@ assert lint.lint_text(with_retry) == [], lint.lint_text(with_retry)
 assert (1, "net-step-timeout") in lint.lint_net_timeout("      - uses: astral-sh/setup-uv@v3\n      - name: x\n        run: y\n".splitlines())
 assert (1, "net-step-timeout") in lint.lint_net_timeout("      - uses: actions/cache/restore@v4\n        with:\n          path: a\n".splitlines())
 assert not [x for x in lint.lint_net_timeout("      - name: a\n        uses: actions/cache@v4\n        timeout-minutes: 15\n        with:\n          path: a\n".splitlines()) if x[1] == "net-step-timeout"]
+# t_de7348c1: устаревшая ветка с docker/login-action обязана ронять --branches
+import subprocess, tempfile
+with tempfile.TemporaryDirectory() as d:
+    g = lambda *a: subprocess.run(["git", "-C", d, "-c", "user.name=t", "-c", "user.email=t@t", *a], check=True, capture_output=True)
+    g("init", "-q"); pathlib.Path(d, ".github/workflows").mkdir(parents=True)
+    pathlib.Path(d, ".github/workflows/img.yml").write_text("      - uses: docker/login-action@v3\n")
+    g("add", "-A"); g("commit", "-qm", "x"); g("update-ref", "refs/remotes/origin/main", "HEAD")
+    assert lint.lint_branches(d) == ["refs/remotes/origin/main:img.yml:1"], lint.lint_branches(d)
+    pathlib.Path(d, ".github/workflows/img.yml").write_text("      - run: echo ok\n")
+    g("commit", "-qam", "fix"); g("update-ref", "refs/remotes/origin/main", "HEAD")
+    assert lint.lint_branches(d) == []
 assert lint.main(str(ROOT)) == 0
 print("ok")
