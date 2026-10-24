@@ -56,6 +56,8 @@ jobs:
       ROUTER_API_KEY: ${{ secrets.ROUTER_API_KEY }}
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
       ACE15_ENDPOINT: http://ace-step:8001  # ACE-Step 1.5 REST на ПК (comfynet)
+      # один run-каталог на весь прогон: idea/cover/track/video в одном месте (common._acf_run_dir)
+      ACF_RUN_DIR: ${{ github.workspace }}/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@v4
         with:

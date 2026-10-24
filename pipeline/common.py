@@ -120,8 +120,19 @@ def tg_send(text: str) -> bool:
     return False
 
 
+def _acf_run_dir() -> Path | None:
+    """Явный run-каталог из workflow (runs/<run_id>): все шаги одного прогона пишут в один каталог."""
+    import os
+    v = os.environ.get("ACF_RUN_DIR")
+    return Path(v) if v else None
+
+
 def new_run_dir() -> Path:
     import datetime
+    forced = _acf_run_dir()
+    if forced is not None:
+        forced.mkdir(parents=True, exist_ok=True)
+        return forced
     ts = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     run_dir = RUNS_DIR / ts
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -129,6 +140,9 @@ def new_run_dir() -> Path:
 
 
 def latest_run_dir() -> Path:
+    forced = _acf_run_dir()
+    if forced is not None:
+        return forced
     runs = sorted(RUNS_DIR.glob("*"))
     if not runs:
         raise SystemExit("нет ни одного запуска в runs/ — сначала выполнить 01_idea.py")
