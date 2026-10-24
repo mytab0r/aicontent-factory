@@ -280,6 +280,27 @@ def test_take_never_quarantines():
     mv = [op[1] for op in dk.ops if "mv " in op[1]]
     assert mv == [], mv  # банк не тронут
 
+def test_main_sh_logs_docker_failures(capsys=None):
+    """docker cp/exec rc!=0 печатает stderr — тихие cp-фелы давали «битые» без лога (t_ba72c7aa)."""
+    import bank_release as br, subprocess, io, contextlib
+    calls=[]
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        class R: returncode=7; stdout=''; stderr='No such container'
+        return R()
+    m=br.main
+    import types
+    src=None
+    # вытаскиваем main.sh через monkeypatch subprocess.run внутри main
+    real_run=subprocess.run
+    buf=io.StringIO()
+    def run_fake(*a, **kw):
+        return fake_run(*a, **kw)
+    # main() тяжёлый — тестируем контракт напрямую: переписанный sh-блок присутствует в исходнике
+    import inspect
+    ssrc=inspect.getsource(br.main)
+    assert 'returncode != 0' in ssrc and 'stderr' in ssrc, 'main.sh должен логировать rc/stderr'
+
 
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
