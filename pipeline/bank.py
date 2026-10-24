@@ -275,10 +275,28 @@ def group_counts(genre, docker_sh, now=None):
         pass
     skip = br._used_filter(used, now or time.time())
     out = {}
+    d = br.bank_dir(genre)
+    bad = []  # 24.10: битые учитывались в группах -> fill кормил «полную» группу, а take() её же карантинил (круговое голодание F major, t_ba72c7aa)
     for e in br.entries(genre, docker_sh=docker_sh):
-        if e["name"] not in skip:
-            k = br.group_key(e)
-            out[k] = out.get(k, 0) + 1
+        n = e["name"]
+        if n in skip:
+            continue
+        ok = False
+        try:
+            r = docker_sh("exec", "ace-step", "sh", "-c",
+                          f"ffprobe -v error -show_entries format=duration -of csv=p=0 {d}/{n}.mp3 2>/dev/null")
+            ok = bool(r.strip() and float(r.strip().split()[0]) > 1.0)
+        except Exception:
+            ok = False
+        if not ok:
+            bad.append(n)
+            docker_sh("exec", "ace-step", "sh", "-c",
+                      f"mkdir -p {d}/broken && mv -f {d}/{n}.mp3 {d}/{n}.json {d}/broken/")
+            continue
+        k = br.group_key(e)
+        out[k] = out.get(k, 0) + 1
+    if bad:
+        print(f"bank: карантин групп-каунта: {len(bad)} битых -> {sorted(bad)[:6]}...")
     return out
 
 
