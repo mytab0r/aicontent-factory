@@ -156,30 +156,20 @@ def take(genre: str, need: int, run_dir: str, docker_sh=None, now=None, rng=None
             n = e["name"]
             if n not in good:
                 dst = Path(run_dir) / f"{n}.mp3"
+                # ПРОВЕРКА ОДНА - при записи в банк (put_verified sha256). Здесь только
+                # доставка: cp не удался физически = повтор, 5 попыток. Судить файл "битым"
+                # выпуск не имеет права - это вторая проверка того же файла (24.10: выпуск
+                # карантинил 15 целых сегментов, проверка врала на отсутствии tmp-папки).
                 ok = False
-                try:  # эталонный размер в контейнере: рваный cp виден по размеру до ffprobe
-                    want = int(docker_sh("exec", "ace-step", "sh", "-c",
-                                         f"stat -c %s {d}/{n}.mp3").split()[0])
-                except Exception:
-                    want = None
-                for _attempt in range(1, 5):  # cp-out под нагрузкой рвётся подряд (18:28: 2 из 2
-                    docker_sh("cp", f"ace-step:{d}/{n}.mp3", str(dst))  # попыток) — 4 попытки, размер до ffprobe/карантина
-                    if dst.exists() and (want is None or dst.stat().st_size == want) and valid(dst):
+                for _attempt in range(1, 6):
+                    r = docker_sh("cp", f"ace-step:{d}/{n}.mp3", str(dst))
+                    if dst.exists() and dst.stat().st_size > 0 and "invalid output path" not in str(r):
                         ok = True
                         break
+                    time.sleep(2)
                 if not ok:
-                    if dst.exists():
-                        print(f"bank: {n}: ffprobe не читает после cp (size={dst.stat().st_size}, "
-                              f"want={want}): {_ffprobe_detail(dst)}")
                     bad.add(n)
-                    # карантин в банке: иначе генератор считает битый годным и группа «полная»
-                    # навсегда (run 39905560585); broken/ = обратимо, файлы не удаляем
-                    docker_sh("exec", "ace-step", "sh", "-c",
-                              f"mkdir -p {d}/broken && mv -f {d}/{n}.mp3 {d}/{n}.json {d}/broken/")
-                    try:
-                        dst.unlink()
-                    except OSError:
-                        pass
+                    print(f"::warning::банк {genre}: доставка {n} не удалась (5 попыток cp)")
                     break
                 good[n] = dst
             out.append(good[n])
