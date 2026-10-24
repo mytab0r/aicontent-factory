@@ -156,6 +156,7 @@ def take(genre: str, need: int, run_dir: str, docker_sh=None, now=None, rng=None
             n = e["name"]
             if n not in good:
                 dst = Path(run_dir) / f"{n}.mp3"
+                dst.parent.mkdir(parents=True, exist_ok=True)  # ACF_RUN_DIR нет после clean-checkout: docker cp rc=1 -> «не доставлен» -> nobank
                 # ПРОВЕРКА ОДНА - при записи в банк (put_verified sha256). Здесь только
                 # доставка: cp не удался физически = повтор, 5 попыток. Судить файл "битым"
                 # выпуск не имеет права - это вторая проверка того же файла (24.10: выпуск
