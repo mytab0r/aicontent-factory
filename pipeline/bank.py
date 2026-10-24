@@ -32,13 +32,20 @@ def slug(genre: str) -> str:
     return genre.replace(" ", "-")
 
 
-def fill(target, have, make, put, busy, log=print, max_iter=40, max_consecutive_fail=3):
+def fill(target, have, make, put, busy, log=print, max_iter=40, max_consecutive_fail=3, deadline=None):
     """Наполнить банк до target. make(i) -> путь прошедшего гейт сегмента или None (брак).
     busy() = выпуск идёт/в очереди -> выход. Сбой генерации при занятом GPU = уступили, без ошибки.
     Сбой без выпуска (run 39884870081: oneMKL transient 0/21 на 39/40) = повтор, прогон роняем
-    только после max_consecutive_fail сбоев подряд — устойчивая поломка остаётся ошибкой."""
+    только после max_consecutive_fail сбоев подряд — устойчивая поломка остаётся ошибкой.
+    deadline = monotonic-метка: после неё чистый выход (root-cause t_c10bb82c: runs 39693436157 /
+    39821580626 — банк не следит за бюджетом джобы, 170 мин съедается на CE-гейтах CPU, GitHub
+    режет джобу по таймауту и весь прогон впустую; банковские mp3 уже в контейнере, но хвост
+    + логи/алерты теряются)."""
     n, i, fails = have(), 0, 0
     while n < min(target, CAP_FILES) and i < max_iter:
+        if deadline and time.monotonic() > deadline:
+            log(f"банк: бюджет джобы исчерпан — выхожу чисто (в банке {n})")
+            break
         if busy():
             log(f"банк: выпуск в работе — уступаю GPU (в банке {n})")
             break
@@ -58,8 +65,7 @@ def fill(target, have, make, put, busy, log=print, max_iter=40, max_consecutive_
             continue
         i += 1
         fails = 0
-        if p:
-            put(p)
+        if p and put(p) is not False:
             n += 1
             log(f"банк: +1 сегмент, всего {n}/{target}")
     return n
@@ -90,6 +96,17 @@ def release_busy(repo=None, token=None, sleep=time.sleep, tries=3) -> bool:
         else:
             return True
     return False
+
+
+def restart_guard(busy, restart):
+    """Рестарт ace-step банку разрешён, только если выпуска нет: иначе убьём его задачу.
+    23.10: полный запрет оставил зависший ace-step (VAE на CPU) на 4 ч, банк 5 раз выходил пустым."""
+    def guard(*a, **k):
+        if busy():
+            raise BankYield("ace-step не ответил, выпуск в работе — рестарт не делаю")
+        print("банк: ace-step завис, выпуска нет — рестарт")
+        return restart(*a, **k)
+    return guard
 
 
 def guarded_scores(paths, busy, batch):
@@ -180,6 +197,74 @@ def effective_target(target, have, counts, need):
     return max(target, have + gap) if gap > 0 else target
 
 
+def pin_prompt(prompt, counts, need, seed):
+    """Жанр без «NN BPM, X major» в промпте (chill phonk): bpm/key брались из seed КАЖДОГО сегмента ->
+    банк размазан по группам, 20 совместимых не набрать (слоты phonk 22-23.10 все nobank).
+    Фиксируем пару в тексте: добиваем самую большую незакрытую группу, иначе пара из seed."""
+    import importlib.util as _u
+    spec = _u.spec_from_file_location("music_pin", HERE / "03_music.py")
+    m = _u.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    if m.prompt_bpm(prompt) and m.prompt_key(prompt):
+        return prompt
+    open_ = [k for k, n in counts.items() if k[0] and k[1] and 0 < n < need]
+    bpm, key = max(open_, key=counts.get) if open_ else (70 + seed % 21, m.ACE15_KEYS[seed % len(m.ACE15_KEYS)])
+    return f"{prompt}, {bpm} BPM, {key}"
+
+
+
+
+def _sha_local(path) -> str:
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _sha_container(d, name, docker_sh):
+    # exec недоступен = проверить нельзя = сегмент не кладём (None)
+    try:
+        out = docker_sh("exec", "ace-step", "sh", "-c", "sha256sum " + d + "/" + name + " 2>/dev/null")
+        return out.split()[0] if out.split() else None
+    except Exception:
+        return None
+
+
+def put_verified(p, genre, name, meta, docker_sh, tries=2) -> bool:
+    """docker cp на ПК бывает рваный в ОБЕ стороны (23.10: два слота по 5 битых из группы =>
+    nobank при MARGIN 4). json+mp3 кладутся во временное имя (.part), sha256 контейнера
+    сверяется с локальным, затем атомарный mv; не сошлось после ретраев - сегмент НЕ в банк
+    (False), генератор кладёт следующий."""
+    import json as _json
+    from pathlib import Path as _P
+    d = f"{BANK_ROOT}/{slug(genre)}"
+    stem = name[:-4] if name.endswith(".mp3") else name
+    local_json = _P(p).with_name(stem + ".json")
+    local_json.write_text(_json.dumps(meta, ensure_ascii=False))
+    pairs = [(local_json, f"{stem}.json"), (_P(p), f"{stem}.mp3")]
+    try:
+        try:
+            for src, remote in pairs:
+                local_sha = _sha_local(src)
+                for _attempt in range(1, tries + 1):
+                    docker_sh("cp", str(src), f"ace-step:{d}/{remote}.part")
+                    if _sha_container(d, f"{remote}.part", docker_sh) == local_sha:
+                        break
+                else:
+                    print(f"bank: sha256 не сошёлся после {tries} cp ({remote}) - сегмент пропущен")
+                    return False
+            for _src, remote in pairs:  # mp3 последним: есть mp3 = есть проверенный json
+                docker_sh("exec", "ace-step", "mv", f"{d}/{remote}.part", f"{d}/{remote}")
+            return True
+        except Exception as e:
+            print(f"bank: put {type(e).__name__}: {e} - сегмент пропущен")
+            return False
+    finally:
+        local_json.unlink(missing_ok=True)
+
+
 def group_counts(genre, docker_sh, now=None):
     """Свободные (не использованные 14 дней) сегменты банка по группам (bpm, key)."""
     import bank_release as br
@@ -190,10 +275,28 @@ def group_counts(genre, docker_sh, now=None):
         pass
     skip = br._used_filter(used, now or time.time())
     out = {}
+    d = br.bank_dir(genre)
+    bad = []  # 24.10: битые учитывались в группах -> fill кормил «полную» группу, а take() её же карантинил (круговое голодание F major, t_ba72c7aa)
     for e in br.entries(genre, docker_sh=docker_sh):
-        if e["name"] not in skip:
-            k = br.group_key(e)
-            out[k] = out.get(k, 0) + 1
+        n = e["name"]
+        if n in skip:
+            continue
+        ok = False
+        try:
+            r = docker_sh("exec", "ace-step", "sh", "-c",
+                          f"ffprobe -v error -show_entries format=duration -of csv=p=0 {d}/{n}.mp3 2>/dev/null")
+            ok = bool(r.strip() and float(r.strip().split()[0]) > 1.0)
+        except Exception:
+            ok = False
+        if not ok:
+            bad.append(n)
+            docker_sh("exec", "ace-step", "sh", "-c",
+                      f"mkdir -p {d}/broken && mv -f {d}/{n}.mp3 {d}/{n}.json {d}/broken/")
+            continue
+        k = br.group_key(e)
+        out[k] = out.get(k, 0) + 1
+    if bad:
+        print(f"bank: карантин групп-каунта: {len(bad)} битых -> {sorted(bad)[:6]}...")
     return out
 
 
@@ -211,16 +314,26 @@ def main():
     music = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(music)
 
-    def no_restart(*a, **k):
-        raise BankYield("ace-step не ответил, рестарт банку запрещён (приоритет выпуска)")
-    music.ace_restart = no_restart
+    music.ace_restart = restart_guard(release_busy, music.ace_restart)
 
     from quality_gate import ce_windows_batch, objective
     prompt, ref = music.GENRE_PROMPTS[genre], os.environ.get("ACE15_REF_AUDIO") or None
+    seed = random.randrange(2**31)
+    need = -(-int(os.environ.get("TRACK_DURATION_SEC", "3600")) // 180)
+    if genre != "anime lofi":  # refpool = семейство ab_1/ab_3 + эталоны только для lofi; phonk одобрен noref
+        try:
+            counts = group_counts(genre, lambda *a: _sh("docker", *a))
+        except Exception as e:
+            print(f"bank: группы не прочитаны ({type(e).__name__}: {e})")
+            counts = {}
+        prompt = pin_prompt(prompt, counts, need + MARGIN, seed)
+        target = effective_target(target, have(), counts, need)
+        print(f"bank {genre}: группы {counts} -> промпт ...{prompt[-24:]}, цель {target}")
     try:
+        if genre != "anime lofi":
+            raise LookupError("refpool только для anime lofi")
         import refpool
         pair = refpool.pick()
-        need = -(-int(os.environ.get("TRACK_DURATION_SEC", "3600")) // 180)
         try:
             counts = group_counts(genre, lambda *a: _sh("docker", *a))
             prompt = choose_prompt(refpool.PROMPT_VARIANTS, counts, need + MARGIN, pair["prompt"],
@@ -232,12 +345,13 @@ def main():
             prompt = pair["prompt"]
         refpool.ensure_ref(pair)
         ref = pair["ref_path"]
+    except LookupError:
+        pass
     except Exception as e:  # как в 03_music: эталон дня недоступен -> ref1
         print(f"refpool: {type(e).__name__}: {e}; fallback ref1")
     if ref and not Path(ref).is_file():
         ref = None
     run_dir = Path(tempfile.mkdtemp(prefix="bank_"))
-    seed = random.randrange(2**31)
     def scores(paths):
         return guarded_scores(paths, release_busy, ce_windows_batch)
 
@@ -246,17 +360,16 @@ def main():
 
     def put(p):
         name = f"{int(time.time())}_{seed}_{Path(p).stem}"
-        meta = run_dir / f"{name}.json"
-        meta.write_text(json.dumps({"genre": genre, "prompt": prompt, "ref": ref, "seed": seed,
-                                    "src": Path(p).name, "ts": int(time.time())}, ensure_ascii=False))
-        _sh("docker", "cp", str(meta), f"ace-step:{d}/{name}.json")
-        # mp3 последним: есть mp3 = есть meta. cp во временное имя + mv: обрыв/отмена прогона посреди
-        # cp оставлял битый .mp3, который считался годным (run 39905560585)
-        _sh("docker", "cp", str(p), f"ace-step:{d}/{name}.mp3.part")
-        _sh("docker", "exec", "ace-step", "mv", f"{d}/{name}.mp3.part", f"{d}/{name}.mp3")
+        meta = {"genre": genre, "prompt": prompt, "ref": ref, "seed": seed,
+                "src": Path(p).name, "ts": int(time.time())}
+        # sha256 после cp (put_verified): рваный docker cp не попадает в банк (23.10)
+        ok = put_verified(p, genre, name + ".mp3", meta, _sh)
         Path(p).unlink(missing_ok=True)
+        return ok
 
-    n = fill(target, have, gen, put, release_busy)
+    dmin = float(os.environ.get("BANK_DEADLINE_MIN", "0") or 0)
+    deadline = time.monotonic() + dmin * 60 if dmin else None
+    n = fill(target, have, gen, put, release_busy, deadline=deadline)
     print(f"банк {genre}: {n} сегментов (цель {target})")
 
 

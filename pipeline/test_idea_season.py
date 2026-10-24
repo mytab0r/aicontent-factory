@@ -111,6 +111,24 @@ def test_m1_duplicate_scene_titles_blocked():
         assert [r["title"] for r in idea.recent_titles(Path(t))] == ["A", "B"]
 
 
+def test_v15_mixed_season_title():
+    # V15: реальный заголовок 23.10 — снег + Хэллоуин в октябре
+    d = date(2026, 10, 23)
+    assert idea.season_conflict("Snowy Café Window 🎃 Cozy Halloween Lofi Beats", d) == ["Snowy"]
+    assert idea.season_conflict("Autumn Café Window 🎃 Cozy Halloween Lofi", d) == []
+    assert idea.season_conflict("Late Night Train 🚃 Lofi Beats", d) == []
+    assert idea.season_conflict("Summer Countryside 🌾 Lofi", d) == ["Summer"]
+    # ноябрь: поздняя осень + раннее рождество согласованы (season_hint)
+    assert idea.season_conflict("Snowy Autumn Library 🎄 Lofi", date(2026, 11, 20)) == []
+    assert idea.season_conflict("Waterfall Snowboard", date(2026, 7, 1)) == []  # не слово сезона целиком
+
+
+def test_v15_fallback_scenes_in_season():
+    d = date(2026, 10, 23)
+    ok = [s[0] for s in idea.SCENES if not idea.season_conflict(s[0], d)]
+    assert len(ok) >= 4, ok
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

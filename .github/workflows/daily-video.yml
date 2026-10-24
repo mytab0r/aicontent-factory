@@ -77,6 +77,7 @@ jobs:
           python3 watchdog.py --guard
 
       - uses: astral-sh/setup-uv@v3
+        timeout-minutes: 5  # t_6758c86f: сетевой шаг не висит до таймаута джобы
         if: steps.guard.outputs.published != '1'
         with:
           cache-local-path: /tmp/acf-uv-cache  # P23: кэш переживает прогон
@@ -229,11 +230,8 @@ jobs:
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           TG_THREAD_ID: ${{ secrets.TG_THREAD_ID }}
         run: |
-          # t_d53850f6: A/B-варианты владельца (ab_LOCK.json в run) публикует только владелец.
-          if ls ../runs/*/ab_LOCK.json >/dev/null 2>&1; then
-            echo "skip: найден ab_LOCK.json — A/B-варианты ждут вердикта владельца (sample gate)"
-            exit 0
-          fi
+          # t_d53850f6: A/B-сэмплы живут только в oneoff-ab-refpool.yml (без публикации).
+          # В прод идёт только ротация refpool.PROMPT_VARIANTS = одобренное владельцем семейство ab_1/ab_3.
           if [ -n "$YOUTUBE_TOKEN_JSON" ]; then
             mkdir -p ../.state
             printf '%s' "$YOUTUBE_TOKEN_JSON" > ../.state/youtube_token.json
@@ -244,6 +242,20 @@ jobs:
           else
             echo "skip: секрет YOUTUBE_TOKEN_JSON не задан, публикация отложена"
           fi
+
+      # t_d53850f6: claim -> 05_publish делает bump_offset и exit 2; без коммита offset терялся
+      # (.state в .gitignore + checkout clean) и ретрай-слот брал ту же пару. Шаг идёт и после падения.
+      - name: persist refpool offset (claim -> следующий слот берёт другой эталон/промпт)
+        if: always() && steps.publish.outcome == 'failure'
+        run: |
+          [ -f .state/refpool/offset.txt ] || { echo "offset не менялся"; exit 0; }
+          git config user.name "aicontent-factory-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add -f .state/refpool/offset.txt
+          git diff --cached --quiet && exit 0
+          git commit -m "chore: refpool offset after Content ID claim [skip ci]"
+          for i in 1 2 3; do git pull --rebase -X theirs -q && git push && break; git rebase --abort 2>/dev/null || true; sleep $((i*5)); done  # root-cause: t_d53850f6 (abort неудачного rebase перед повтором; итог проверяет строка ниже)
+          git status -sb | head -1 | grep -qv ahead
 
       - name: 05b anti-repeat record (отпечаток опубликованного трека в .state)
         id: arrecord
@@ -290,9 +302,12 @@ jobs:
           git config user.name "aicontent-factory-bot"
           git config user.email "actions@users.noreply.github.com"
           git add -f .state/*_idx.txt 2>/dev/null || true  # mood + scene + fallback ротации
-          git add -f .state/titles.json 2>/dev/null || true  # M1: заголовки 14 дней против дублей сцен
+          # P21: заголовок занимает сцену на 14 дней только если ролик реально залит (nobank/сбой = откат файла)
+          PUB_OUTCOME="${{ steps.publish.outcome }}"  # P21: исход шага публикации
+          if [ "$PUB_OUTCOME" = "success" ]; then git add -f .state/titles.json 2>/dev/null || true; else git checkout -- .state/titles.json 2>/dev/null || true; fi  # M1
           git add -f .state/antirepeat 2>/dev/null || true  # отпечатки анти-повтора (t_e39908b1), удаления старше 14 дней тоже
-          git add -f .state/bank_used.jsonl 2>/dev/null || true  # t_ba72c7aa: использованные сегменты банка (анти-повтор 14д)
+          git add -f .state/bank_used.jsonl 2>/dev/null || true
+          git add -f .state/refpool/offset.txt 2>/dev/null || true  # t_d53850f6: смещение пары после claim  # t_ba72c7aa: использованные сегменты банка (анти-повтор 14д)
           git diff --cached --quiet || git commit -m "chore: advance mood rotation [skip ci]"
           # root-cause: t_ba72c7aa / run 39800343057: параллельные джобы матрицы правят те же .state-файлы
           # (CONFLICT titles.json); своя версия поверх (-X theirs при rebase = наш коммит), 3 попытки, без маскировки
@@ -332,6 +347,7 @@ jobs:
         # ponytail: artifact is debug-only (video is on YouTube); storage quota must never fail the release
         continue-on-error: true  # root-cause: t_f95a06da
         uses: actions/upload-artifact@v4  # artifact-ok: логи прогона; доставка результата вне артефактов
+        timeout-minutes: 15  # t_6758c86f: сетевой шаг не висит до таймаута джобы
         with:
           name: video-${{ github.run_id }}-${{ strategy.job-index }}
           path: |

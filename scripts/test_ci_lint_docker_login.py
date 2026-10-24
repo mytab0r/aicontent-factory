@@ -15,5 +15,17 @@ assert lint.lint_text("      # docker login is not used here\n") == []
 assert lint.lint_text("      - uses: actions/upload-artifact@v4\n        with:\n          name: x\n          path: out/\n") == [(1, "upload-retention"), (1, "upload-artifact")]
 assert lint.lint_text("      - uses: actions/upload-artifact@v4\n        with:\n          name: x\n          path: out/\n          retention-days: 1\n") == [(1, "upload-artifact")]
 assert lint.lint_text("      # artifact-ok: x\n      # root-cause: t_9d452170\n      - uses: actions/upload-artifact@v4\n        with:\n          name: x\n          path: out/\n") == []
+# t_0a4cae59: push без retry-механики обязан ронять линт
+assert lint.lint_text("      - uses: docker/build-push-action@v6\n        with:\n          push: true\n") == [(1, "push-no-retry")]
+assert lint.lint_text("      # root-cause: t_0a4cae59\n      - uses: docker/build-push-action@v6\n") == []
+no_retry = "run: docker buildx build --push -t ghcr.io/x/y:latest .\n"
+got = lint.lint_text(no_retry)
+assert (1, "push-no-retry") in got and (1, "push-no-prepull") in got, got
+with_retry = "run: |\n  for n in 1 2 3 4; do docker pull -q \"$B\" && break; done\n  for n in 1 2 3 4; do docker buildx build --push -t ghcr.io/x/y:latest . && exit 0; done\n"
+assert lint.lint_text(with_retry) == [], lint.lint_text(with_retry)
+# t_6758c86f: сетевой шаг без timeout-minutes = FAIL
+assert (1, "net-step-timeout") in lint.lint_net_timeout("      - uses: astral-sh/setup-uv@v3\n      - name: x\n        run: y\n".splitlines())
+assert (1, "net-step-timeout") in lint.lint_net_timeout("      - uses: actions/cache/restore@v4\n        with:\n          path: a\n".splitlines())
+assert not [x for x in lint.lint_net_timeout("      - name: a\n        uses: actions/cache@v4\n        timeout-minutes: 15\n        with:\n          path: a\n".splitlines()) if x[1] == "net-step-timeout"]
 assert lint.main(str(ROOT)) == 0
 print("ok")

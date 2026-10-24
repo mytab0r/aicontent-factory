@@ -18,6 +18,8 @@ const RPC = {
 // среднее время блока в секундах — для оценки стартового блока от времени invoice
 const BLOCK_TIME = { eth: 12, bsc: 3, poly: 2, arb: 1, base: 2 };
 const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+// ponytail: базовый URL Tronscan через env только для тестов/Nile; на проде env нет -> mainnet.
+const TRONSCAN_BASE = (globalThis.TRONSCAN_BASE_ENV && globalThis.TRONSCAN_BASE_ENV()) || 'https://apilist.tronscanapi.com';
 
 /** Сырое количество токена -> микроюниты (6 знаков); null если есть «пыль» мельче микроюнита. */
 export function toMicro(quantRaw, decimals) {
@@ -30,9 +32,9 @@ export function toMicro(quantRaw, decimals) {
   return q * 10n ** BigInt(6 - decimals);
 }
 
-async function tronMatches(pair, address, dueMicro, createdMs) {
+export async function tronMatches(pair, address, dueMicro, createdMs) {
   const url =
-    'https://apilist.tronscanapi.com/api/token_trc20/transfers?limit=50&start=0&sort=-timestamp' +
+    TRONSCAN_BASE + '/api/token_trc20/transfers?limit=50&start=0&sort=-timestamp' +
     '&relatedAddress=' + encodeURIComponent(address) +
     '&filterToken=' + pair.token;
   const r = await fetch(url, { headers: { 'User-Agent': 'pay.pxbt.app' } });

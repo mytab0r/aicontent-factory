@@ -62,6 +62,10 @@ JUMP_BLOCK, JUMP_MAX = 60.0, 4.0
 # Разброс строя между окнами > TUNE_MAX центов = FAIL. Замер 19.10 (окна 30 с): ref1 1.8, ref2 1.1, ref3 2.5,
 # одобренный 15-мин микс ref-style6 6.6, MIX 85-95-105 4.2, two-formats S1-U2 0.7-2.5; брак ref1 + та же часть +40 центов = 42.
 TUNE_WIN, TUNE_MAX = 30.0, 20.0
+# t_b4e407ca: окно без строя (шум, перкуссия) даёт случайный угол — CI case_a (шум) ловил «разброс 21-24 центов».
+# Окно в счёт, только если пики согласованы: |sum b*e^(i*phi)| / sum b >= TUNE_MIN_R. Замер: белый/розовый/коричневый
+# шум 0.002-0.02, ref1 0.33-0.49, синус 1.0.
+TUNE_MIN_R = 0.1
 MIN_CE = 6.5  # ниже худшего рефа ниши (7.07), сильно выше брака (<=3.6)
 
 
@@ -412,7 +416,7 @@ def loudjump_why(f):
 
 
 def tunings(f, sr=11025, n=8192):
-    """A19: строй (центы от A440, -50..50) по окнам TUNE_WIN с; окна без тональных пиков пропускаются."""
+    """A19: строй (центы от A440, -50..50) по окнам TUNE_WIN с; окна без согласованных тональных пиков пропускаются."""
     import numpy as np
     x = np.frombuffer(subprocess.run(["ffmpeg", "-v", "error", "-i", str(f), "-ac", "1", "-ar", str(sr), "-f", "f32le", "-"],
                                      capture_output=True).stdout, np.float32)
@@ -424,7 +428,7 @@ def tunings(f, sr=11025, n=8192):
             continue
         S = np.abs(np.fft.rfft(fr, axis=1))
         S[:, (fq < 100) | (fq > 2000)] = 0
-        z = 0j
+        z, w = 0j, 0.0
         for s in S:
             k = np.where((s[1:-1] > s[:-2]) & (s[1:-1] > s[2:]) & (s[1:-1] > s.max() * 0.1))[0] + 1
             if s.max() <= 0 or not len(k):
@@ -432,7 +436,8 @@ def tunings(f, sr=11025, n=8192):
             a, b, c = s[k - 1], s[k], s[k + 1]
             hz = (k + 0.5 * (a - c) / np.where(a - 2 * b + c == 0, -1e-12, a - 2 * b + c)) * sr / n
             z += np.sum(b * np.exp(2j * np.pi * 12 * np.log2(hz / 440.0)))
-        if abs(z) > 0:
+            w += float(b.sum())
+        if w > 0 and abs(z) / w >= TUNE_MIN_R:  # иначе строя в окне нет — угол случайный
             out.append(float(np.angle(z) * 50 / np.pi))
     return out
 
@@ -451,6 +456,23 @@ def tuning_why(f):
 
 
 
+def speech_why(f):
+    """A25: звук речевого ролика (edge-tts): громкость MIN_I..MAX_I, true peak <= MAX_TP, нет тишины >= SIL_MIN с
+    ниже SIL_DB (сбой TTS пункта = пустой mp3) вне первых 0.5 с и последней 1 с. Замер 23.10 канала 2 с YouTube
+    (7 роликов): I -14.5..-13.9, TP -1.5..-1.0, макс. пауза между фразами 1.52 с."""
+    e = ff(f, f"ebur128=peak=true,silencedetect=n={SIL_DB}dB:d={SIL_MIN}")
+    if "Peak:" not in e:
+        return ["нет звука"]
+    li = float(re.findall(r"I:\s+(-?[\d.]+) LUFS", e)[-1])
+    tp = float(re.findall(r"Peak:\s+(-?[\d.]+|-inf)", e)[-1].replace("-inf", "-200"))
+    dur = duration(f)
+    st = [float(x) for x in re.findall(r"silence_start: (-?[\d.]+)", e)]
+    en = [float(x) for x in re.findall(r"silence_end: ([\d.]+)", e)] + [dur] * len(st)
+    why = loud_why(li) + ([f"true peak {tp:+.1f} dBTP > {MAX_TP}: клиппинг"] if tp > MAX_TP else [])
+    return why + [f"тишина {b - a:.1f} с на {a:.1f} с (< {SIL_DB} дБ): сбой озвучки" for a, b in zip(st, en)
+                  if a > 0.5 and b < dur - 1.0]
+
+
 def video_why(d):
     """P19: гейт речевых видео-форматов (listshow/whatif: render.json long+shorts; owning: video.mp4 = Short) до заливки.
     Целостность/синхрон (V2/V3), чёрный кадр (V1), формат шортса (V3), обложка (V9). Музыкальные эталоны тут не применимы."""
@@ -467,7 +489,7 @@ def video_why(d):
             why.append(f"нет файла {os.path.basename(str(f))}")
             continue
         tag = os.path.basename(str(f))
-        why += [f"{tag}: {w}" for w in integrity_why(f) + black_why(f) + (short_why(f) if f in shorts else [])]
+        why += [f"{tag}: {w}" for w in integrity_why(f) + black_why(f) + speech_why(f) + (short_why(f) if f in shorts else [])]
     return why + cover_why(os.path.join(d, "cover.png"))
 
 

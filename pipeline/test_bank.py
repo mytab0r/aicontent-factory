@@ -17,6 +17,23 @@ def test_fill_stops_at_target_and_skips_rejects():
     assert n == 3 and put == ["s1", "s2"], (n, put)
 
 
+def test_fill_exits_cleanly_at_deadline():
+    # t_c10bb82c: runs 39693436157/39821580626 — GitHub режет джобу по таймауту посреди fill.
+    # Бюджет исчерпан -> чистый выход с уже собранными сегментами, без отмены.
+    import time as _t
+    deadline = _t.monotonic() - 1  # уже в прошлом
+    put, made = [], []
+    def make(i):
+        made.append(i)
+        return f"s{i}"
+    n = bank.fill(5, lambda: 0, make, put.append, lambda: False, log=Q, deadline=deadline)
+    assert n == 0 and not put and not made, (n, put, made)
+    put.clear()
+    n = bank.fill(5, lambda: 0, lambda i: "x", put.append, lambda: False, log=Q,
+                  deadline=_t.monotonic() + 60)
+    assert n == 5 and put == ["x"] * 5  # живой бюджет работу не ломает
+
+
 def test_fill_yields_to_release():
     calls = []
     n = bank.fill(9, lambda: 0, lambda i: calls.append(i) or "x", Q, lambda: True, log=Q)
@@ -160,10 +177,89 @@ def test_target_grows_until_largest_group_has_margin():
     src = (Path(__file__).resolve().parent / "bank.py").read_text(encoding="utf-8").split("def main", 1)[1]
     assert "effective_target(" in src, "main() обязан пересчитывать цель через effective_target"
     assert "need + MARGIN" in src, "choose_prompt обязан добивать группу до need + MARGIN"
-    assert ".mp3.part" in src and '"mv"' in src, "put: cp во временное имя + атомарный mv (обрыв прогона = нет битого .mp3)"
+    full = (Path(__file__).resolve().parent / "bank.py").read_text(encoding="utf-8")
+    assert ".part" in full and '"mv"' in full, "put: cp во временное имя + атомарный mv (обрыв прогона = нет битого .mp3)"
+    assert "sha256" in full, "put: рваный docker cp отсеивается сверкой sha256 (23.10: 2 слота по 5 битых)"
+
+
+
+def test_hung_ace_restarts_when_no_release():
+    """23.10: ace-step завис с 10:05 (VAE на CPU, VRAM держал flint), банк 5 прогонов выходил чисто
+    без рестарта -> генератор стоял 4 ч. Рестарт запрещён только когда выпуск идёт/в очереди."""
+    calls = []
+    guard = bank.restart_guard(lambda: False, lambda *a, **k: calls.append(1))
+    guard()
+    assert calls == [1]
+    guard = bank.restart_guard(lambda: True, lambda *a, **k: calls.append(2))
+    try:
+        guard()
+    except bank.BankYield:
+        assert calls == [1]
+        return
+    raise AssertionError("при выпуске рестарт обязан уступить")
+
+
+def test_every_release_genre_has_bank_generator():
+    """23.10: bank-fill наполнял только anime lofi (GENRE захардкожен) -> слоты chill phonk 22-23.10
+    все nobank, генератора нет вообще. Каждый жанр матрицы daily-video обязан быть в матрице bank-fill."""
+    dv = (Path(__file__).resolve().parent.parent / ".github/workflows/daily-video.yml").read_text(encoding="utf-8")
+    rel = set(re.findall(r'- genre:\s*"([^"]+)"', dv))
+    gen = set(re.findall(r'- genre:\s*"([^"]+)"', WF))
+    assert rel and rel <= gen, f"жанры без генератора банка: {rel - gen}"
+    assert "GENRE: ${{ matrix.genre }}" in WF and "max-parallel: 1" in WF
+
+
+def test_genre_without_bpm_gets_pinned_group():
+    """Промпт phonk без BPM/тональности: bpm/key шли из seed каждого сегмента -> группа (None, None)
+    смешивала темпы, переходы несовместимы. Генератор фиксирует пару в тексте промпта на прогон."""
+    base = "chill phonk, instrumental"
+    p = bank.pin_prompt(base, {}, 24, seed=5)
+    assert p.startswith(base) and re.search(r", \d{2,3} BPM, [A-G] major$", p), p
+    # открытая группа добивается, а не начинается новая
+    counts = {(84, "G major"): 7, (None, None): 30, (80, "C major"): 24}
+    assert bank.pin_prompt(base, counts, 24, seed=1) == base + ", 84 BPM, G major"
+    # уже размеченный промпт (lofi ab_1/ab_3) не трогаем
+    assert bank.pin_prompt("x, 89 BPM, F major", {}, 24, seed=1) == "x, 89 BPM, F major"
+
+
+def test_put_verifies_checksum_and_skips_torn_copy():
+    """23.10: два слота подряд по 5 битых сегментов из группы (рваный docker cp в обе стороны)
+    при MARGIN 4 => группа < 20 => nobank. put_verified сверяет sha256 контейнера с локальным;
+    не сошлось после ретраев - сегмент не в банк (False); exec лежит - тоже False."""
+    import hashlib, os, tempfile
+    import bank
+
+    with tempfile.TemporaryDirectory() as d0:
+        p = os.path.join(d0, "seg.mp3")
+        open(p, "wb").write(b"audio-bytes")
+        ok_sh = {"ans": "match"}
+        def docker_ok(*a):
+            if a[0] == "exec" and "sha256sum" in " ".join(a):
+                if ok_sh["ans"] != "match":
+                    return "deadbeef  f"
+                cmd = a[4].replace("2>/dev/null", "").strip()
+                path = cmd.split()[-1]
+                base = os.path.basename(path)[:-5] if path.endswith(".part") else os.path.basename(path)
+                src = os.path.join(d0, base) if base.endswith(".json") else p
+                return hashlib.sha256(open(src, "rb").read()).hexdigest() + "  " + path
+            return ""
+        assert bank.put_verified(p, "lofi", "x_seed.mp3", {"genre": "lofi"}, docker_ok) is True
+        ok_sh["ans"] = "mismatch"
+        assert bank.put_verified(p, "lofi", "y_seed.mp3", {"genre": "lofi"}, docker_ok) is False
+
+    def docker_exec_fails(*a):
+        raise RuntimeError("exec down")
+
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "seg.mp3")
+        open(p, "wb").write(b"audio-bytes")
+        assert bank.put_verified(p, "lofi", "z_seed.mp3", {}, docker_exec_fails) is False
 
 
 if __name__ == "__main__":
+    test_every_release_genre_has_bank_generator()
+    test_genre_without_bpm_gets_pinned_group()
+    test_hung_ace_restarts_when_no_release()
     test_release_check_network_error_yields_not_crash()
     test_fill_stops_at_target_and_skips_rejects()
     test_fill_yields_to_release()
@@ -177,4 +273,5 @@ if __name__ == "__main__":
     test_transient_failure_without_release_is_retried()
     test_persistent_failure_without_release_raises()
     test_target_grows_until_largest_group_has_margin()
+    test_put_verifies_checksum_and_skips_torn_copy()
     print("ok test_bank")

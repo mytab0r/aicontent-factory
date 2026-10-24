@@ -105,6 +105,18 @@ def pick(entries_: list[dict], need: int, now: float, used_lines=None, rng=None)
     return best[:need]
 
 
+
+def _ffprobe_detail(path) -> str:
+    """Диагностика: почему ffprobe счёл сегмент нечитаемым (слоты 18:28/21:00/23:10
+    исключали сегменты с сошедшимся размером — причина класса не зафиксирована)."""
+    import subprocess
+    try:
+        r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                            "-of", "csv=p=0", str(path)], capture_output=True, text=True, timeout=60)
+        return f"rc={r.returncode} out={r.stdout.strip()[:80]!r} err={r.stderr.strip()[:160]!r}"
+    except Exception as e:
+        return f"{type(e).__name__}: {e}"
+
 def _valid_audio(path) -> bool:
     """Скопированный сегмент читается ffprobe и длится > 1 с (битый/недописанный mp3 = False)."""
     import subprocess
@@ -144,22 +156,20 @@ def take(genre: str, need: int, run_dir: str, docker_sh=None, now=None, rng=None
             n = e["name"]
             if n not in good:
                 dst = Path(run_dir) / f"{n}.mp3"
+                # ПРОВЕРКА ОДНА - при записи в банк (put_verified sha256). Здесь только
+                # доставка: cp не удался физически = повтор, 5 попыток. Судить файл "битым"
+                # выпуск не имеет права - это вторая проверка того же файла (24.10: выпуск
+                # карантинил 15 целых сегментов, проверка врала на отсутствии tmp-папки).
                 ok = False
-                for attempt in (1, 2):  # cp из контейнера бывает рваный (битые имена не
-                    docker_sh("cp", f"ace-step:{d}/{n}.mp3", str(dst))  # повторяются между прогонами) — одна повторная попытка до карантина
-                    if dst.exists() and valid(dst):
+                for _attempt in range(1, 6):
+                    r = docker_sh("cp", f"ace-step:{d}/{n}.mp3", str(dst))
+                    if dst.exists() and dst.stat().st_size > 0 and "invalid output path" not in str(r):
                         ok = True
                         break
+                    time.sleep(2)
                 if not ok:
                     bad.add(n)
-                    # карантин в банке: иначе генератор считает битый годным и группа «полная»
-                    # навсегда (run 39905560585); broken/ = обратимо, файлы не удаляем
-                    docker_sh("exec", "ace-step", "sh", "-c",
-                              f"mkdir -p {d}/broken && mv -f {d}/{n}.mp3 {d}/{n}.json {d}/broken/")
-                    try:
-                        dst.unlink()
-                    except OSError:
-                        pass
+                    print(f"::warning::банк {genre}: доставка {n} не удалась (5 попыток cp)")
                     break
                 good[n] = dst
             out.append(good[n])
@@ -246,7 +256,10 @@ def main(argv=None) -> int:
 
     def sh(*a):
         import subprocess
-        return subprocess.run(["docker", *a], capture_output=True, text=True).stdout
+        r = subprocess.run(["docker", *a], capture_output=True, text=True)
+        if r.returncode != 0:  # cp-ошибки были невидимы: тихий None -> «битые» без единой строки лога (t_ba72c7aa)
+            print(f"docker {' '.join(a[:2])}: rc={r.returncode}: {(r.stderr or r.stdout).strip()[:200]}")
+        return r.stdout
 
     paths = take(genre, n_seg, str(run_dir), docker_sh=sh)
     if paths is None:
