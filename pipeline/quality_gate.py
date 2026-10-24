@@ -456,6 +456,23 @@ def tuning_why(f):
 
 
 
+def speech_why(f):
+    """A25: звук речевого ролика (edge-tts): громкость MIN_I..MAX_I, true peak <= MAX_TP, нет тишины >= SIL_MIN с
+    ниже SIL_DB (сбой TTS пункта = пустой mp3) вне первых 0.5 с и последней 1 с. Замер 23.10 канала 2 с YouTube
+    (7 роликов): I -14.5..-13.9, TP -1.5..-1.0, макс. пауза между фразами 1.52 с."""
+    e = ff(f, f"ebur128=peak=true,silencedetect=n={SIL_DB}dB:d={SIL_MIN}")
+    if "Peak:" not in e:
+        return ["нет звука"]
+    li = float(re.findall(r"I:\s+(-?[\d.]+) LUFS", e)[-1])
+    tp = float(re.findall(r"Peak:\s+(-?[\d.]+|-inf)", e)[-1].replace("-inf", "-200"))
+    dur = duration(f)
+    st = [float(x) for x in re.findall(r"silence_start: (-?[\d.]+)", e)]
+    en = [float(x) for x in re.findall(r"silence_end: ([\d.]+)", e)] + [dur] * len(st)
+    why = loud_why(li) + ([f"true peak {tp:+.1f} dBTP > {MAX_TP}: клиппинг"] if tp > MAX_TP else [])
+    return why + [f"тишина {b - a:.1f} с на {a:.1f} с (< {SIL_DB} дБ): сбой озвучки" for a, b in zip(st, en)
+                  if a > 0.5 and b < dur - 1.0]
+
+
 def video_why(d):
     """P19: гейт речевых видео-форматов (listshow/whatif: render.json long+shorts; owning: video.mp4 = Short) до заливки.
     Целостность/синхрон (V2/V3), чёрный кадр (V1), формат шортса (V3), обложка (V9). Музыкальные эталоны тут не применимы."""
@@ -472,7 +489,7 @@ def video_why(d):
             why.append(f"нет файла {os.path.basename(str(f))}")
             continue
         tag = os.path.basename(str(f))
-        why += [f"{tag}: {w}" for w in integrity_why(f) + black_why(f) + (short_why(f) if f in shorts else [])]
+        why += [f"{tag}: {w}" for w in integrity_why(f) + black_why(f) + speech_why(f) + (short_why(f) if f in shorts else [])]
     return why + cover_why(os.path.join(d, "cover.png"))
 
 
