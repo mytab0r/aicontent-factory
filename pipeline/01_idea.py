@@ -127,6 +127,17 @@ def season_conflict(title: str, today: date) -> list:
     return bad
 
 
+def idea_season_conflict(idea: dict, today: date) -> list:
+    """V11 (аудит 24.10): сезон во ВСЕХ полях идеи (title/cover_prompt/description/tags), не только в title.
+    Слово группы вне сезона (V15) + метка уже прошедшего праздника (SEASON_MARKERS: halloween после 31.10)."""
+    text = " ".join([str(idea.get(k, "")) for k in ("title", "cover_prompt", "description")] + list(idea.get("tags") or []))
+    bad = season_conflict(text, today)
+    for mark, months in SEASON_MARKERS.items():
+        if today.month not in months:
+            bad += re.findall(r"(?<!\w)" + re.escape(mark) + r"(?!\w)", text, flags=re.I)
+    return list(dict.fromkeys(w.lower() for w in bad))
+
+
 def ensure_genre_word(title: str, mood: str) -> str:
     """Гарантия слова жанра в title: guard дублей (watchdog.already_published)
     ищет маркер жанра в заголовке; если LLM его не принёс — дописываем
@@ -255,7 +266,7 @@ def main() -> None:
             break
         idea["title"] = ensure_genre_word(strip_off_season(idea.get("title", ""), date.today()), mood)
         dup = dup_title(idea["title"], recent, date.today())
-        off = season_conflict(idea["title"], date.today())
+        off = idea_season_conflict(idea, date.today())  # V11: все поля, не только title
         if not dup and not off:
             break
         if off:
@@ -272,7 +283,7 @@ def main() -> None:
         print(f"LLM недоступен/повторы ({err}); детерминированный фолбэк"[:300])
         for _ in range(len(SCENES) * len(USES)):
             idea = fallback_idea(mood, STATE_DIR)
-            if not dup_title(idea["title"], recent, date.today()) and not season_conflict(idea["title"], date.today()):
+            if not dup_title(idea["title"], recent, date.today()) and not idea_season_conflict(idea, date.today()):
                 break
     if channel == "dd":
         idea["channel"] = "dd"
