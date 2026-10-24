@@ -19,6 +19,22 @@ def test_no_test_defined_after_main():
     assert dead_tests() == [], dead_tests()
 
 
+def leaky_gate_calls():
+    """t_110fa85f: негативные фикстуры через qg.main печатают `::error::quality gate: true peak … клиппинг`
+    в лог CI; recurrence_scan принимает их за прод-клиппинг (CI 39699460380/39827389930). Вызов main без
+    redirect_stdout в том же файле = утечка аннотаций."""
+    me = Path(__file__).resolve()
+    return [f.name for f in sorted(me.parent.glob("test_*.py"))
+            if f != me and re.search(r"\b(qg|quality_gate)\.main\(", s := f.read_text(encoding="utf-8"))
+            and "redirect_stdout" not in s]
+
+
+def test_gate_main_output_captured():
+    assert leaky_gate_calls() == [], leaky_gate_calls()
+
+
 if __name__ == "__main__":
     test_no_test_defined_after_main()
     print("ok test_no_test_defined_after_main")
+    test_gate_main_output_captured()
+    print("ok test_gate_main_output_captured")
