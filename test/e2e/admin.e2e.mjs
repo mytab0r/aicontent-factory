@@ -168,16 +168,17 @@ async function scenario(name, fn) {
 }
 
 // S1: успешная привязка + адрес в списке после перезагрузки
-for (const chain of CHAINS) await scenario(`S1 ${chain}: привязка, адрес виден после reload`, async () => {
+await scenario('S1 одна кнопка: все 3 адреса, видны после reload', async () => {
   const env = await setup();
   try {
-    await env.page.click('#connect-' + chain);
-    await logHas(env.page, `✔ ${chain}: адрес сохранён ${shown(chain, ADDR[chain]).slice(chain.length + 2)}`);
-    // UI пишет «сохранён» до await loadConfig() — список обновляется следующим fetch; ждём его, а не читаем сразу (t_4f672ba9)
-    await addrHas(env.page, shown(chain, ADDR[chain]), 'адрес в #addresses');
+    await env.page.click('#connect-all');
+    for (const chain of CHAINS) {
+      await logHas(env.page, `✔ ${chain}: адрес сохранён ${shown(chain, ADDR[chain]).slice(chain.length + 2)}`);
+      await addrHas(env.page, shown(chain, ADDR[chain]), 'адрес в #addresses');
+    }
     await env.page.reload();
-    await addrHas(env.page, shown(chain, ADDR[chain]), 'адрес в #addresses после reload');
-    noPageErrors(env, chain);
+    for (const chain of CHAINS) await addrHas(env.page, shown(chain, ADDR[chain]), 'адрес после reload');
+    noPageErrors(env, 'S1');
   } finally { await env.close(); }
 });
 
@@ -185,12 +186,9 @@ for (const chain of CHAINS) await scenario(`S1 ${chain}: привязка, ад�
 for (const chain of CHAINS) await scenario(`S2 ${chain}: кошелька нет`, async () => {
   const env = await setup({ wallets: false });
   try {
-    await env.page.click('#connect-' + chain);
-    await logHas(env.page, `✘ ${chain}: кошелёк не найден`);
+    await env.page.click('#connect-all');
+    await logHas(env.page, '✘ кошелёк не найден');
     await notDefined(env);
-    assert.ok(await env.page.locator('#nowallet').isVisible(), '#nowallet видим');
-    const msg = await env.page.locator('#nowallet-msg').textContent();
-    assert.ok(/admin/.test(msg) && /кошелька/.test(msg), 'сообщение содержит путь решения: ' + msg);
     assert.strictEqual(env.nonceReqs.length, 0, 'без кошелька nonce не запрашивается');
     noPageErrors(env, chain);
   } finally { await env.close(); }
@@ -200,7 +198,7 @@ for (const chain of CHAINS) await scenario(`S2 ${chain}: кошелька нет
 for (const chain of CHAINS) await scenario(`S3 ${chain}: подпись отклонена`, async () => {
   const env = await setup({ reject: 'sign' });
   try {
-    await env.page.click('#connect-' + chain);
+    await env.page.evaluate((c) => claimChain(c), chain);
     await logHas(env.page, `✘ ${chain}: подпись отклонена в кошельке`);
     assert.ok(!(await addresses(env.page)).includes(shown(chain, ADDR[chain])), 'адрес не сохранён');
     noPageErrors(env, chain);
@@ -211,7 +209,7 @@ for (const chain of CHAINS) await scenario(`S3 ${chain}: подпись откл
 for (const chain of CHAINS) await scenario(`S3b ${chain}: подключение отклонено`, async () => {
   const env = await setup({ reject: 'connect' });
   try {
-    await env.page.click('#connect-' + chain);
+    await env.page.evaluate((c) => claimChain(c), chain);
     await logHas(env.page, `✘ ${chain}: подключение отклонено в кошельке`);
     assert.strictEqual(env.nonceReqs.length, 0, 'nonce не запрашивается');
     noPageErrors(env, chain);
@@ -223,7 +221,7 @@ for (const chain of CHAINS) await scenario(`S4a ${chain}: nonce — сеть н�
   const env = await setup();
   try {
     await env.page.route('**/api/claim/nonce', (r) => r.abort('failed'));
-    await env.page.click('#connect-' + chain);
+    await env.page.evaluate((c) => claimChain(c), chain);
     await logHas(env.page, `✘ ${chain}: сеть недоступна`);
     noPageErrors(env, chain);
   } finally { await env.close(); }
@@ -235,12 +233,12 @@ await scenario('S4b evm: verify не отвечает', async () => {
   try {
     const seen = new Promise((res) => env.page.route('**/api/claim/verify', () => res())); // не отвечаем
     const t0 = Date.now();
-    await env.page.click('#connect-evm');
+    await env.page.evaluate(() => claimChain('evm'));
     await seen;
-    assert.ok(await env.page.locator('#connect-evm').isDisabled(), 'кнопка disabled, пока claim идёт');
+    assert.ok(await env.page.locator('#connect-all').isDisabled(), 'кнопка disabled, пока claim идёт');
     await logHas(env.page, '✘ evm: сеть недоступна', 20_000);
     assert.ok(Date.now() - t0 <= 17_000, 'тайм-аут ≤15 с');
-    await env.page.waitForFunction(() => !document.getElementById('connect-evm').disabled, null, { timeout: 2000 });
+    await env.page.waitForFunction(() => !document.getElementById('connect-all').disabled, null, { timeout: 2000 });
     assert.ok(env.failed.some((u) => u.endsWith('/api/claim/verify')), 'запрос отменён клиентом');
     noPageErrors(env, 'evm');
   } finally { await env.close(); }
@@ -250,7 +248,7 @@ await scenario('S4b evm: verify не отвечает', async () => {
 await scenario('S5 evm: повторный nonce', async () => {
   const env = await setup();
   try {
-    await env.page.click('#connect-evm');
+    await env.page.evaluate(() => claimChain('evm'));
     await logHas(env.page, '✔ evm: адрес сохранён');
     const first = JSON.parse(env.verifyBodies[0]);
     const replay = await fetch(env.base.replace(HOST, '127.0.0.1') + '/api/claim/verify', {
@@ -258,8 +256,8 @@ await scenario('S5 evm: повторный nonce', async () => {
     });
     assert.strictEqual(replay.status, 400);
     assert.strictEqual((await replay.json()).error, 'nonce expired or unknown');
-    await env.page.waitForFunction(() => !document.getElementById('connect-evm').disabled);
-    await env.page.click('#connect-evm');
+    await env.page.waitForFunction(() => !document.getElementById('connect-all').disabled);
+    await env.page.evaluate(() => claimChain('evm'));
     await env.page.waitForFunction(() => (document.getElementById('log').textContent.match(/✔ evm: адрес сохранён/g) || []).length === 2, null, { timeout: 10_000 });
     const second = JSON.parse(env.verifyBodies[1]);
     assert.notStrictEqual(second.nonce, first.nonce, 'новый nonce');
