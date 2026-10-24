@@ -1,7 +1,10 @@
 name: runner-unbreak
 # Класс «lease самохостед-раннера завис после смерти джобы/рекреации контейнера» (25.10: pc-acf-release
-# busy=true при нуле активных джоб, вся очередь CI/release встала). Запускается ВРУЧНУЮ на pc-раннере,
-# пересоздаёт контейнер целевого раннера (новая регистрация по RUNNER_REG_TOKEN, новый lease).
+# busy=true при нуле активных джоб, вся очередь CI/release встала). Запускается ВРУЧНУЮ, пересоздаёт
+# контейнер целевого раннера (новая регистрация по RUNNER_REG_TOKEN, новый lease).
+# t_5cdbb967: свап идёт С ЧУЖОГО живого раннера (target=release -> джоба на pc; target=pc -> джоба на
+# release): если lease целевого раннера зомби (busy=true без джоб), джоба на нём никогда не получит слот —
+# дедлок «unbreak сам стоит в очереди за зомби». Оба раннера монтируют один docker.sock хоста.
 on:
   workflow_dispatch:
     inputs:
@@ -13,7 +16,7 @@ on:
 
 jobs:
   recreate:
-    runs-on: [self-hosted, pc]
+    runs-on: ${{ fromJSON(format('["self-hosted","{0}"]', inputs.target == 'release' && 'pc' || 'release')) }}
     timeout-minutes: 12
     steps:
       - name: recreate runner container (fresh registration)
