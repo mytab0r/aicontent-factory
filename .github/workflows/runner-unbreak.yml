@@ -1,0 +1,46 @@
+name: runner-unbreak
+# Класс «lease самохостед-раннера завис после смерти джобы/рекреации контейнера» (25.10: pc-acf-release
+# busy=true при нуле активных джоб, вся очередь CI/release встала). Запускается ВРУЧНУЮ на pc-раннере,
+# пересоздаёт контейнер целевого раннера (новая регистрация по RUNNER_REG_TOKEN, новый lease).
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "release | pc"
+        default: "release"
+        type: choice
+        options: [release, pc]
+
+jobs:
+  recreate:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 12
+    steps:
+      - name: recreate runner container (fresh registration)
+        env:
+          REG: ${{ secrets.RUNNER_REG_TOKEN }}
+        run: |
+          set -e
+          if [ "${{ inputs.target }}" = "release" ]; then
+            NAME=gh-runner-acf-release; RUNNER_NAME=pc-acf-release; LBL=release; WORK=/tmp/runner/acf-release; VOL=gh-runner-acf-release-work
+          else
+            NAME=gh-runner-aicontent-factory; RUNNER_NAME=pc-acf; LBL=pc; WORK=/tmp/runner/aicontent-factory; VOL=gh-runner-aicontent-factory-work
+          fi
+          TMP="unbreak-$$"
+          docker run -d --name "$TMP" --restart unless-stopped --cpus 4 --memory 4g \
+            -e REPO_URL=https://github.com/mytab0r/aicontent-factory -e RUNNER_SCOPE=repo \
+            -e RUNNER_NAME="$RUNNER_NAME" -e LABELS="$LBL" -e RUNNER_TOKEN="$REG" \
+            -e RUNNER_WORKDIR="$WORK" -e CONFIGURED_ACTIONS_RUNNER_FILES_DIR=/runner/data \
+            -e DISABLE_AUTOMATIC_DEREGISTRATION=true \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$NAME-data:/runner/data" \
+            -v gh-runner-aicontent-factory-tools:/opt/hostedtoolcache \
+            -v "$VOL:$WORK" \
+            myoung34/github-runner:ubuntu-noble
+          # дождаться регистрации нового
+          for i in $(seq 1 60); do docker logs "$TMP" 2>&1 | grep -q "Listening for Jobs" && break; sleep 5; done
+          # старый контейнер (зомби-lease) уходит вместе с RW-слоем
+          docker rm -f "$NAME" || true
+          docker rename "$TMP" "$NAME"
+          for n in comfynet gpu-net; do docker network connect $n "$NAME" || true; done
+          docker ps --format "{{.Names}} {{.Status}}" | grep "$NAME"

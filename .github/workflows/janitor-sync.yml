@@ -1,0 +1,23 @@
+name: janitor-sync
+# t: host-файл janitor.sh на ПК (C:\\Users\\magic\\hermes-ops\\janitor) вне репо; его recreate ace-step
+# шёл без UV_NO_SYNC и гонка с workflow ломала выпуск (25.10). Эталон живёт в репо (deploy/gpu-pc/janitor.sh),
+# этот workflow (вручную) синхронизирует host-копию и перезапускает docker-janitor.
+on:
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: sync host janitor.sh + restart docker-janitor
+        run: |
+          set -e
+          JANITOR_DIR=C:/Users/magic/hermes-ops/janitor
+          docker run --rm -v "$JANITOR_DIR:/j" -v "$GITHUB_WORKSPACE/deploy/gpu-pc:/src:ro" alpine \
+            sh -c 'cp /src/janitor.sh /j/janitor.sh && chmod +x /j/janitor.sh'
+          docker restart docker-janitor
+          sleep 3
+          docker logs --tail 3 docker-janitor 2>&1 || true
+          grep -c "UV_NO_SYNC=1" "$GITHUB_WORKSPACE/deploy/gpu-pc/janitor.sh"
