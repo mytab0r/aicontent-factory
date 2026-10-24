@@ -25,6 +25,22 @@ def orphans(videos: list[dict]) -> list[tuple[str, str]]:
     return out
 
 
+def empty_playlists(playlists: list[dict]) -> list[str]:
+    """M18 (аудит 24.10): public-плейлист без public роликов (Chill Phonk Beats 0/2) — ссылка из описания (M15)
+    ведёт зрителя в пустоту. playlists: {id, privacy, items: [privacy,...]} -> id для unlisted. Ролики не трогаем."""
+    return [p["id"] for p in playlists if p["privacy"] == "public" and "public" not in p["items"]]
+
+
+def channel_playlists(at) -> list[dict]:
+    # ponytail: первые 50 плейлистов/50 роликов в каждом; пагинация при росте канала
+    out = []
+    for p in _call(at, "playlists?part=snippet,status&mine=true&maxResults=50")["items"]:
+        r = _call(at, f"playlistItems?part=status&maxResults=50&playlistId={p['id']}")
+        out.append({"id": p["id"], "privacy": p["status"]["privacyStatus"], "snippet": p["snippet"],
+                    "items": [i.get("status", {}).get("privacyStatus") for i in r["items"]]})
+    return out
+
+
 def _token() -> str:
     t = json.loads(os.environ["YOUTUBE_TOKEN_JSON"])
     data = urllib.parse.urlencode({k: t[k] for k in ("client_id", "client_secret", "refresh_token")}
@@ -64,6 +80,12 @@ def main() -> int:
         _call(at, "videos?part=status", {"id": short, "status": {"privacyStatus": "private"}}, "PUT")
         print(f"private: шортс {short} вёл на недоступный long-form {long_id}")
     print(f"каскад: скрыто {len(bad)}")
+    pls = channel_playlists(at)
+    for pid in empty_playlists(pls):  # unlisted, не private: ссылка M15 в старых описаниях продолжает работать
+        sn = next(p["snippet"] for p in pls if p["id"] == pid)
+        _call(at, "playlists?part=snippet,status", {"id": pid, "snippet": {"title": sn["title"],
+              "description": sn.get("description", "")}, "status": {"privacyStatus": "unlisted"}}, "PUT")
+        print(f"unlisted: плейлист {pid} «{sn['title']}» без public роликов")
     return 0
 
 
