@@ -229,11 +229,21 @@ def _music_mod():
 
 def master_final(track: str, genre: str) -> None:
     """t_cron1024b (run 40087548227): сегменты мастерились поодиночке, но concat перекодирует
-    и поднимает пики — TP склейки -0.8 dBTP > порога гейта -1.0 (клиппинг). Финальная склейка
-    мастерится так же, как сгенерированный микс: mastering.master по жанру + fade_end."""
+    и поднимает пики — TP склейки -0.8 dBTP > порога гейта -1.0 (клиппинг).
+    TP в норме -> только fade_end (0 проходов: шаг в P18-бюджете 20 мин; полный
+    mastering.master на часовом файле > 20 мин, run 40095684453 — timeout).
+    TP > -1 -> один проход loudnorm TP=-2 (EQ сегменты получили при записи в банк)."""
+    import os
+    import subprocess
     m = _music_mod()
     import mastering
-    mastering.master(track, track, genre=genre)
+    from quality_gate import LUFS_TARGET
+    if mastering.measure(track)["tp"] > -1.0:
+        tmp = track + ".tp.mp3"
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", track,
+                        "-af", f"loudnorm=I={LUFS_TARGET:g}:TP=-2:LRA=11", "-c:a", "libmp3lame", "-b:a", "192k", tmp],
+                       check=True)
+        os.replace(tmp, track)
     m.fade_end(track)
 
 
