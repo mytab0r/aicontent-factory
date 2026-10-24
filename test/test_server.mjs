@@ -129,6 +129,16 @@ try {
     r = await req('/api/address?chain=btc');
     assert.strictEqual(r.status, 400, 'неизвестная цепочка -> 400');
   }
+  // projectId для /admin перечитывается из secrets.json на каждый запрос (PUT reown -> без рестарта)
+  {
+    fs.writeFileSync(path.join(dir, 'secrets.json'), JSON.stringify({ reown: { project_id: 'live-pid-123' } }));
+    const html = await (await req('/admin', { headers: { 'x-pay-proxy-auth': 'sso-secret-123' } })).text();
+    assert.match(html, /const projectId = "live-pid-123"/, 'projectId из secrets.json в выдаче /admin');
+    fs.writeFileSync(path.join(dir, 'secrets.json'), JSON.stringify({ reown: { project_id: 'live-pid-456' } }));
+    const html2 = await (await req('/admin', { headers: { 'x-pay-proxy-auth': 'sso-secret-123' } })).text();
+    assert.match(html2, /const projectId = "live-pid-456"/, 'повторный запрос видит новое значение без рестарта');
+    fs.rmSync(path.join(dir, 'secrets.json'));
+  }
   // секрет из файла DATA_DIR, если env не задан
   {
     const d2 = fs.mkdtempSync(path.join(os.tmpdir(), 'pay-ps-'));

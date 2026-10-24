@@ -163,7 +163,8 @@ export function makeServer({ dataDir, ownerEmail, apiToken, accessTeam, accessAu
     if (!(p === '/admin' || p.startsWith('/api/admin/') || p.startsWith('/api/claim/'))) return json({ error: 'not found' }, 404);
     if (!isOwner) return json({ error: 'forbidden: нужен вход через sso.pxbt.app' }, 403);
 
-    if (p === '/admin' && m === 'GET') return adminPage.onRequestGet({ env: { ...env, PROVIDERS: publicProviders(providers, readSecrets()) }, request });
+    // projectId перечитываем на каждый запрос: PUT /api/admin/providers/reown должен влиять без рестарта
+    if (p === '/admin' && m === 'GET') return adminPage.onRequestGet({ env: { ...env, REOWN_PROJECT_ID: (readSecrets().reown || {}).project_id || env.REOWN_PROJECT_ID, PROVIDERS: publicProviders(providers, readSecrets()) }, request });
     if (p === '/api/admin/config') {
       const h = { GET: adminConfig.onRequestGet, PUT: adminConfig.onRequestPut }[m];
       return h ? h(ctx()) : json({ error: 'method' }, 405);

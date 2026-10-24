@@ -13,5 +13,12 @@
       { "key": "mode", "label": "Режим", "type": "select", "options": ["live", "sandbox"] }
     ],
     "check": "paypal_oauth"
+  },
+  {
+    "id": "reown",
+    "title": "Reown (WalletConnect projectId для админки)",
+    "fields": [
+      { "key": "project_id", "label": "Project ID", "type": "text" }
+    ]
   }
 ]
