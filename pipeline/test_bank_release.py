@@ -84,24 +84,27 @@ def _cp(dk, broken=()):
     return f
 
 
-def test_take_skips_broken_segment_and_refills():
-    """run 39848167892: ffprobe упал на скопированном сегменте -> выпуск рухнул. Битый исключается,
-    добирается другой из той же группы; файл битого в run_dir не остаётся."""
+def test_take_refills_after_delivery_failure():
+    """Проверка ОДНА (put_verified при записи). take() только доставляет: cp не удался =
+    сегмент добирается другим, БЕЗ карантина и БЕЗ ffprobe-вердикта."""
     now = time.time()
     ents = [meta(n, 89, "F major") for n in ("a", "b", "c")]
     names = "".join(e["name"] + ".mp3\n" for e in ents)
     metas = {f"/app/output/bank/anime-lofi/{e['name']}.json": json.dumps(
         {"prompt": e["prompt"], "seed": e["seed"]}) for e in ents}
     dk = FakeDocker({**metas, "/app/output/bank/anime-lofi": names})
-    ok = lambda p: Path(p).stat().st_size > 0
+
+    def fail_a(*a):
+        if a and a[0] == "cp":
+            Path(a[2]).write_bytes(b"" if Path(a[2]).stem == "a" else b"ID3ok")
+        return dk(*a)
+
     with tempfile.TemporaryDirectory() as td:
-        got = bank_release.take("anime lofi", 2, td, docker_sh=_cp(dk, broken={"b"}), now=now,
-                                rng=random.Random(1), valid=ok)
-        assert got is not None and len(got) == 2 and "b" not in {p.stem for p in got}, got
-        assert sorted(x.name for x in Path(td).iterdir()) == sorted(p.name for p in got)
-    with tempfile.TemporaryDirectory() as td:
-        assert bank_release.take("anime lofi", 2, td, docker_sh=_cp(dk, broken={"a", "b"}), now=now,
-                                 rng=random.Random(1), valid=ok) is None
+        got = bank_release.take("anime lofi", 2, td, docker_sh=fail_a, now=now,
+                                rng=random.Random(1), valid=lambda p: Path(p).stat().st_size > 0)
+        assert got is not None and len(got) == 2 and "a" not in {p.stem for p in got}, got
+    mv = [op[1] for op in dk.ops if "mv " in op[1]]
+    assert mv == [], mv  # карантина нет
 
 
 def test_take_copies_each_segment_or_none():
@@ -221,66 +224,20 @@ def test_bank_main_skips_disabled_prompts():
             bank.refpool = saved
 
 
-def test_take_quarantines_broken_segment_in_bank():
-    """run 39905560585: битые сегменты исключались только в памяти выпуска и оставались в банке ->
-    генератор считал их годными, группа навсегда «полная». Битый уезжает в bank/<жанр>/broken."""
-    now = time.time()
-    ents = [meta(n, 89, "F major") for n in ("a", "b", "c")]
-    names = "".join(e["name"] + ".mp3\n" for e in ents)
-    metas = {f"/app/output/bank/anime-lofi/{e['name']}.json": json.dumps(
-        {"prompt": e["prompt"], "seed": e["seed"]}) for e in ents}
-    dk = FakeDocker({**metas, "/app/output/bank/anime-lofi": names})
-    ok = lambda p: Path(p).stat().st_size > 0
-    with tempfile.TemporaryDirectory() as td:
-        bank_release.take("anime lofi", 2, td, docker_sh=_cp(dk, broken={"b"}), now=now,
-                          rng=random.Random(1), valid=ok)
-    mv = [op[1] for op in dk.ops if "mv " in op[1]]
-    assert len(mv) == 1 and "/b.mp3" in mv[0] and "/b.json" in mv[0] and "/broken" in mv[0], dk.ops
-
-
-def test_take_retries_ragged_cp_before_quarantine():
-    """Битые имена не повторяются между прогонами (39905560585 vs 39908989867) -> это рваный
-    docker cp, а не битый файл. Первая попытка битая, вторая норм: сегмент берётся, карантина нет."""
-    now = time.time()
-    ents = [meta(n, 89, "F major") for n in ("a", "b")]
-    names = "".join(e["name"] + ".mp3\n" for e in ents)
-    metas = {f"/app/output/bank/anime-lofi/{e['name']}.json": json.dumps(
-        {"prompt": e["prompt"], "seed": e["seed"]}) for e in ents}
-    dk = FakeDocker({**metas, "/app/output/bank/anime-lofi": names})
-    tries = {"b": 0}
-
-    def valid(p):
-        if Path(p).stem == "b":
-            tries["b"] += 1
-            return tries["b"] > 1  # первая копия рваная
-        return True
-    with tempfile.TemporaryDirectory() as td:
-        got = bank_release.take("anime lofi", 2, td, docker_sh=_cp(dk), now=now,
-                                rng=random.Random(1), valid=valid)
-        assert got is not None and len(got) == 2, got
-    mv = [op[1] for op in dk.ops if "mv " in op[1]]
-    assert mv == [], mv
-
-
-
-
 def test_margin_absorbs_ragged_cp_burst():
     """run 39924822702: группа ровно need+2 (22 при need=20), три рваных cp подряд ->
     свободных 19 < 20 = nobank, слот пропущен. Запас группы должен поглощать всплеск
     рваных cp: MARGIN >= 4."""
     assert bank.MARGIN >= 4, bank.MARGIN
 
-def test_take_recovers_torn_cp_by_size_check():
-    """Аудит 21:54: банк здоров (44 OK, 0 sha-mismatch), но 18:28/21:00 take() исключал по 5
-    сегментов за слот => рваный cp-out под нагрузкой Ace-Step. Контракт: размер скопированного
-    сверяется со stat контейнера; рваный перекачивается (до 4 попыток) до ffprobe/карантина."""
+def test_take_retries_failed_cp():
+    """Рваный/несостоявшийся cp перекачивается (до 5 попыток) и не карантинится."""
     now = time.time()
     ents = [meta("a", 89, "F major"), meta("b", 89, "F major")]
     names = "\n".join(e["name"] + ".mp3" for e in ents) + "\n"
     metas = {f"/app/output/bank/anime-lofi/{e['name']}.json": json.dumps(
         {"prompt": e["prompt"], "seed": e["seed"]}) for e in ents}
-    full = {f"/app/output/bank/anime-lofi/{e['name']}.mp3": b"PAYLOAD" for e in ents}
-    dk = FakeDocker({**full, **metas, "/app/output/bank/anime-lofi": names})
+    dk = FakeDocker({**metas, "/app/output/bank/anime-lofi": names})
     attempts = {"a": 0}
 
     def flaky_cp(*a):
@@ -289,52 +246,39 @@ def test_take_recovers_torn_cp_by_size_check():
             dst = Path(a[2])
             if dst.stem == "a":
                 attempts["a"] += 1
-                dst.write_bytes(b"PAYLOAD" if attempts["a"] >= 3 else b"PAY")  # первые 2 cp рваные (нагрузка), 3-й полный
+                dst.write_bytes(b"ID3ok" if attempts["a"] >= 3 else b"")
             else:
-                dst.write_bytes(b"PAYLOAD")
+                dst.write_bytes(b"ID3ok")
         return r
 
-    def docker_sh(*a):
-        if a[0] == "exec" and "stat -c %s" in " ".join(a):
-            path = a[-1].split()[-1]
-            return str(len(dk.files.get(path, b"")))
-        return flaky_cp(*a)
-
-    ok = lambda p: Path(p).stat().st_size == 7
     with tempfile.TemporaryDirectory() as td:
-        got = bank_release.take("anime lofi", 2, td, docker_sh=docker_sh, now=now,
-                                rng=random.Random(1), valid=ok)
+        got = bank_release.take("anime lofi", 2, td, docker_sh=flaky_cp, now=now,
+                                rng=random.Random(1), valid=lambda p: Path(p).stat().st_size > 0)
         assert got is not None and {p.stem for p in got} == {"a", "b"}, got
-        assert attempts["a"] == 3, attempts  # перекачан на 3-й попытке, не закарантинен
+        assert attempts["a"] == 3, attempts
 
 
-def test_take_logs_ffprobe_detail_on_invalid(capsys=None):
-    """Слот 23:00: 15 сегментов отбраковано при сошедшемся размере; без вывода ffprobe класс
-    не ловится. Контракт: при исключении сегмента печатается вывод ffprobe."""
-    import contextlib, io
+def test_take_never_quarantines():
+    """24.10: выпуск карантинил 15 целых сегментов (вторая проверка врала на отсутствии
+    tmp-папки). Контракт: take() не двигает файлы банка, только предупреждает."""
+
     now = time.time()
-    ents = [meta("a", 89, "F major"), meta("b", 89, "F major"), meta("c", 89, "F major")]
-    names = "\n".join(e["name"] + ".mp3" for e in ents) + "\n"
+    ents = [meta(n, 89, "F major") for n in ("a", "b", "c")]
+    names = "".join(e["name"] + ".mp3\n" for e in ents)
     metas = {f"/app/output/bank/anime-lofi/{e['name']}.json": json.dumps(
         {"prompt": e["prompt"], "seed": e["seed"]}) for e in ents}
     dk = FakeDocker({**metas, "/app/output/bank/anime-lofi": names})
-    ok = lambda p: Path(p).stat().st_size > 0
-    seen_log = None
+
+    def no_dir(*a):
+        if a and a[0] == "cp":
+            Path(a[2]).write_bytes(b"")  # "invalid output path: directory does not exist"
+        return dk(*a)
+
     with tempfile.TemporaryDirectory() as td:
-        for seed in range(6):  # добиваемся выбора "a" (shuffle), потом проверяем лог
-            buf = io.StringIO()
-            with contextlib.redirect_stdout(buf):
-                got = bank_release.take("anime lofi", 2, td, docker_sh=_cp(dk, broken={"a"}), now=now,
-                                        rng=random.Random(seed), valid=ok)
-            out = buf.getvalue()
-            if got is not None and "ffprobe" in out:
-                seen_log = (got, out)
-                break
-            assert got is None or "a" not in {p.stem for p in got}, (seed, out)
-        assert seen_log is not None, "выбор 'a' не случился ни при одном seed"
-        got, out = seen_log
-        assert "a" not in {p.stem for p in got}
-        assert "ffprobe" in out and "a" in out, out
+        bank_release.take("anime lofi", 2, td, docker_sh=no_dir, now=now,
+                          rng=random.Random(1), valid=lambda p: Path(p).stat().st_size > 0)
+    mv = [op[1] for op in dk.ops if "mv " in op[1]]
+    assert mv == [], mv  # банк не тронут
 
 
 if __name__ == "__main__":
