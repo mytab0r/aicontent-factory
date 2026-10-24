@@ -18,6 +18,8 @@ import sys
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
 
+from quality_gate import LUFS_TARGET
+
 ROOT = Path(__file__).resolve().parent.parent
 STATE = ROOT / ".state"
 FPS = 24
@@ -632,7 +634,7 @@ def concat(parts: list, out: Path) -> Path:
     lst = out.with_suffix(".txt")
     lst.write_text("".join(f"file '{Path(p).resolve()}'\n" for p in parts))
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(lst),
-                    "-af", "loudnorm=I=-14:TP=-2.0", "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", str(out)], check=True)
+                    "-af", f"loudnorm=I={LUFS_TARGET:g}:TP=-2.0", "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", str(out)], check=True)
     return out
 
 

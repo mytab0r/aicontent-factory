@@ -13,6 +13,8 @@ import re
 import subprocess
 import sys
 
+from quality_gate import LUFS_TARGET
+
 
 def measure(path: str) -> dict:
     """I/LRA/TP одним прогоном ebur128=peak=true."""
@@ -27,7 +29,7 @@ def measure(path: str) -> dict:
 
 # lofi (одобрен 13.10 по ref1, LRA ~11): только громкость платформы, без EQ/компрессоров.
 # Цепочка ниже одобрена для phonk (14.10); на lofi она давила LRA 10.9 -> 1.8 («каша», 16.10).
-LOFI_AF = "highpass=f=28,loudnorm=I=-14:TP=-2:LRA=11"
+LOFI_AF = f"highpass=f=28,loudnorm=I={LUFS_TARGET:g}:TP=-2:LRA=11"
 
 
 EQ_MAX_DB = 6.0
@@ -62,12 +64,12 @@ def master(src: str, dst: str, genre: str = "chill phonk") -> dict:
                 "treble=g=2:f=10000,"
                 "acompressor=threshold=-18dB:ratio=2.5:attack=20:release=250:makeup=2,"
                 "extrastereo=m=1.2,"
-                "loudnorm=I=-14:TP=-2:LRA=8,"
+                f"loudnorm=I={LUFS_TARGET:g}:TP=-2:LRA=8,"
                 "aresample=48000,"
                 "acompressor=threshold=-18dB:ratio=4:attack=10:release=150:makeup=1.5,"
                 "acompressor=threshold=-15dB:ratio=6:attack=5:release=100:makeup=2,"
                 "alimiter=limit=0.79:level=disabled,"
-                "loudnorm=I=-14:TP=-2:LRA=8")
+                f"loudnorm=I={LUFS_TARGET:g}:TP=-2:LRA=8")
 
     def run(s: str, d: str, chain: str) -> None:
         # пишем во временный файл: ffmpeg не может писать в свой же вход (src == dst)
@@ -80,18 +82,18 @@ def master(src: str, dst: str, genre: str = "chill phonk") -> dict:
         run(src, dst, PHONK_AF)  # одобренная владельцем 14.10 динамика/лимитер
         # повторные проходы ПОСЛЕ цепочки: только тон+громкость, цепочку не повторять (снесёт тон)
         for _ in range(EQ_PASSES):
-            run(dst, dst, f"{eq_af(eq_gains(bands(dst), REF['phonk']['bands']))},loudnorm=I=-14:TP=-2:LRA=8")
+            run(dst, dst, f"{eq_af(eq_gains(bands(dst), REF['phonk']['bands']))},loudnorm=I={LUFS_TARGET:g}:TP=-2:LRA=8")
     else:
         s = src
         for _ in range(EQ_PASSES):
-            run(s, dst, f"highpass=f=28,{eq_af(eq_gains(bands(s), REF['lofi']['bands']))},loudnorm=I=-14:TP=-2:LRA=11")
+            run(s, dst, f"highpass=f=28,{eq_af(eq_gains(bands(s), REF['lofi']['bands']))},loudnorm=I={LUFS_TARGET:g}:TP=-2:LRA=11")
             s = dst
         run(dst, dst, LOFI_AF)
     m = measure(dst)
     # ponytail: экстремальная динамика (длинные паузы) ломает LRA одним проходом —
     # повторные проходы сходятся (LRA 15.6->6.5->2.5); 3 прохода, дальше гейт.
     # Повтор = loudnorm-only для обоих жанров: полная цепочка/LOFI слали бы тон заново.
-    rerun = "loudnorm=I=-14:TP=-2:LRA=8" if phonk else LOFI_AF
+    rerun = f"loudnorm=I={LUFS_TARGET:g}:TP=-2:LRA=8" if phonk else LOFI_AF
     for _ in range(2):
         if -15 <= m["i"] <= -13 and (m["lra"] <= 8 or not phonk) and m["tp"] <= -1:
             break
