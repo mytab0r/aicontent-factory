@@ -6,5 +6,8 @@ jobs:
     runs-on: [self-hosted, release]
     timeout-minutes: 10
     steps:
-      - name: counts
-        run: docker exec ace-step sh -c 'cd /app/output/bank/anime-lofi && echo root_mp3=$(ls -1 *.mp3 2>/dev/null | wc -l) broken_mp3=$(ls -1 broken/*.mp3 2>/dev/null | wc -l) && ls -1 broken/*.mp3 2>/dev/null'
+      - name: restore broken + group stats
+        run: |
+          docker exec ace-step sh -c 'cd /app/output/bank/anime-lofi && ls broken/ | head -40; for f in broken/*.mp3; do b=$(basename $f .mp3); [ -f $b.mp3 ] || mv $f .; [ -f broken/$b.json ] && mv broken/$b.json . ; done; echo root_mp3=$(ls -1 *.mp3|wc -l) root_json=$(ls -1 *.json|wc -l) broken_left=$(ls broken|wc -l)'
+          docker exec ace-step sh -c 'cd /app/output/bank/anime-lofi && for j in *.json; do python3 -c "import json,sys,re;d=json.load(open(sys.argv[1]));p=d.get(\"prompt\",\"\");print(sys.argv[1][:-5], re.findall(r\"(\\d+) ?BPM\",p,re.I), re.findall(r\"in ([A-G][#b]? ?(?:major|minor))\",p,re.I), p[:140].replace(chr(10),\" \"))" $j; done'
+          for g in chill-phonk; do docker exec ace-step sh -c "cd /app/output/bank/$g 2>/dev/null && echo $g mp3=\$(ls -1 *.mp3|wc -l) broken=\$(ls broken 2>/dev/null|wc -l)"; done
