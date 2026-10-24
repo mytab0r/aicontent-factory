@@ -5,7 +5,16 @@ name: listshow long-form (S1 ch2)
 on:
   schedule:
     - cron: "30 16 * * *"  # 1 выпуск/день, US утро; whatif идёт в 18:00 UTC
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      dryrun:
+        description: "сухой прогон launch-гейта: upload private + автосверка, без гейта и без ротации (t_f807dc99)"
+        type: boolean
+        default: false
+      topic:
+        description: "тема dryrun из free-идей breakout-finder (reports/ch2_breakouts.json summary.free); пусто = ротация TOPICS"
+        type: string
+        default: ""
 
 concurrency:
   group: daily-listshow
@@ -21,7 +30,9 @@ jobs:
     env:
       ROUTER_BASE_URL: https://9router.pxbt.app/v1
       ROUTER_API_KEY: ${{ secrets.ROUTER_API_KEY }}
-      LIST2D: ${{ vars.LIST2D }}
+      LIST2D: ${{ inputs.dryrun && '1' || vars.LIST2D }}  # dryrun = private, публики нет даже при LIST2D=0
+      CH2_PRIVACY: ${{ inputs.dryrun && 'private' || 'public' }}
+      LISTSHOW_TOPIC: ${{ inputs.dryrun && inputs.topic || '' }}  # тема только в сухом прогоне
     steps:
       - name: flag
         id: flag
@@ -55,19 +66,31 @@ jobs:
         if: steps.flag.outputs.go == '1'
         working-directory: pipeline
         run: ../.venv/bin/python quality_gate.py --video
-      - name: token
+      # t_f807dc99: без GO гейта запуска ch2 — выход без upload (рендер/QA остаются, токен не пишется).
+      - name: launch gate (NO-GO = без upload)
+        id: gate
         if: steps.flag.outputs.go == '1'
+        run: |
+          if [ "$CH2_PRIVACY" = "private" ]; then echo "go=1" >> "$GITHUB_OUTPUT"; echo "dryrun: private upload, гейт не нужен"
+          elif python3 scripts/launch_gate.py ch2-whatif; then echo "go=1" >> "$GITHUB_OUTPUT"
+          else echo "::warning::launch gate NO-GO: upload ch2 пропущен (reports/products/ch2-whatif.launch.md)"; fi
+      - name: token
+        if: steps.gate.outputs.go == '1'
         env:
           YT_CH1_TOKEN_JSON: ${{ secrets.YT_CH1_TOKEN_JSON }}
         run: |
           mkdir -p .state
           printf '%s' "$YT_CH1_TOKEN_JSON" > .state/youtube_token.json
       - name: publish (long + 3 Shorts в плейлист)
-        if: steps.flag.outputs.go == '1'
+        if: steps.gate.outputs.go == '1'
         working-directory: pipeline
         run: ../.venv/bin/python listshow_channel.py publish
+      - name: verify dryrun (title/privacy/playlist/длина)
+        if: steps.gate.outputs.go == '1' && inputs.dryrun
+        working-directory: pipeline
+        run: ../.venv/bin/python listshow_channel.py verify
       - name: commit rotation state
-        if: steps.flag.outputs.go == '1'
+        if: steps.flag.outputs.go == '1' && !inputs.dryrun
         run: |
           git config user.name "aicontent-factory-bot"
           git config user.email "actions@users.noreply.github.com"

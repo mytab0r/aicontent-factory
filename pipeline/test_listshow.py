@@ -3,6 +3,7 @@
 хронометраж >= 9.5 мин, анти-шаблонная вариация, Shorts-окна из списка.
 Запуск: python3 pipeline/test_listshow.py (без сети; render-тесту нужны ffmpeg + pillow)."""
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -13,9 +14,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import listshow_channel as ls
 
 
-def item(n_words=110, **kw):
-    d = {"title": f"Point number {n_words}", "text": " ".join(["fact"] * n_words) + "."}
+def item(n_words=130, **kw):  # середина 120-135 слов из промпта
+    d = {"title": f"Point number {n_words}"}
     d.update(kw)
+    # холодное открытие: короткая первая фраза про сам пункт (validate_script ловит интро/длинный хук)
+    d.setdefault("text", f"{d['title']} changes everything. " + " ".join(["fact"] * (n_words - 4)) + ".")
     return d
 
 
@@ -76,8 +79,16 @@ def test_validate_normalizes_items():
 
 
 def test_rotation_varies_topic_and_palette():
-    with tempfile.TemporaryDirectory() as td:
-        picks = [ls.next_plan(Path(td)) for _ in range(len(ls.TOPICS))]
+    saved = os.environ.pop("LISTSHOW_TOPIC", None)  # run 40055940555: dryrun-тема из env не должна ломать ротацию
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            picks = [ls.next_plan(Path(td)) for _ in range(len(ls.TOPICS))]
+            os.environ["LISTSHOW_TOPIC"] = "Why It Sucked To Be A Pyramid Worker"
+            assert ls.next_plan(Path(td))["topic"] == "Why It Sucked To Be A Pyramid Worker"
+    finally:
+        os.environ.pop("LISTSHOW_TOPIC", None)
+        if saved is not None:
+            os.environ["LISTSHOW_TOPIC"] = saved
     assert len({p["topic"] for p in picks}) == len(ls.TOPICS)
     for a, b in zip(picks, picks[1:]):
         assert a["palette"] != b["palette"]
@@ -100,6 +111,8 @@ def test_long_duration_target():
     """План хронометража: сумма оценочной длительности пунктов >= 570 с (9.5 мин)."""
     d = ls.planned_duration_sec([item() for _ in range(13)])
     assert d >= ls.TARGET_MIN_SEC, d
+    # run 40050580825: 14 пунктов / ~1444 слова дали 525 с реального TTS -> план обязан быть < 540, иначе рендер падает после 10 мин работы
+    assert ls.planned_duration_sec([item(n_words=103) for _ in range(14)]) < ls.LONG_MIN_SEC
     # 12 пунктов по 40 слов = слишком коротко -> валидатор должен отказать
     try:
         ls.validate_script({**GOOD, "items": [item(title=f"P{k}", n_words=40) for k in range(12)]})
@@ -185,7 +198,7 @@ def test_idea_survives_router_exception_and_retries(monkeypatch=None):
         import json as _json
         payload = _json.dumps({"title": "Things That Will Be Banned In Your Lifetime",
                                "description": "d", "tags": ["t"],
-                               "items": [{"title": f"P{k}", "text": " ".join(["fact"] * 110) + ".",
+                               "items": [{"title": f"P{k}", "text": "Fact one hits hard. " + " ".join(["fact"] * 126) + ".",
                                           "place": ["city", "nature", "space"][k % 3]} for k in range(13)]})
         import whatif_channel as _wf
         return _wf.sse_content([f'data: {{"choices":[{{"delta":{{"content":{_json.dumps(payload)}}}}}]}}'.encode(),
@@ -217,9 +230,9 @@ def test_idea_retries_after_short_plan_then_broken_json():
 
     def script(words):
         return _json.dumps({"title": "Things That Will Be Banned In Your Lifetime", "description": "d", "tags": ["t"],
-                            "items": [{"title": f"P{k}", "text": " ".join(["fact"] * words) + ".",
+                            "items": [{"title": f"P{k}", "text": "Fact one hits hard. " + " ".join(["fact"] * (words - 4)) + ".",
                                        "place": ["city", "nature", "space"][k % 3]} for k in range(13)]})
-    answers = iter([script(100), '{"title": "Things', script(110)])
+    answers = iter([script(100), '{"title": "Things', script(130)])
     orig, old_state = _wf.router_stream, ls.STATE
     _wf.router_stream = lambda m, prompt, mt, timeout=600: next(answers)
     try:
@@ -229,6 +242,151 @@ def test_idea_retries_after_short_plan_then_broken_json():
             assert out.exists()
     finally:
         _wf.router_stream, ls.STATE = orig, old_state
+
+
+def test_verify_dryrun_private_and_mismatch():
+    """t_f807dc99: сухой прогон — private, title=idea.json, плейлист, длина файла, ссылка на long у Shorts."""
+    import json as _json
+    d = Path(tempfile.mkdtemp())
+    (d / "idea.json").write_text(_json.dumps({"title": "Ten Things", "items": [{"title": "Salt Was Money"}]}))
+    (d / "render.json").write_text(_json.dumps({"long": "L.mp4", "shorts": ["S1.mp4"], "windows": [[0]]}))
+    long_url = "https://www.youtube.com/watch?v=L1"
+    (d / "published.json").write_text(_json.dumps({"long": long_url, "short_1": "https://www.youtube.com/watch?v=S1"}))
+    vids = {"L1": {"snippet": {"title": "Ten Things", "description": "x"}, "status": {"privacyStatus": "private"},
+                   "contentDetails": {"duration": "PT10M2S"}},
+            "S1": {"snippet": {"title": "Salt Was Money: Ten Things #Shorts", "description": "Full video: " + long_url},
+                   "status": {"privacyStatus": "private"}, "contentDetails": {"duration": "PT45S"}}}
+
+    class Req:
+        def __init__(self, r): self.r = r
+        def execute(self): return self.r
+
+    class Y:
+        def playlists(self): return self
+        def playlistItems(self): return self
+        def videos(self): return self
+        def list(self, **kw):
+            if "id" in kw:
+                return Req({"items": [vids[kw["id"]]] if kw["id"] in vids else []})
+            if "playlistId" in kw:
+                return Req({"items": [{"snippet": {"resourceId": {"videoId": v}}} for v in ("L1", "S1")]})
+            return Req({"items": [{"id": "PL", "snippet": {"title": ls.PLAYLIST}}]})
+
+    os.environ["CH2_PRIVACY"] = "private"
+    probe = {"L.mp4": 601.5, "S1.mp4": 45.0}.get
+    assert ls.verify(d, Y(), probe) == []
+    vids["S1"]["snippet"]["description"] = "no link"
+    vids["L1"]["status"]["privacyStatus"] = "public"
+    bad = ls.verify(d, Y(), lambda f: 300.0 if f == "L.mp4" else 45.0)
+    assert any("privacy" in b for b in bad) and any("длина" in b for b in bad) and any("ссылки" in b for b in bad), bad
+    os.environ.pop("CH2_PRIVACY")
+    assert ls.privacy() == "public"
+
+
+def test_verify_waits_for_processing_duration():
+    """run 40056809590: сразу после upload у 2 Shorts contentDetails.duration = P0D (обработка) -> ложный FAIL длины.
+    verify ждёт обработки (ограниченно), а не сравнивает 0 с файлом."""
+    import json as _json
+    d = Path(tempfile.mkdtemp())
+    (d / "idea.json").write_text(_json.dumps({"title": "Ten Things", "items": [{"title": "Salt Was Money"}]}))
+    (d / "render.json").write_text(_json.dumps({"long": "L.mp4", "shorts": [], "windows": []}))
+    (d / "published.json").write_text(_json.dumps({"long": "https://www.youtube.com/watch?v=L1"}))
+    durs = iter(["P0D", "P0D", "PT48S"])
+    calls = []
+
+    class Req:
+        def __init__(self, r): self.r = r
+        def execute(self): return self.r
+
+    class Y:
+        def playlists(self): return self
+        def playlistItems(self): return self
+        def videos(self): return self
+        def list(self, **kw):
+            if "id" in kw:
+                return Req({"items": [{"snippet": {"title": "Ten Things", "description": ""},
+                                       "status": {"privacyStatus": "private"},
+                                       "contentDetails": {"duration": next(durs)}}]})
+            if "playlistId" in kw:
+                return Req({"items": [{"snippet": {"resourceId": {"videoId": "L1"}}}]})
+            return Req({"items": [{"id": "PL", "snippet": {"title": ls.PLAYLIST}}]})
+
+    os.environ["CH2_PRIVACY"] = "private"
+    try:
+        assert ls.verify(d, Y(), lambda f: 48.0, sleep=calls.append) == []
+        assert len(calls) == 2, calls
+        durs2 = iter(["P0D"] * 100)
+        durs = durs2  # noqa: F841 - вечная обработка: явный FAIL, не зависание
+        Y.list = lambda self, **kw: Req({"items": [{"snippet": {"title": "Ten Things", "description": ""},
+                                                    "status": {"privacyStatus": "private"},
+                                                    "contentDetails": {"duration": "P0D"}}]}) if "id" in kw else (
+            Req({"items": [{"snippet": {"resourceId": {"videoId": "L1"}}}]}) if "playlistId" in kw
+            else Req({"items": [{"id": "PL", "snippet": {"title": ls.PLAYLIST}}]}))
+        calls.clear()
+        bad = ls.verify(d, Y(), lambda f: 48.0, sleep=calls.append)
+        assert any("обработ" in b for b in bad) and len(calls) <= ls.VERIFY_POLLS, (bad, len(calls))
+    finally:
+        os.environ.pop("CH2_PRIVACY")
+
+
+def test_cold_open_rejects_intro_and_slow_hook():
+    """t_e44ba4be: хук list-лонга = первая фраза пункта 1 <= 5 с речи, без приветствия/интро, про сам пункт."""
+    bad_texts = {
+        "приветствие": "Welcome back to the channel, today we look at a list. " + " ".join(["fact"] * 120) + ".",
+        "today-интро": "Today we are going to count down some facts. " + " ".join(["fact"] * 120) + ".",
+        "хук > 5 с": " ".join(["fact"] * 30) + ". " + " ".join(["fact"] * 100) + ".",
+        "не про пункт": "Some people never think about this at all. " + " ".join(["fact"] * 120) + ".",
+    }
+    for why, txt in bad_texts.items():
+        items = [item(title="Salt Was Money", text=txt)] + GOOD["items"][1:]
+        try:
+            ls.validate_script({**GOOD, "items": items})
+            raise AssertionError(f"должно отклоняться: {why}")
+        except ValueError:
+            pass
+    ok = ls.validate_script({**GOOD, "items": [item(title="Salt Was Money", text="Roman soldiers were paid in salt. "
+                                                    + " ".join(["fact"] * 120) + ".")] + GOOD["items"][1:]})
+    assert ok["items"][0]["title"] == "Salt Was Money"
+    assert ls.HOOK_MAX_WORDS / ls.WORDS_PER_SEC <= 5.0, "лимит слов хука должен укладываться в 5 с речи"
+    p = ls.script_prompt({"topic": "Why It Sucked To Be A Pyramid Worker", "angle": ls.ANGLES[0]})
+    assert "no greeting" in p.lower() and str(ls.HOOK_MAX_WORDS) in p
+
+
+def test_first_frames_big_topic_text_no_letterbox():
+    """t_e44ba4be: thumbnails.set=403 -> превью = кадр ролика. Кадры 0-3 с long: крупный текст темы 3-5 слов,
+    без letterbox (сплошных тёмных полос сверху/снизу)."""
+    s = ls.validate_script({**GOOD, "title": "Why It Sucked To Be A Pyramid Worker"})
+    words = ls.hook_text(s).split()
+    assert 3 <= len(words) <= 5, words
+    assert ls.HOOK_SEC >= 3.0 and ls.HOOK_SIZE >= 0.15, (ls.HOOK_SEC, ls.HOOK_SIZE)
+    from PIL import Image
+    import whatif_channel as wf
+    sc = ls.to_scene(s["items"][0], 0, {"idx": 0})
+    pal = ls.PALETTES[0]
+    W, H = 1920, 1080
+    gy = int(H * .74)
+    bg = wf.backdrop(sc["place"], pal, W, H, gy / H)
+    acc = Image.new("RGB", (1, 1), pal[2]).getpixel((0, 0))
+    for t in (0.0, 1.5, 2.9):  # кадр 0 (автопревью) и весь интервал 0-3 с
+        im = wf.draw_frame(bg, sc, wf.timeline(sc, []), [], t, pal, ls._cover_chars(), W, H, gy, "",
+                           ls.hook_text(s), **ls.hook_kw())
+        px = im.load()
+        rows = sum(1 for y in range(0, H, 4) if sum(px[x, y] == acc for x in range(0, W, 8)) > W / 8 * .3)
+        assert rows * 4 >= H * .2, f"t={t}: плашка хука {rows * 4}px < 20% высоты"
+        for band in (range(0, int(H * .05)), range(int(H * .95), H)):  # letterbox = тёмная сплошная полоса
+            dark = all(max(px[x, y]) < 24 for y in band for x in range(0, W, 64))
+            assert not dark, f"t={t}: letterbox"
+
+
+def test_short_titles_have_no_part_n():
+    """t_e44ba4be: «(part N)» в заголовках Shorts - блокер CTR; заголовок = пункт окна + тема, без номеров частей."""
+    s = ls.validate_script(GOOD)
+    wins = [[0, 1], [4], [7, 8]]
+    titles = [ls.short_title(s, w) for w in wins]
+    for x in titles:
+        assert not re.search(r"\bpart\s*\d", x, re.I), x
+        assert x.endswith("#Shorts") and len(x) <= 100, x
+    assert len(set(titles)) == len(titles), titles
 
 
 if __name__ == "__main__":

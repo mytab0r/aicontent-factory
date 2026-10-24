@@ -504,13 +504,13 @@ def draw_char(d, c, st, W, H, gy, u, fg):
         d.text((bx, byy), st["say"], font=f, fill="#111111", anchor="mm")
 
 
-def draw_hook(d, text, t, W, H, acc):
+def draw_hook(d, text, t, W, H, acc, sec=1.0, size=.11):
     """Хук 0-1 с: вопрос «What if…» крупно по центру, наезд (движение в кадре с первого кадра)."""
-    k = hook_scale(t)
+    k = hook_scale(t, sec)
     if not k:
         return
     u = min(W, H)
-    f = _font(max(16, int(u * .11 * k)))
+    f = _font(max(16, int(u * size * k)))
     lines, cur = [], ""
     for w in text.split():  # перенос по ширине 86%
         if cur and d.textlength(f"{cur} {w}", font=f) > W * .86:
@@ -527,7 +527,7 @@ def draw_hook(d, text, t, W, H, acc):
         d.text((W / 2, y0 + lh * (j + .5)), x, font=f, fill="#111111", anchor="mm")
 
 
-def draw_frame(bg, sc, tl, bounds, t, pal, characters, W, H, gy, banner, hook=""):
+def draw_frame(bg, sc, tl, bounds, t, pal, characters, W, H, gy, banner, hook="", hook_sec=1.0, hook_size=.11):
     from PIL import ImageDraw
     im = bg.copy()
     d = ImageDraw.Draw(im, "RGBA")
@@ -561,11 +561,11 @@ def draw_frame(bg, sc, tl, bounds, t, pal, characters, W, H, gy, banner, hook=""
         d.rounded_rectangle([(W - bw_) / 2 - 24, y0 - u * .035, (W + bw_) / 2 + 24, y0 + u * .035], radius=18, fill=acc)
         d.text((W / 2, y0), banner, font=f, fill="#111111", anchor="mm")
     if hook:
-        draw_hook(d, hook, t, W, H, acc)
+        draw_hook(d, hook, t, W, H, acc, hook_sec, hook_size)
     return im
 
 
-def render_scene(sc, bounds, audio, dur, pal, characters, out, W, H, banner="", hook=""):
+def render_scene(sc, bounds, audio, dur, pal, characters, out, W, H, banner="", hook="", hook_sec=1.0, hook_size=.11):
     """Кадры Pillow -> ffmpeg rawvideo pipe + аудио сцены -> mp4 (h264/aac)."""
     gy = int(H * (.74 if W > H else .64))
     bg = backdrop(sc["place"], pal, W, H, gy / H)
@@ -578,7 +578,8 @@ def render_scene(sc, bounds, audio, dur, pal, characters, out, W, H, banner="", 
                          stdin=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
         for k in range(n):
-            p.stdin.write(draw_frame(bg, sc, tl, bounds, k / FPS, pal, characters, W, H, gy, banner, hook).tobytes())
+            p.stdin.write(draw_frame(bg, sc, tl, bounds, k / FPS, pal, characters, W, H, gy, banner, hook,
+                                        hook_sec, hook_size).tobytes())
     except BrokenPipeError:
         pass  # ffmpeg умер: причина — в его stderr ниже
     finally:
