@@ -22,6 +22,8 @@ sys.path.insert(0, str(HERE))
 BANK_ROOT = "/app/output/bank"
 USED_BLOCK_DAYS = 14   # сегмент не попадает во второй выпуск 14 дней
 RETAIN_USED_DAYS = 30  # использованный сегмент удаляется из банка через 30 дней
+COMPAT_BPM = 4         # добор из соседних групп: BPM в пределах +-4 (коммент 24.10 «±4 BPM»)
+MIN_SEG = 5            # короткий микс вместо пропуска слота: 5 x 180 с = 15 мин (прошлый минимум)
 ROOT = HERE.parent
 
 # Замеры сборки (консервативно): cp сегмента ~1 c, prep (edge_match/ffmpeg) ~5 c,
@@ -88,8 +90,24 @@ def _used_filter(used_lines, now):
     return used
 
 
+def _keys_related(k1: tuple, k2: tuple) -> bool:
+    """Соседние группы совместимы для кроссфейда: BPM в пределах COMPAT_BPM И тональность
+    та же или та же тоника (F major / F minor — родственные, лад сгладит кроссфейд).
+    None в ключе (группа без разметки) совместима только сама с собой."""
+    if k1 == k2:
+        return True
+    (b1, t1), (b2, t2) = k1, k2
+    if b1 is None or b2 is None or t1 is None or t2 is None:
+        return False
+    if abs(b1 - b2) > COMPAT_BPM:
+        return False
+    return t1.split()[0] == t2.split()[0]
+
+
 def pick(entries_: list[dict], need: int, now: float, used_lines=None, rng=None) -> list[dict] | None:
-    """Совместимая группа: наибольшая по (bpm, key); shuffle для разнообразия; < need = None."""
+    """Совместимая группа: наибольшая по (bpm, key); < need = добор из совместимых групп
+    (то же/родственная тональность, BPM +-COMPAT_BPM, коммент 24.10); и это не набирает
+    need = короткий микс >= MIN_SEG вместо пропуска слота; < MIN_SEG = None."""
     used = _used_filter(used_lines, now)
     cands = [e for e in entries_ if e["name"] not in used]
     groups: dict[tuple, list[dict]] = {}
@@ -97,12 +115,26 @@ def pick(entries_: list[dict], need: int, now: float, used_lines=None, rng=None)
         groups.setdefault(group_key(e), []).append(e)
     if not groups:
         return None
-    best = max(groups.values(), key=len)
-    if len(best) < need:
-        return None
     rng = rng or random.Random()
+    best = max(groups.values(), key=len)
     rng.shuffle(best)
-    return best[:need]
+    if len(best) >= need:
+        return best[:need]
+    core = list(best)
+    k0 = group_key(best[0])
+    for k in sorted(groups, key=lambda k: -len(groups[k])):
+        if k == k0 or not _keys_related(k0, k):
+            continue
+        for e in groups[k]:
+            if len(core) >= need:
+                break
+            core.append(e)
+    if len(core) >= need:
+        rng.shuffle(core)
+        return core[:need]
+    if len(core) >= MIN_SEG:
+        return core
+    return None
 
 
 

@@ -152,6 +152,17 @@ jobs:
             [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step 2>/dev/null)" = healthy ] && { echo "ace-step healthy"; exit 0; }
             sleep 6
           done
+          # t_ba72c7aa follow-up (run 40116619895): docker-healthcheck остаётся starting, пока
+          # контейнер грузит модели (до 20 мин), при этом сервис уже отвечает 200 на /health.
+          # Выпуск генерацию не делает — ему нужен живой контейнер (exec/cp банк, критик 03c).
+          # health-proxy-probe: сервис жив -> идём дальше; иначе ошибка с диагностикой.
+          echo "::group::health-proxy-probe"
+          if docker exec ace-step python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=5)" 2>/dev/null; then
+            echo "::endgroup::"
+            echo "ace-step: docker-health не healthy, но сервис отвечает /health 200 — выпуск продолжается без генерации"
+            exit 0
+          fi
+          echo "::endgroup::"
           echo "::error::ace-step не healthy за 18 мин"; docker inspect -f 'status={{.State.Status}} health={{.State.Health.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}} restarts={{.RestartCount}} image={{.Config.Image}}' ace-step 2>&1 || echo "ace-step: контейнер отсутствует (t_50f1fc9b)"; docker logs --tail 40 ace-step 2>&1 || echo "ace-step: логов нет"; exit 1
 
       - name: 03 music (сборка из банка, t_ba72c7aa)
