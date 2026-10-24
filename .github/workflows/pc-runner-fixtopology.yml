@@ -1,0 +1,20 @@
+name: pc-runner-fixtopology
+on:
+  workflow_dispatch:
+jobs:
+  fix:
+    runs-on: [self-hosted, release]
+    timeout-minutes: 10
+    steps:
+      - name: finalize recreate (rename + networks)
+        run: |
+          set -e
+          NEW=$(docker ps --format '{{.Names}}' | grep '^recreate-' | head -1)
+          test -n "$NEW" || { echo "no recreate container found"; NEW=gh-runner-acf-release; }
+          if [ "$NEW" != "gh-runner-acf-release" ]; then
+            docker rm -f gh-runner-acf-release 2>/dev/null || true
+            docker rename "$NEW" gh-runner-acf-release
+          fi
+          for n in comfynet gpu-net; do docker network connect $n gh-runner-acf-release || true; done
+          docker ps -s --format '{{.Names}} {{.Size}}' | grep gh-runner-acf-release
+          docker inspect gh-runner-acf-release --format '{{json .NetworkSettings.Networks}}' | head -c 400
