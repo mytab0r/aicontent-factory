@@ -73,7 +73,8 @@
 
 ## Сухой прогон (публикация в private/unlisted + автосверка)
 <!-- DRYRUN -->
-24.10: прогон run 40050580825 (dryrun=true, private) упал до upload на приёмке длины: план 584 с, фактический TTS 525 с < 540 с. Причина — WORDS_PER_SEC=2.5 при реальных 2.8 слова/с (edge-tts +4%). Исправлено в PR #172 (коммит 204aa40: 2.8 + промпт 1650–1850 слов + регресс-тест). Повторный прогон run 40052606172 в очереди release-раннера. Автосверка title/privacy/playlist/длина пока не исполнена на реальном upload.
+24.10: прогон run 40050580825 (dryrun=true, private) упал до upload на приёмке длины: план 584 с, фактический TTS 525 с < 540 с. Причина — WORDS_PER_SEC=2.5 при реальных 2.8 слова/с (edge-tts +4%). Исправлено в PR #172 (коммит 204aa40: 2.8 + промпт 1650–1850 слов + регресс-тест). Прогон run 40056809590 (Pyramid Worker): upload private OK, но автосверка легла на обработку YouTube (у Shorts duration=P0D сразу после upload) — ложный FAIL. Фикс в PR #172 (2b7c6f2): verify ждёт обработку до 10 мин/ролик, тест на P0D.
+ИТОГ 24.10, прогон run 40059754402 (head 5bd4e5d), тема из breakout-хитов «How Did Ancient Humans Treat Broken Bones?»: VERIFY OK — long 602 c ≥540, title=файл, плейлист, privacy private; long + 3 Shorts, ссылок part N нет. Все 4 видео private, канал публично не менялся. Step «verify dryrun» = success.
 
 ## Критик (независимый субагент без контекста)
 Субагент без контекста, 23.10. ВЕРДИКТ: NO-GO. Дыры:
