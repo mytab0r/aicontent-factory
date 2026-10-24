@@ -45,7 +45,14 @@ def router_post(path: str, payload: dict, timeout: int = 120, retries: int = 3) 
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 return json.loads(resp.read())
         except urllib.error.HTTPError as e:
-            body = e.read().decode(errors="replace")
+            try:  # 23.10 run 40036886953: e.read() сам рвётся (IncompleteRead) и убивает джобу мимо retry
+                body = e.read().decode(errors="replace")
+            except http.client.HTTPException as re2:
+                last_err = RuntimeError(f"9router {path} network: {re2}")
+                if attempt < retries - 1:
+                    time.sleep(5 * (attempt + 1))
+                    continue
+                raise last_err from None
             last_err = RuntimeError(f"9router {path} HTTP {e.code}: {body}")
             # 429/503 — временная перегрузка провайдера, стоит повторить
             if e.code in (429, 503) and attempt < retries - 1:
