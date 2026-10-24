@@ -481,7 +481,9 @@ def edge_rms(path, side, sec=5.0) -> float:
     import re
     import subprocess
     dur = _probe_sec(path)
-    start = max(0.0, dur - sec) if side == "r" else 0.0
+    if side == "body":
+        sec = min(sec, dur * 0.4)  # середина без интро/фейда: короткий сегмент не мерим вместе с хвостом
+    start = {"r": max(0.0, dur - sec), "body": max(0.0, (dur - sec) / 2)}.get(side, 0.0)  # body = середина
     out = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-ss", str(start), "-t", str(sec), "-i", str(path),
                           "-af", "astats=measure_overall=RMS_level:measure_perchannel=none", "-f", "null", "-"],
                          capture_output=True, text=True).stderr
@@ -561,11 +563,41 @@ def trim_fade_tails(paths, max_sec=20.0, floor_db=6.0, log=print):
     return cuts
 
 
+BODY_SEC, BODY_MAX_GAIN, BODY_TOL = 60.0, 6.0, 0.5
+
+
+def _apply_gain(path, g):
+    import os
+    import subprocess
+    tmp = f"{path}.b.mp3"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(path), "-af", f"volume={g:.3f}dB",
+                    "-c:a", "libmp3lame", "-b:a", "192k", tmp], check=True)
+    os.replace(tmp, path)
+
+
+def body_match(paths, log=print):
+    """t_cron1024 (run 40075415222): edge_match правит только первые 30 с, тела сегментов из банка
+    расходились до 6 дБ -> гейт 03c «скачок громкости 4.9/5.8 LU между блоками». Константный gain
+    на сегмент по RMS середины (BODY_SEC) к телу первого, клэмп ±BODY_MAX_GAIN. Гейт не ослаблен."""
+    ref = edge_rms(paths[0], "body", sec=BODY_SEC)
+    gains = [0.0]
+    for p in paths[1:]:
+        g = max(-BODY_MAX_GAIN, min(BODY_MAX_GAIN, ref - edge_rms(p, "body", sec=BODY_SEC)))
+        if abs(g) < BODY_TOL:
+            g = 0.0
+        else:
+            _apply_gain(p, g)
+        gains.append(round(g, 2))
+        log(f"body_match {p}: {g:+.2f} дБ")
+    return gains
+
+
 def prep_segments(paths, log=print):
     """Срез хвостов-затуханий ДО выравнивания краёв. Обратный порядок (run 39326466292): edge_match
     мерил тихий фейд, давил следующие сегменты на -18 дБ, после среза хвоста стык 336 с -> R3 FAIL.
     Фейд последнего сегмента остаётся концом микса."""
     trim_fade_tails(paths[:-1], log=log)
+    body_match(paths, log=log)
     return edge_match(paths, log=log)
 
 
