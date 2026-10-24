@@ -27,7 +27,7 @@ ROOT_CAUSE = re.compile(r"#\s*root-cause:\s*t_[0-9a-f]{6,}")
 ARTIFACT_OK = re.compile(r"#\s*artifact-ok:\s*\S")
 # t_9d452170: каждый upload обязан иметь retention-days: 1 (квота storage 500MB/account; доставка вне артефактов)
 RETENTION_1 = re.compile(r"^\s*retention-days:\s*['\"]?1['\"]?\s*(#.*)?$")
-UPLOAD_CTX = 8  # между uses и retention бывают if:/continue-on-error: строки
+UPLOAD_CTX = 10  # между uses и retention бывают if:/continue-on-error: строки
 
 
 def _rules(line, lines=None, i=0):
@@ -46,6 +46,26 @@ def _rules(line, lines=None, i=0):
         # экшен-форма не ретраится целиком: transport-обрыв ghcr = красный workflow (t_0a4cae59)
         yield "push-no-retry", ROOT_CAUSE
 
+
+# t_6758c86f: сетевой экшен (artifact/cache/setup-uv) на ПК-раннере без лимита висел до
+# "exceeded the maximum execution time" джобы. Каждый такой шаг обязан иметь свой timeout-minutes.
+NET_STEP = re.compile(r"^\s*-?\s*uses:\s*(?:actions/(?:upload-artifact|download-artifact|cache)(?:/restore|/save)?|astral-sh/setup-uv)@")
+
+
+def lint_net_timeout(lines):
+    out = []
+    for i, line in enumerate(lines):
+        if not NET_STEP.match(line):
+            continue
+        s = i
+        while s > 0 and not lines[s].lstrip().startswith("- "):
+            s -= 1
+        ind, e = len(lines[s]) - len(lines[s].lstrip()), s + 1
+        while e < len(lines) and (not lines[e].strip() or len(lines[e]) - len(lines[e].lstrip()) > ind):
+            e += 1
+        if not any(re.match(r"^\s*timeout-minutes:", x) for x in lines[s:e]):
+            out.append((i + 1, "net-step-timeout"))
+    return out
 
 
 def lint_text(text):
@@ -79,7 +99,7 @@ def main(root="."):
     bad = 0
     for f in files:
         lines = f.read_text(encoding="utf-8").splitlines()
-        for n, rule in lint_text("\n".join(lines)):
+        for n, rule in lint_text("\n".join(lines)) + lint_net_timeout(lines):
             print(f"{f.relative_to(root).as_posix()}:{n}: {rule}: {lines[n - 1].strip()}")
             bad += 1
     if bad:

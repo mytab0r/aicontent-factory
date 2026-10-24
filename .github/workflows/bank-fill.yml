@@ -45,6 +45,7 @@ jobs:
         with:
           clean: true
       - uses: astral-sh/setup-uv@v3
+        timeout-minutes: 5  # t_6758c86f: сетевой шаг не висит до таймаута джобы
         with:
           cache-local-path: /tmp/acf-uv-cache  # P23: кэш переживает прогон
       - name: install deps

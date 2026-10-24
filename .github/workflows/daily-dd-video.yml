@@ -24,6 +24,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: astral-sh/setup-uv@v3
+        timeout-minutes: 5  # t_6758c86f: сетевой шаг не висит до таймаута джобы
 
       - name: install deps
         run: |
@@ -62,6 +63,7 @@ jobs:
 
       - name: upload run artifact
         uses: actions/upload-artifact@v4  # artifact-ok: логи прогона; доставка результата вне артефактов
+        timeout-minutes: 15  # t_6758c86f: сетевой шаг не висит до таймаута джобы
         with:
           name: dd-video-${{ github.run_id }}
           path: runs/*/video.mp4

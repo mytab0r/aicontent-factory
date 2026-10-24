@@ -27,6 +27,7 @@ jobs:
           clean: true
 
       - uses: astral-sh/setup-uv@v3
+        timeout-minutes: 5  # t_6758c86f: сетевой шаг не висит до таймаута джобы
 
       - name: install deps
         run: |
@@ -54,6 +55,7 @@ jobs:
       - name: upload A/B artifact
         continue-on-error: true  # квота storage может быть исчерпана — доставка идёт через TG  # root-cause: t_f95a06da
         uses: actions/upload-artifact@v4  # artifact-ok: логи прогона; доставка результата вне артефактов
+        timeout-minutes: 15  # t_6758c86f: сетевой шаг не висит до таймаута джобы
         with:
           name: ab-refpool-${{ github.run_id }}
           path: |

@@ -77,6 +77,7 @@ jobs:
           python3 watchdog.py --guard
 
       - uses: astral-sh/setup-uv@v3
+        timeout-minutes: 5  # t_6758c86f: сетевой шаг не висит до таймаута джобы
         if: steps.guard.outputs.published != '1'
         with:
           cache-local-path: /tmp/acf-uv-cache  # P23: кэш переживает прогон
@@ -346,6 +347,7 @@ jobs:
         # ponytail: artifact is debug-only (video is on YouTube); storage quota must never fail the release
         continue-on-error: true  # root-cause: t_f95a06da
         uses: actions/upload-artifact@v4  # artifact-ok: логи прогона; доставка результата вне артефактов
+        timeout-minutes: 15  # t_6758c86f: сетевой шаг не висит до таймаута джобы
         with:
           name: video-${{ github.run_id }}-${{ strategy.job-index }}
           path: |

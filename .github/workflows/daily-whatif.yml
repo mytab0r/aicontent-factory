@@ -36,6 +36,7 @@ jobs:
       - uses: actions/checkout@v4
         if: steps.flag.outputs.go == '1'
       - uses: astral-sh/setup-uv@v3
+        timeout-minutes: 5  # t_6758c86f: сетевой шаг не висит до таймаута джобы
         if: steps.flag.outputs.go == '1'
       - name: install deps
         if: steps.flag.outputs.go == '1'
@@ -83,6 +84,7 @@ jobs:
         if: steps.flag.outputs.go == '1' && always()
         continue-on-error: true  # root-cause: t_f95a06da
         uses: actions/upload-artifact@v4  # artifact-ok: логи прогона; доставка результата вне артефактов
+        timeout-minutes: 15  # t_6758c86f: сетевой шаг не висит до таймаута джобы
         with:
           name: whatif-${{ github.run_id }}
           path: |
