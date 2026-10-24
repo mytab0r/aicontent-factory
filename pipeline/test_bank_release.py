@@ -337,13 +337,6 @@ def test_take_logs_ffprobe_detail_on_invalid(capsys=None):
         assert "ffprobe" in out and "a" in out, out
 
 
-if __name__ == "__main__":
-    fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
-    for f in fns:
-        f()
-        print("ok", f.__name__)
-    print(f"PASS {len(fns)} tests")
-
 
 def test_take_creates_missing_run_dir():
     """Слоты 23.10 ночи: банк цел (53/53 в контейнере), но take() карантинил по 15 сегментов за прогон:
@@ -373,3 +366,10 @@ def test_take_creates_missing_run_dir():
                                     rng=random.Random(1), valid=ok)
         assert got is not None and len(got) == 2, got
         assert run_dir.exists()
+if __name__ == "__main__":
+    fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
+    for f in fns:
+        f()
+        print("ok", f.__name__)
+    print(f"PASS {len(fns)} tests")
+
