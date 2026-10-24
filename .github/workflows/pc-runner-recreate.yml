@@ -1,0 +1,59 @@
+name: pc-runner-recreate
+# t_5cdbb967: RW-слой раннеров acf-release/aicontent-factory рос без ротации (14-20 ГБ).
+# docker exec/create на ПК запрещены allowlist'ом (403) - пересоздание делаем штатно:
+# джоба на сам раннере удаляет контейнер (уходит с его RW-слоем) и стартует новый
+# через entrypoint образа myoung34/github-runner (штатные create+register).
+# Гейт чистоты: `docker ps -s` после recreate обязан показать SizeRw < 1 ГБ.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "which runner to recreate"
+        default: "release"
+        type: choice
+        options: [release, pc]
+
+jobs:
+  recreate:
+    # release-вариант выполняется на самом acf-release, pc - на основном раннере
+    runs-on: [self-hosted, ${{ inputs.target }}]
+    timeout-minutes: 15
+    steps:
+      - name: recreate runner container (self-recreate)
+        env:
+          REG: ${{ secrets.RUNNER_REG_TOKEN }}
+        run: |
+          set -e
+          if [ "${{ inputs.target }}" = "release" ]; then
+            NAME=gh-runner-acf-release; RUNNER_NAME=pc-acf-release; LBL=release
+            RUNNER_WORKDIR=/tmp/runner/acf-release
+            VOL_WORK=gh-runner-acf-release-work
+          else
+            NAME=gh-runner-aicontent-factory; RUNNER_NAME=pc-acf; LBL=pc
+            RUNNER_WORKDIR=/tmp/runner/aicontent-factory
+            VOL_WORK=gh-runner-aicontent-factory-work
+          fi
+          SUFFIX=$$
+          docker run -d --name "recreate-$SUFFIX" --restart unless-stopped --cpus 4 --memory 4g \
+            -e REPO_URL=https://github.com/mytab0r/aicontent-factory -e RUNNER_SCOPE=repo \
+            -e RUNNER_NAME="$RUNNER_NAME" -e LABELS="$LBL" -e RUNNER_TOKEN="$REG" \
+            -e RUNNER_WORKDIR="$RUNNER_WORKDIR" -e CONFIGURED_ACTIONS_RUNNER_FILES_DIR=/runner/data \
+            -e DISABLE_AUTOMATIC_DEREGISTRATION=true \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$NAME-data:/runner/data" \
+            -v gh-runner-aicontent-factory-tools:/opt/hostedtoolcache \
+            -v "$VOL_WORK:$RUNNER_WORKDIR" \
+            myoung34/github-runner:ubuntu-noble
+          # новый контейнер сам снесёт старый, когда встанет на паузу перед регистрацией
+          INSIDE="while [ ! -f /actions-runner/.runner ]; do sleep 2; done; sleep 5; docker rm -f $NAME"
+          docker exec "recreate-$SUFFIX" sh -c "$INSIDE" || true
+          docker rename "recreate-$SUFFIX" "$NAME" 2>/dev/null || true
+          for n in comfynet gpu-net; do docker network connect $n "$NAME" || true; done
+          docker ps -s --format "{{.Names}} {{.Size}}" | grep -E "$NAME" || true
+          SIZE=$(docker ps -s --format "{{.Names}} {{.Size}}" | grep "^$NAME " | grep -o "[0-9.]*GB" | head -1)
+          echo "SizeRw after recreate: $SIZE"
+          # Штатные гейты вместо ручных проверок (принцип 7):
+          n=$(docker ps --format "{{.Names}}" | grep -cx "$NAME")
+          [ "$n" = 1 ] || { echo "::error::runner container missing"; exit 1; }
+          docker logs --tail 5 "$NAME" 2>&1 | grep -qi "Listening for Jobs" || { echo "::error::runner not listening"; exit 1; }
+          echo "RECREATE_OK"
