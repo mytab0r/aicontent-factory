@@ -93,6 +93,31 @@ def lint_text(text):
     return out
 
 
+def lint_branches(root="."):
+    """t_de7348c1: workflow_dispatch берёт workflow С ТОЙ ВЕТКИ, что указана в ref. Устаревшая ветка `main`
+    (default = master) хранила docker/login-action после фикса t_831d9fd6 -> dispatch ref=main снова дал
+    "context deadline exceeded" от ghcr. Линт master/PR этого не видит. Здесь: docker-login на ЛЮБОЙ
+    ветке origin = FAIL (ветку смержить с master или удалить)."""
+    import subprocess
+    git = lambda *a: subprocess.run(["git", "-C", str(root), *a], capture_output=True, text=True, check=True).stdout
+    bad = []
+    for ref in git("for-each-ref", "--format=%(refname)", "refs/remotes/origin").split():
+        if ref.endswith("/HEAD"):
+            continue
+        for path in git("ls-tree", "--name-only", f"{ref}:.github/workflows").split() if _has_wf(git, ref) else []:
+            text = git("show", f"{ref}:.github/workflows/{path}")
+            bad += [f"{ref}:{path}:{n}" for n, rule in lint_text(text) if rule == "docker-login"]
+    return bad
+
+
+def _has_wf(git, ref):
+    try:
+        git("rev-parse", "--verify", "-q", f"{ref}:.github/workflows")
+        return True
+    except Exception:
+        return False
+
+
 def main(root="."):
     root = pathlib.Path(root)
     files = sorted(p for ext in ("*.yml", "*.yaml") for p in (root / ".github/workflows").glob(ext))
@@ -110,4 +135,8 @@ def main(root="."):
 
 
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["--branches"]:
+        b = lint_branches(*sys.argv[2:3])
+        print("\n".join(f"{x}: docker-login на ветке (dispatch ref=<ветка> вернёт ghcr timeout, t_de7348c1)" for x in b) or "ok: branches")
+        sys.exit(1 if b else 0)
     sys.exit(main(*sys.argv[1:2]))
