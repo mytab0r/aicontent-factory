@@ -156,6 +156,7 @@ def take(genre: str, need: int, run_dir: str, docker_sh=None, now=None, rng=None
             n = e["name"]
             if n not in good:
                 dst = Path(run_dir) / f"{n}.mp3"
+                dst.parent.mkdir(parents=True, exist_ok=True)  # ACF_RUN_DIR не существует после clean-checkout; без этого docker cp rc=1 и валидные сегменты уходят в карантин
                 ok = False
                 try:  # эталонный размер в контейнере: рваный cp виден по размеру до ffprobe
                     want = int(docker_sh("exec", "ace-step", "sh", "-c",
