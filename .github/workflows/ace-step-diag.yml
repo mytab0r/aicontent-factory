@@ -7,4 +7,4 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: counts
-        run: docker exec ace-step sh -c "cd /app/output/bank/anime-lofi 2>/dev/null && echo root_mp3=$(ls -1 *.mp3 2>/dev/null | wc -l) broken_mp3=$(ls -1 broken/*.mp3 2>/dev/null | wc -l); ls broken/*.mp3 2>/dev/null | head -30"
+        run: docker exec ace-step sh -c 'cd /app/output/bank/anime-lofi && echo root_mp3=$(ls -1 *.mp3 2>/dev/null | wc -l) broken_mp3=$(ls -1 broken/*.mp3 2>/dev/null | wc -l) && ls -1 broken/*.mp3 2>/dev/null'
