@@ -30,4 +30,4 @@ jobs:
         with:
           name: ch2-snapshot-${{ github.run_id }}
           path: reports/ch2_snapshot/*.md
-          retention-days: 30
+          retention-days: 1
