@@ -302,6 +302,36 @@ def test_main_sh_logs_docker_failures(capsys=None):
     assert 'returncode != 0' in ssrc and 'stderr' in ssrc, 'main.sh должен логировать rc/stderr'
 
 
+
+def test_take_creates_missing_run_dir():
+    """23-24.10: ACF_RUN_DIR (runs/<run_id>) не существует после clean-checkout, docker cp rc=1
+    'invalid output path' -> все сегменты «не доставлены» -> nobank. Контракт: take() создаёт run_dir."""
+    import contextlib, io
+    now = time.time()
+    ents = [meta(n, 89, "F major") for n in ("a", "b")]
+    names = "\n".join(e["name"] + ".mp3" for e in ents) + "\n"
+    metas = {f"/app/output/bank/anime-lofi/{e['name']}.json": json.dumps(
+        {"prompt": e["prompt"], "seed": e["seed"]}) for e in ents}
+    dk = FakeDocker({**metas, "/app/output/bank/anime-lofi": names})
+    with tempfile.TemporaryDirectory() as td:
+        run_dir = Path(td) / "runs" / "new_run"   # НЕ создаём
+        def cp_sh(*a):
+            if a[0] == "cp":
+                if not Path(a[2]).parent.exists():
+                    return "invalid output path: directory does not exist"
+                Path(a[2]).write_bytes(b"X" * 5)
+                return ""
+            return dk(*a)
+        orig = bank_release.time.sleep
+        bank_release.time.sleep = lambda s: None
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                got = bank_release.take("anime lofi", 2, str(run_dir), docker_sh=cp_sh, now=now,
+                                        rng=random.Random(1), valid=lambda p: True)
+        finally:
+            bank_release.time.sleep = orig
+        assert got is not None and len(got) == 2, got
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for f in fns:
