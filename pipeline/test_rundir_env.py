@@ -25,3 +25,9 @@ def test_latest_without_env_is_newest():
         (Path(td) / "20261025_000000").mkdir()
         assert common.latest_run_dir().name == "20261025_000000"
     common.RUNS_DIR = old
+
+
+if __name__ == "__main__":
+    test_new_and_latest_honor_acf_run_dir()
+    test_latest_without_env_is_newest()
+    print("ok test_rundir_env")
