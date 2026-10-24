@@ -16,7 +16,7 @@ on:
 jobs:
   recreate:
     # release-вариант выполняется на самом acf-release, pc - на основном раннере
-    runs-on: [self-hosted, ${{ inputs.target }}]
+    runs-on: [self-hosted, "${{ inputs.target == 'release' && 'release' || 'pc' }}"]
     timeout-minutes: 15
     steps:
       - name: recreate runner container (self-recreate)
