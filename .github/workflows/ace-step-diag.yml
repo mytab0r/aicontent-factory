@@ -6,6 +6,41 @@ jobs:
     runs-on: [self-hosted, release]
     timeout-minutes: 25
     steps:
-      - name: probe flagged segments (source-side)
+      - uses: actions/checkout@v4
+        with: {ref: master}
+      - uses: astral-sh/setup-uv@v3
+      - name: quarantine probe (exit codes, container stats)
+        working-directory: pipeline
         run: |
-          docker exec ace-step sh -c "d=/app/output/bank/anime-lofi; echo -n \"$n \"; stat -c %s \"$d/1792646909_203763213_mix_00_1.mp3\" 2>&1; ffprobe -v error -show_entries format=duration -of csv=p=0 \"$d/1792646909_203763213_mix_00_1.mp3\" 2>&1 | head -1; echo -n \"$n \"; stat -c %s \"$d/1792647705_203763213_mix_01_1.mp3\" 2>&1; ffprobe -v error -show_entries format=duration -of csv=p=0 \"$d/1792647705_203763213_mix_01_1.mp3\" 2>&1 | head -1; echo -n \"$n \"; stat -c %s \"$d/1792672140_22263383_mix_00_2.mp3\" 2>&1; ffprobe -v error -show_entries format=duration -of csv=p=0 \"$d/1792672140_22263383_mix_00_2.mp3\" 2>&1 | head -1; echo -n \"$n \"; stat -c %s \"$d/1792672869_22263383_mix_01_1.mp3\" 2>&1; ffprobe -v error -show_entries format=duration -of csv=p=0 \"$d/1792672869_22263383_mix_01_1.mp3\" 2>&1 | head -1; echo -n \"$n \"; stat -c %s \"$d/1792676127_22263383_mix_04_0.mp3\" 2>&1; ffprobe -v error -show_entries format=duration -of csv=p=0 \"$d/1792676127_22263383_mix_04_0.mp3\" 2>&1 | head -1; echo -n \"$n \"; stat -c %s \"$d/1792692279_1132123150_mix_01_0.mp3\" 2>&1; ffprobe -v error -show_entries format=duration -of csv=p=0 \"$d/1792692279_1132123150_mix_01_0.mp3\" 2>&1 | head -1; echo -n \"$n \"; stat -c %s \"$d/1792693870_1132123150_mix_03_1.mp3\" 2>&1; ffprobe -v error -show_entries format=duration -of csv=p=0 \"$d/1792693870_1132123150_mix_03_1.mp3\" 2>&1 | head -1; echo -n \"$n \"; stat -c %s \"$d/1792694659_1132123150_mix_04_0.mp3\" 2>&1; ffprobe -v error -show_entries format=duration -of csv=p=0 \"$d/1792694659_1132123150_mix_04_0.mp3\" 2>&1 | head -1; echo -n \"$n \"; stat -c %s \"$d/1792697008_1132123150_mix_07_2.mp3\" 2>&1; ffprobe -v error -show_entries format=duration -of csv=p=0 \"$d/1792697008_1132123150_mix_07_2.mp3\" 2>&1 | head -1; echo -n \"$n \"; stat -c %s \"$d/1792699088_1132123150_mix_09_3.mp3\" 2>&1; ffprobe -v error -show_entries format=duration -of csv=p=0 \"$d/1792699088_1132123150_mix_09_3.mp3\" 2>&1 | head -1; echo -n \"$n \"; stat -c %s \"$d/1792741521_994044835_mix_01_0.mp3\" 2>&1; ffprobe -v error -show_entries format=duration -of csv=p=0 \"$d/1792741521_994044835_mix_01_0.mp3\" 2>&1 | head -1; echo -n \"$n \"; stat -c %s \"$d/1792742387_994044835_mix_02_1.mp3\" 2>&1; ffprobe -v error -show_entries format=duration -of csv=p=0 \"$d/1792742387_994044835_mix_02_1.mp3\" 2>&1 | head -1; echo -n \"$n \"; stat -c %s \"$d/1792743218_994044835_mix_03_0.mp3\" 2>&1; ffprobe -v error -show_entries format=duration -of csv=p=0 \"$d/1792743218_994044835_mix_03_0.mp3\" 2>&1 | head -1; echo -n \"$n \"; stat -c %s \"$d/1792766961_105801872_mix_00_2.mp3\" 2>&1; ffprobe -v error -show_entries format=duration -of csv=p=0 \"$d/1792766961_105801872_mix_00_2.mp3\" 2>&1 | head -1; echo -n \"$n \"; stat -c %s \"$d/1792769951_105801872_mix_03_0.mp3\" 2>&1; ffprobe -v error -show_entries format=duration -of csv=p=0 \"$d/1792769951_105801872_mix_03_0.mp3\" 2>&1 | head -1"
+          uv venv .venv
+          uv pip install --python .venv/bin/python pillow gradio_client numpy
+          NAMES=$(cat <<'EOT'
+          1792646909_203763213_mix_00_1
+1792647705_203763213_mix_01_1
+1792672140_22263383_mix_00_2
+1792672869_22263383_mix_01_1
+1792676127_22263383_mix_04_0
+1792692279_1132123150_mix_01_0
+1792693870_1132123150_mix_03_1
+1792694659_1132123150_mix_04_0
+1792697008_1132123150_mix_07_2
+1792699088_1132123150_mix_09_3
+1792741521_994044835_mix_01_0
+1792742387_994044835_mix_02_1
+1792743218_994044835_mix_03_0
+1792766961_105801872_mix_00_2
+1792769951_105801872_mix_03_0
+          EOT
+          )
+          echo "$NAMES" | while read -r n; do
+            [ -z "$n" ] && continue
+            f=/app/output/bank/anime-lofi/$n.mp3
+            st=$(docker exec ace-step sh -c "ls -l $f 2>&1; stat -c %s $f 2>&1; md5sum $f 2>&1" 2>&1)
+            echo "=== $n IN-CONTAINER: $st"
+            rm -rf /tmp/qp && mkdir -p /tmp/qp
+            docker cp "ace-step:$f" /tmp/qp/x.mp3; echo "cp rc=$? size=$(stat -c %s /tmp/qp/x.mp3 2>/dev/null)"
+            ffprobe -v error -show_entries format=duration -of csv=p=0 /tmp/qp/x.mp3; echo "ffprobe rc=$?"
+            echo "--- rerun cp to 2nd dest"
+            docker cp "ace-step:$f" /tmp/qp/y.mp3; echo "cp2 rc=$? size=$(stat -c %s /tmp/qp/y.mp3 2>/dev/null)"
+            cmp /tmp/qp/x.mp3 /tmp/qp/y.mp3 && echo "cmp equal" || echo "cmp DIFF"
+          done
