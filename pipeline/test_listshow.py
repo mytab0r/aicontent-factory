@@ -79,8 +79,16 @@ def test_validate_normalizes_items():
 
 
 def test_rotation_varies_topic_and_palette():
-    with tempfile.TemporaryDirectory() as td:
-        picks = [ls.next_plan(Path(td)) for _ in range(len(ls.TOPICS))]
+    saved = os.environ.pop("LISTSHOW_TOPIC", None)  # run 40055940555: dryrun-тема из env не должна ломать ротацию
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            picks = [ls.next_plan(Path(td)) for _ in range(len(ls.TOPICS))]
+            os.environ["LISTSHOW_TOPIC"] = "Why It Sucked To Be A Pyramid Worker"
+            assert ls.next_plan(Path(td))["topic"] == "Why It Sucked To Be A Pyramid Worker"
+    finally:
+        os.environ.pop("LISTSHOW_TOPIC", None)
+        if saved is not None:
+            os.environ["LISTSHOW_TOPIC"] = saved
     assert len({p["topic"] for p in picks}) == len(ls.TOPICS)
     for a, b in zip(picks, picks[1:]):
         assert a["palette"] != b["palette"]
