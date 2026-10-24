@@ -16,6 +16,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from quality_gate import LUFS_TARGET
+
 TOPICS = [
     "car wash", "laundromat", "vending route", "self-storage facility",
     "small-town diner", "food truck", "ATM route", "mini golf course",
@@ -237,7 +239,7 @@ def render(run_dir: Path) -> Path:
     lst.write_text("".join(f"file '{p.name}'\n" for p in segs))
     out = run_dir / "video.mp4"
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(lst),
-                    "-af", "loudnorm=I=-14:TP=-2.0", "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", str(out)], check=True)
+                    "-af", f"loudnorm=I={LUFS_TARGET:g}:TP=-2.0", "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", str(out)], check=True)
     total = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0",
                                   str(out)], capture_output=True, text=True, check=True).stdout)
     if total > 60:
