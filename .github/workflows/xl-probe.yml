@@ -50,7 +50,7 @@ jobs:
             -e ACESTEP_LM_MODEL_PATH=acestep-5Hz-lm-1.7B \
             -e ACESTEP_ON_DEMAND_MODEL_LOAD=true \
             -e ACESTEP_QUEUE_WORKERS=1 -e ACESTEP_API_WORKERS=1 \
-            -e ACESTEP_API_HOST=0.0.0.0 -e ACESTEP_INIT_SERVICE=true \
+            -e ACESTEP_API_HOST=0.0.0.0 -e ACESTEP_INIT_SERVICE=true -e UV_NO_SYNC=1 \
             -v /run/desktop/mnt/host/c/dockerlocal/ace15/checkpoints:/app/checkpoints \
             -v /run/desktop/mnt/host/c/dockerlocal/ace15/output:/app/output \
             -v /run/desktop/mnt/host/c/dockerlocal/ace15/hf:/root/.cache/huggingface \
