@@ -343,3 +343,33 @@ if __name__ == "__main__":
         f()
         print("ok", f.__name__)
     print(f"PASS {len(fns)} tests")
+
+
+def test_take_creates_missing_run_dir():
+    """Слоты 23.10 ночи: банк цел (53/53 в контейнере), но take() карантинил по 15 сегментов за прогон:
+    ACF_RUN_DIR (runs/<run_id>) не существует после clean-checkout, docker cp даёт rc=1 'invalid output
+    path', а код результата cp не проверяется. Контракт: take() сам создаёт run_dir."""
+    import contextlib, io
+    now = time.time()
+    ents = [meta(n, 89, "F major") for n in ("a", "b")]
+    names = "\n".join(e["name"] + ".mp3" for e in ents) + "\n"
+    metas = {f"/app/output/bank/anime-lofi/{e['name']}.json": json.dumps(
+        {"prompt": e["prompt"], "seed": e["seed"]}) for e in ents}
+    dk = FakeDocker({**metas, "/app/output/bank/anime-lofi": names})
+    ok = lambda p: Path(p).stat().st_size > 0
+    with tempfile.TemporaryDirectory() as td:
+        run_dir = Path(td) / "runs" / "new_run"   # НЕ создаём
+        def cp_sh(*a):
+            if a[0] == "cp":
+                src_p, dst_p = a[1], a[2]
+                stem = Path(dst_p).stem
+                if not Path(dst_p).parent.exists():
+                    raise AssertionError(f"run_dir не создан: cp в {dst_p}")
+                Path(dst_p).write_bytes(b"X" * 5)
+                return ""
+            return dk(*a)
+        with contextlib.redirect_stdout(io.StringIO()):
+            got = bank_release.take("anime lofi", 2, str(run_dir), docker_sh=cp_sh, now=now,
+                                    rng=random.Random(1), valid=ok)
+        assert got is not None and len(got) == 2, got
+        assert run_dir.exists()
