@@ -237,10 +237,11 @@ def master_final(track: str, genre: str) -> None:
     import subprocess
     m = _music_mod()
     import mastering
+    from quality_gate import LUFS_TARGET
     if mastering.measure(track)["tp"] > -1.0:
         tmp = track + ".tp.mp3"
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", track,
-                        "-af", "loudnorm=I=-14:TP=-2:LRA=11", "-c:a", "libmp3lame", "-b:a", "192k", tmp],
+                        "-af", f"loudnorm=I={LUFS_TARGET:g}:TP=-2:LRA=11", "-c:a", "libmp3lame", "-b:a", "192k", tmp],
                        check=True)
         os.replace(tmp, track)
     m.fade_end(track)
