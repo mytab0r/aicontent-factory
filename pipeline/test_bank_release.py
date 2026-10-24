@@ -333,6 +333,47 @@ def test_take_creates_missing_run_dir():
             bank_release.time.sleep = orig
         assert got is not None and len(got) == 2, got
 
+
+def _meta(n, bpm, key):
+    return {"name": n, "prompt": f"p {bpm} BPM, {key}, t", "seed": 1}
+
+
+def test_pick_cross_group_compatible_fills_need():
+    """24.10 (коммент 05:47): крупнейшая группа 19 < need=20 -> pick None при 53 свободных.
+    Контракт: добор из соседних групп (та же тональность или квартово-родственная, BPM в пределах
+    COMPAT_BPM=4) до need; основная группа - большинство."""
+    now = __import__("time").time()
+    ents = [_meta(f"f{i}", 89, "F major") for i in range(19)]
+    ents += [_meta(f"c{i}", 91, "F major") for i in range(3)]   # тот же key, BPM 89+-4
+    got = bank_release.pick(ents, need=20, now=now, used_lines=[], rng=__import__("random").Random(1))
+    assert got is not None, "19+3 совместимых должны дать выпуск"
+    core = [e for e in got if e["name"].startswith("f")]
+    assert len(core) == 19 and len(got) == 20, (len(core), len(got))
+    assert all(abs((e["prompt"] and int(e["prompt"].split(" BPM")[0].split()[-1]) or 0) - 89) <= bank_release.COMPAT_BPM for e in got)
+
+
+def test_pick_cross_group_rejects_incompatible():
+    """Несовместимые (тоналность вне родства, BPM дальше COMPAT_BPM) не добираются:
+    группа 4 < MIN_SEG + 1 чужой — чужой не тянет группу через MIN_SEG, ответ None."""
+    now = __import__("time").time()
+    ents = [_meta(f"f{i}", 89, "F major") for i in range(4)]
+    ents += [_meta("x", 120, "D minor")]
+    got = bank_release.pick(ents, need=20, now=now, used_lines=[], rng=__import__("random").Random(1))
+    assert got is None, got
+
+
+def test_pick_short_mix_instead_of_skip():
+    """H3: даже need не добирается — короткий микс >= bank_release.MIN_SEG (>=5 сегм, 15 мин)
+    вместо пропуска слота; меньше MIN_SEG = None."""
+    now = __import__("time").time()
+    ents = [_meta(f"f{i}", 89, "F major") for i in range(8)]
+    got = bank_release.pick(ents, need=20, now=now, used_lines=[], rng=__import__("random").Random(1))
+    assert got is not None and len(got) == 8, got
+    ents = [_meta(f"g{i}", 89, "F major") for i in range(3)]
+    got = bank_release.pick(ents, need=20, now=now, used_lines=[], rng=__import__("random").Random(1))
+    assert got is None, got
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for f in fns:
