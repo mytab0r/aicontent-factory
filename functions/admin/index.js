@@ -47,10 +47,7 @@ export async function onRequestGet({ env } = {}) {
 <h1>pay.pxbt.app</h1>
 <div class="card">
  <h3>1. Подключить кошелёк (подпись = доказательство владения)</h3>
- <appkit-button></appkit-button>
- <button id="connect-evm" onclick="claim('evm')">Подписать (EVM)</button>
- <button id="connect-solana" onclick="claim('solana')">Подписать (Solana)</button>
- <button id="connect-tron" onclick="claim('tron')">Подписать (Tron)</button>
+ <button id="connect-all" class="primary" onclick="claimAll()">Подключить кошелек</button>
  <div id="addresses" class="addr"></div>
  <div id="nowallet" hidden><p id="nowallet-msg"></p></div>
 </div>
@@ -149,7 +146,7 @@ async function tronWallet() {
 const WALLETS = { evm: evmWallet, solana: solanaWallet, tron: tronWallet };
 
 async function claim(chain) {
-  const btn = document.getElementById('connect-' + chain);
+  const btn = document.getElementById('connect-all');
   btn.disabled = true;
   try {
     const w = await WALLETS[chain]();
@@ -173,6 +170,27 @@ async function claim(chain) {
   } finally { btn.disabled = false; }
 }
 window.claim = claim;
+window.claimChain = claim;
+
+// Одна кнопка: подключает ВСЕ цепочки кошелька по очереди (SafePal/Trust = evm+tron+solana сразу).
+// Ни одного провайдера -> открываем AppKit-модалку (WalletConnect: список кошельков/QR).
+async function claimAll() {
+  const btn = document.getElementById('connect-all');
+  btn.disabled = true;
+  const found = [];
+  try {
+    for (const chain of ['evm', 'solana', 'tron']) {
+      try { await WALLETS[chain](); found.push(chain); } catch (e) { if (!(e && e.nowallet)) found.push(chain); }
+    }
+    if (!found.length) {
+      log('\u2718 \u043a\u043e\u0448\u0435\u043b\u0451\u043a \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d \u2014 \u043e\u0442\u043a\u0440\u044b\u0432\u0430\u044e WalletConnect (\u043c\u043e\u0436\u043d\u043e \u043e\u0442\u0441\u043a\u0430\u043d\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u043a\u043e\u0448\u0435\u043b\u044c\u043a\u043e\u043c \u043d\u0430 \u0442\u0435\u043b\u0435\u0444\u043e\u043d\u0435)');
+      if (window.__appkit && window.__appkit.modal) { try { window.__appkit.modal.open(); } catch (e) { log('\u2718 \u043c\u043e\u0434\u0430\u043b\u043a\u0430: ' + e.message); } }
+      return;
+    }
+    for (const chain of found) await claim(chain);
+  } finally { btn.disabled = false; }
+}
+window.claimAll = claimAll;
 
 async function loadConfig() {
   const cfg = await (await fetch('/api/admin/config')).json();
