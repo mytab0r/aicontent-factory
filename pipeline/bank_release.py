@@ -266,7 +266,10 @@ def main(argv=None) -> int:
 
     def sh(*a):
         import subprocess
-        return subprocess.run(["docker", *a], capture_output=True, text=True).stdout
+        r = subprocess.run(["docker", *a], capture_output=True, text=True)
+        if r.returncode != 0:  # cp-ошибки были невидимы: тихий None -> «битые» без единой строки лога (t_ba72c7aa)
+            print(f"docker {' '.join(a[:2])}: rc={r.returncode}: {(r.stderr or r.stdout).strip()[:200]}")
+        return r.stdout
 
     paths = take(genre, n_seg, str(run_dir), docker_sh=sh)
     if paths is None:
