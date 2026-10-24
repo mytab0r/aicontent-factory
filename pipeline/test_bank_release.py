@@ -2,6 +2,7 @@
 """t_ba72c7aa R2: выпуск собирается ИЗ БАНКА (bank_release), не генерирует.
 R4: статистика отказов по промптам (stats_record/fail_rate/prompt_enabled) в bank.py.
 Тесты = контракт; реализация пишется по тому же контракту (TDD RED)."""
+import hashlib
 import json
 import random
 import sys
@@ -305,6 +306,35 @@ def test_take_recovers_torn_cp_by_size_check():
                                 rng=random.Random(1), valid=ok)
         assert got is not None and {p.stem for p in got} == {"a", "b"}, got
         assert attempts["a"] == 3, attempts  # перекачан на 3-й попытке, не закарантинен
+
+
+def test_take_logs_ffprobe_detail_on_invalid(capsys=None):
+    """Слот 23:00: 15 сегментов отбраковано при сошедшемся размере; без вывода ffprobe класс
+    не ловится. Контракт: при исключении сегмента печатается вывод ffprobe."""
+    import contextlib, io
+    now = time.time()
+    ents = [meta("a", 89, "F major"), meta("b", 89, "F major"), meta("c", 89, "F major")]
+    names = "\n".join(e["name"] + ".mp3" for e in ents) + "\n"
+    metas = {f"/app/output/bank/anime-lofi/{e['name']}.json": json.dumps(
+        {"prompt": e["prompt"], "seed": e["seed"]}) for e in ents}
+    dk = FakeDocker({**metas, "/app/output/bank/anime-lofi": names})
+    ok = lambda p: Path(p).stat().st_size > 0
+    seen_log = None
+    with tempfile.TemporaryDirectory() as td:
+        for seed in range(6):  # добиваемся выбора "a" (shuffle), потом проверяем лог
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                got = bank_release.take("anime lofi", 2, td, docker_sh=_cp(dk, broken={"a"}), now=now,
+                                        rng=random.Random(seed), valid=ok)
+            out = buf.getvalue()
+            if got is not None and "ffprobe" in out:
+                seen_log = (got, out)
+                break
+            assert got is None or "a" not in {p.stem for p in got}, (seed, out)
+        assert seen_log is not None, "выбор 'a' не случился ни при одном seed"
+        got, out = seen_log
+        assert "a" not in {p.stem for p in got}
+        assert "ffprobe" in out and "a" in out, out
 
 
 if __name__ == "__main__":
