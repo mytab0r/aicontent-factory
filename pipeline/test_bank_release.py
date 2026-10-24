@@ -154,6 +154,7 @@ def test_assemble_writes_music_meta_and_concat():
     calls = {}
     m.prep_segments = lambda ps, log=print: calls.setdefault("prep", ps)
     m.concat_tracks = lambda ps, out, xfade=m.XFADE: calls.update(out=str(out), paths=ps)
+    bank_release.master_final = lambda path, genre: calls.update(master=str(path), genre=genre)  # mastering не тестируем
     m._probe_sec = lambda p: 180.0
     with tempfile.TemporaryDirectory() as td:
         rd = Path(td)
