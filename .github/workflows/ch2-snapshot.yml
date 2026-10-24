@@ -25,6 +25,7 @@ jobs:
         run: python3 ch2_snapshot.py
       - name: upload snapshot
         if: always()
+        timeout-minutes: 2
         continue-on-error: true  # root-cause: t_f807dc99 (снапшот уже в логе шага; артефакт — копия)
         uses: actions/upload-artifact@v4  # artifact-ok: копия снапшота, источник истины — лог шага
         with:
