@@ -6,22 +6,6 @@ jobs:
     runs-on: [self-hosted, release]
     timeout-minutes: 10
     steps:
-      - name: probe15
+      - name: where
         run: |
-          d=/app/output/bank/anime-lofi
-          echo -n "1792646909_203763213_mix_00_1 "; stat -c %s "$d/1792646909_203763213_mix_00_1.mp3" 2>/dev/null || echo MISSING; ffprobe -v error -show_entries format=duration -of csv=p=0 "$d/1792646909_203763213_mix_00_1.mp3" 2>/dev/null | head -1
-          echo -n "1792647705_203763213_mix_01_1 "; stat -c %s "$d/1792647705_203763213_mix_01_1.mp3" 2>/dev/null || echo MISSING; ffprobe -v error -show_entries format=duration -of csv=p=0 "$d/1792647705_203763213_mix_01_1.mp3" 2>/dev/null | head -1
-          echo -n "1792672140_22263383_mix_00_2 "; stat -c %s "$d/1792672140_22263383_mix_00_2.mp3" 2>/dev/null || echo MISSING; ffprobe -v error -show_entries format=duration -of csv=p=0 "$d/1792672140_22263383_mix_00_2.mp3" 2>/dev/null | head -1
-          echo -n "1792672869_22263383_mix_01_1 "; stat -c %s "$d/1792672869_22263383_mix_01_1.mp3" 2>/dev/null || echo MISSING; ffprobe -v error -show_entries format=duration -of csv=p=0 "$d/1792672869_22263383_mix_01_1.mp3" 2>/dev/null | head -1
-          echo -n "1792676127_22263383_mix_04_0 "; stat -c %s "$d/1792676127_22263383_mix_04_0.mp3" 2>/dev/null || echo MISSING; ffprobe -v error -show_entries format=duration -of csv=p=0 "$d/1792676127_22263383_mix_04_0.mp3" 2>/dev/null | head -1
-          echo -n "1792692279_1132123150_mix_01_0 "; stat -c %s "$d/1792692279_1132123150_mix_01_0.mp3" 2>/dev/null || echo MISSING; ffprobe -v error -show_entries format=duration -of csv=p=0 "$d/1792692279_1132123150_mix_01_0.mp3" 2>/dev/null | head -1
-          echo -n "1792693870_1132123150_mix_03_1 "; stat -c %s "$d/1792693870_1132123150_mix_03_1.mp3" 2>/dev/null || echo MISSING; ffprobe -v error -show_entries format=duration -of csv=p=0 "$d/1792693870_1132123150_mix_03_1.mp3" 2>/dev/null | head -1
-          echo -n "1792694659_1132123150_mix_04_0 "; stat -c %s "$d/1792694659_1132123150_mix_04_0.mp3" 2>/dev/null || echo MISSING; ffprobe -v error -show_entries format=duration -of csv=p=0 "$d/1792694659_1132123150_mix_04_0.mp3" 2>/dev/null | head -1
-          echo -n "1792697008_1132123150_mix_07_2 "; stat -c %s "$d/1792697008_1132123150_mix_07_2.mp3" 2>/dev/null || echo MISSING; ffprobe -v error -show_entries format=duration -of csv=p=0 "$d/1792697008_1132123150_mix_07_2.mp3" 2>/dev/null | head -1
-          echo -n "1792699088_1132123150_mix_09_3 "; stat -c %s "$d/1792699088_1132123150_mix_09_3.mp3" 2>/dev/null || echo MISSING; ffprobe -v error -show_entries format=duration -of csv=p=0 "$d/1792699088_1132123150_mix_09_3.mp3" 2>/dev/null | head -1
-          echo -n "1792741521_994044835_mix_01_0 "; stat -c %s "$d/1792741521_994044835_mix_01_0.mp3" 2>/dev/null || echo MISSING; ffprobe -v error -show_entries format=duration -of csv=p=0 "$d/1792741521_994044835_mix_01_0.mp3" 2>/dev/null | head -1
-          echo -n "1792742387_994044835_mix_02_1 "; stat -c %s "$d/1792742387_994044835_mix_02_1.mp3" 2>/dev/null || echo MISSING; ffprobe -v error -show_entries format=duration -of csv=p=0 "$d/1792742387_994044835_mix_02_1.mp3" 2>/dev/null | head -1
-          echo -n "1792743218_994044835_mix_03_0 "; stat -c %s "$d/1792743218_994044835_mix_03_0.mp3" 2>/dev/null || echo MISSING; ffprobe -v error -show_entries format=duration -of csv=p=0 "$d/1792743218_994044835_mix_03_0.mp3" 2>/dev/null | head -1
-          echo -n "1792766961_105801872_mix_00_2 "; stat -c %s "$d/1792766961_105801872_mix_00_2.mp3" 2>/dev/null || echo MISSING; ffprobe -v error -show_entries format=duration -of csv=p=0 "$d/1792766961_105801872_mix_00_2.mp3" 2>/dev/null | head -1
-          echo -n "1792769951_105801872_mix_03_0 "; stat -c %s "$d/1792769951_105801872_mix_03_0.mp3" 2>/dev/null || echo MISSING; ffprobe -v error -show_entries format=duration -of csv=p=0 "$d/1792769951_105801872_mix_03_0.mp3" 2>/dev/null | head -1
-          true
+          docker exec ace-step sh -c "d=/app/output/bank/anime-lofi; echo bank=$(ls $d/*.mp3 2>/dev/null | wc -l) broken=$(ls $d/broken/*.mp3 2>/dev/null | wc -l); for n in 1792646909_203763213_mix_00_1 1792691491_1132123150_mix_00_1 1792769951_105801872_mix_03_0; do ls $d/$n.mp3 $d/broken/$n.mp3 2>/dev/null; done; cd $d && for j in *.json; do grep -o '[0-9]* BPM, [A-G][#b]* m[a-z]*' $j | head -1; done | sort | uniq -c; echo used14=$(wc -l < /app/output/.state/bank_used.jsonl 2>/dev/null || echo nostate)"
