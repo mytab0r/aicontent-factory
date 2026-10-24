@@ -278,7 +278,9 @@ def test_edge_match_levels_seam_rms():
     sp.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=30",
             "-af", "volume=0.0056", "-c:a", "libmp3lame", "-b:a", "192k", str(f)], check=True)
     g2 = music.edge_match([fs[0], str(f)], log=lambda *x: None)
-    assert g2[1] == music.EDGE_MAX_GAIN, g2  # клэмп, без бесконечного цикла
+    # клэмп: <= 3 x 6 дБ, без бесконечного цикла. Не ровно 18: стык мерится по склейке (t_e0c297c7),
+    # в окне справа от центра кроссфейда ещё звучит prev, поэтому разница < 40 дБ и последний проход < 6.
+    assert 12.0 < g2[1] <= music.EDGE_MAX_GAIN, g2
 
 
 def test_edge_match_no_chain_drift():
@@ -402,6 +404,30 @@ def test_mix_raw_hung_task_restarts_with_short_timeout():
         music.generate_track_v15, music.mastering.master, music.ace_restart = orig
     assert calls == ["gen", "restart", "gen"], calls
     assert all(x <= 900 for x in tmo), tmo
+
+
+def test_edge_match_measures_crossfaded_seam_like_gate():
+    """t_e0c297c7 (runs 40070541695 R3 641 с -20.3 -> -25.1, 40075415222 R3 961 с -23.7 -> -19.6): edge_match мерил
+    последние 5 с prev и первые 5 с nxt в сырых файлах, гейт R3 меряет склейку ±5 с от центра 16-с кроссфейда
+    (prev -13..-3 с, nxt 3..13 с). Удар в первые 5 с nxt (gain -8.6 дБ не туда) и брейкдаун перед последними 5 с
+    prev давали R3 FAIL после prep_segments. Проверка тем же кодом, что гейт: rms_db + seam_why."""
+    import subprocess as sp
+    import tempfile
+    import quality_gate as qg
+    d = Path(tempfile.mkdtemp())
+
+    def seg(name, expr, seed):
+        f = d / name
+        sp.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", f"anoisesrc=d=60:c=pink:a=0.25:seed={seed}",
+                "-af", f"volume='{expr}':eval=frame", "-c:a", "libmp3lame", "-b:a", "192k", str(f)], check=True)
+        return str(f)
+    fs = [seg("a.mp3", "1", 1), seg("b.mp3", "if(lt(t,5),2.5,if(between(t,47,54),0.4,1))", 2), seg("c.mp3", "1", 3)]
+    music.prep_segments(fs, log=lambda *x: None)
+    out = str(d / "mix.mp3")
+    music.concat_tracks(fs, out)
+    seams = [{"t": t, "ce": 9.0, "rms_l": qg.rms_db(out, t - qg.SEAM_HALF, qg.SEAM_HALF),
+              "rms_r": qg.rms_db(out, t, qg.SEAM_HALF)} for t in music.seam_times([music._probe_sec(p) for p in fs])]
+    assert qg.seam_why(seams) == [], seams
 
 
 if __name__ == "__main__":

@@ -494,13 +494,29 @@ EDGE_RAMP_SEC = 30.0  # gain только на начале сегмента, к
 EDGE_MAX_GAIN = 18.0  # 3 прохода x клэмп 6 дБ
 
 
+def seam_rms(prev, nxt, xfade=XFADE):
+    """RMS дБ слева/справа от центра стыка prev->nxt ровно как гейт R3: acrossfade(tri) как в concat_tracks,
+    окна [c-SEAM_HALF, c] и [c, c+SEAM_HALF], c = dur(prev) - xfade/2 как в seam_times (t_e0c297c7).
+    prev целиком: acrossfade с входом длиной ровно xfade отдаёт пустой поток."""
+    import subprocess
+    import tempfile
+    from quality_gate import SEAM_HALF, rms_db
+    with tempfile.TemporaryDirectory() as td:
+        x = f"{td}/seam.wav"
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(prev), "-t", str(xfade + 2 * SEAM_HALF),
+                        "-i", str(nxt), "-filter_complex", f"[0:a][1:a]acrossfade=d={xfade}:c1=tri:c2=tri[a]",
+                        "-map", "[a]", "-c:a", "pcm_s16le", x], check=True)
+        c = _probe_sec(prev) - xfade / 2
+        return rms_db(x, c - SEAM_HALF, SEAM_HALF), rms_db(x, c, SEAM_HALF)
+
+
 def edge_match(paths, max_gain=6.0, ramp=EDGE_RAMP_SEC, log=print):
-    """t_ffa7ff01: acrossfade сглаживает кривые, но не громкость материала: тихий хвост сегмента и громкое
-    начало следующего давали R3-скачки RMS 4-5 дБ (run 39155227095).
-    run 39670128584: прежний константный gain на ВЕСЬ сегмент копился по цепочке (-3.8 .. -18 дБ, клэмп),
-    правый край каждого следующего сегмента уезжал -> стык 1445 с -14.5 -> -18.1 дБ = R3 FAIL.
-    Теперь gain -- рампа на первые ramp секунд (g -> 0), тело и правый край сегмента не меняются,
-    поэтому стыки независимы. 3 прохода, клэмп ±max_gain на проход."""
+    """t_ffa7ff01: acrossfade сглаживает кривые, но не громкость материала: R3-скачки RMS 4-5 дБ (run 39155227095).
+    run 39670128584: константный gain на ВЕСЬ сегмент копился по цепочке -> gain только рампой на первые ramp с.
+    t_e0c297c7 (runs 40070541695, 40075415222): мерили последние 5 с prev против первых 5 с nxt в сырых файлах,
+    а гейт R3 меряет СКЛЕЙКУ: ±5 с от центра 16-с кроссфейда (prev -13..-3 с + nxt 3..13 с с весами tri).
+    Удар в начале / брейкдаун перед концом сегмента давал gain не туда (-6.9 дБ) и R3 FAIL. Теперь меряем
+    seam_rms — тот же сигнал и те же окна, что гейт. 3 прохода, клэмп ±max_gain на проход."""
     import os
     import subprocess
     gains = [0.0]
@@ -508,14 +524,16 @@ def edge_match(paths, max_gain=6.0, ramp=EDGE_RAMP_SEC, log=print):
         tot = 0.0
         r = max(6.0, min(ramp, _probe_sec(paths[i]) * 0.4))
         for _ in range(3):
-            g = max(-max_gain, min(max_gain, edge_rms(paths[i - 1], "r") - edge_rms(paths[i], "l")))
-            if abs(g) > 0.1:
-                tmp = f"{paths[i]}.g.mp3"
-                af = f"volume='pow(10,{g:.3f}*max(0,1-t/{r:.1f})/20)':eval=frame"
-                subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", paths[i], "-af", af,
-                                "-c:a", "libmp3lame", "-b:a", "192k", tmp], check=True)
-                os.replace(tmp, paths[i])
-                tot += g
+            lv, rv = seam_rms(paths[i - 1], paths[i])
+            g = max(-max_gain, min(max_gain, lv - rv))
+            if abs(g) <= 0.5:
+                break
+            tmp = f"{paths[i]}.g.mp3"
+            af = f"volume='pow(10,{g:.3f}*max(0,1-t/{r:.1f})/20)':eval=frame"
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", paths[i], "-af", af,
+                            "-c:a", "libmp3lame", "-b:a", "192k", tmp], check=True)
+            os.replace(tmp, paths[i])
+            tot += g
         gains.append(round(tot, 2))
         log(f"edge_match {i}: gain начала {tot:+.2f} дБ (рампа {r:.0f} с)")
     return gains
