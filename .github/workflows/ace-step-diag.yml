@@ -6,64 +6,6 @@ jobs:
     runs-on: [self-hosted, release]
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
-        with: {ref: master}
-      - uses: astral-sh/setup-uv@v3
-      - name: restore + per-segment probe
-        working-directory: pipeline
+      - name: probe flagged segments (source-side)
         run: |
-          uv venv .venv
-          uv pip install --python .venv/bin/python pillow gradio_client numpy
-          d=/app/output/bank/anime-lofi
-          docker exec ace-step sh -c "cd $d/broken 2>/dev/null && for f in *.mp3; do s=\${f%.mp3}; mv -f \$s.mp3 \$s.json $d/; done; ls $d | grep -c mp3$"
-          uptime
-          rm -rf /tmp/tk && mkdir -p /tmp/tk
-          ./.venv/bin/python - <<'PY'
-          import subprocess, pathlib, time, json
-          D="/app/output/bank/anime-lofi"
-          def dsh(*a):
-              r=subprocess.run(["docker",*a],capture_output=True,text=True)
-              return r
-          # крупнейшая группа по мета (как pick)
-          metas={}
-          listing=dsh("exec","ace-step","sh","-c",f"ls {D}").stdout.split()
-          for line in listing:
-              if not line.endswith(".mp3"): continue
-              n=line[:-4]
-              r=dsh("exec","ace-step","sh","-c",f"cat {D}/{n}.json")
-              try: metas[n]=json.loads(r.stdout)
-              except Exception: print("META-BAD",n)
-          import re
-          groups={}
-          for n,m in metas.items():
-              p=m.get("prompt") or ""
-              groups.setdefault(p,[]).append(n)
-          gp=max(groups,key=lambda k:len(groups[k]))
-          names=groups[gp]
-          print("GROUP",repr(gp[:80]),len(names))
-          bad=0
-          for n in names:
-              dst=pathlib.Path("/tmp/tk")/f"{n}.mp3"
-              w=dsh("exec","ace-step","sh","-c",f"stat -c %s {D}/{n}.mp3")
-              try: want=int(w.stdout.split()[0])
-              except Exception: want=None
-              t0=time.time()
-              cp=dsh("cp",f"ace-step:{D}/{n}.mp3",str(dst))
-              size=dst.stat().st_size if dst.exists() else -1
-              if cp.returncode:
-                  print("CP-ERR",n,"rc",cp.returncode,cp.stderr.strip()[:150]); bad+=1; continue
-              t1=time.time()
-              r=subprocess.run(["ffprobe","-v","error","-show_entries","format=duration","-of","csv=p=0",str(dst)],capture_output=True,text=True,timeout=180)
-              dt=time.time()-t1
-              ok=False
-              try: ok=r.returncode==0 and float(r.stdout.strip() or 0)>1.0
-              except Exception: pass
-              if not ok:
-                  bad+=1
-                  print("INVALID",n,"size",size,"want",want,"rc",r.returncode,"ffprobe_sec",round(dt,1),"err",r.stderr.strip()[:200])
-              else:
-                  print("OK",n,"size",size,"want",want,"cp_sec",round(t1-t0,1),"ffprobe_sec",round(dt,1))
-              dst.unlink(missing_ok=True)
-          print("SUMMARY","total",len(names),"bad",bad)
-          PY
-          uptime
+          docker exec ace-step sh -c "d=/app/output/bank/anime-lofi; echo -n \"$n \"; stat -c %s \"$d/1792646909_203763213_mix_00_1.mp3\" 2>&1; ffprobe -v error -show_entries format=duration -of csv=p=0 \"$d/1792646909_203763213_mix_00_1.mp3\" 2>&1 | head -1; echo -n \"$n \"; stat -c %s \"$d/1792647705_203763213_mix_01_1.mp3\" 2>&1; ffprobe -v error -show_entries format=duration -of csv=p=0 \"$d/1792647705_203763213_mix_01_1.mp3\" 2>&1 | head -1; echo -n \"$n \"; stat -c %s \"$d/1792672140_22263383_mix_00_2.mp3\" 2>&1; ffprobe -v error -show_entries format=duration -of csv=p=0 \"$d/1792672140_22263383_mix_00_2.mp3\" 2>&1 | head -1; echo -n \"$n \"; stat -c %s \"$d/1792672869_22263383_mix_01_1.mp3\" 2>&1; ffprobe -v error -show_entries format=duration -of csv=p=0 \"$d/1792672869_22263383_mix_01_1.mp3\" 2>&1 | head -1; echo -n \"$n \"; stat -c %s \"$d/1792676127_22263383_mix_04_0.mp3\" 2>&1; ffprobe -v error -show_entries format=duration -of csv=p=0 \"$d/1792676127_22263383_mix_04_0.mp3\" 2>&1 | head -1; echo -n \"$n \"; stat -c %s \"$d/1792692279_1132123150_mix_01_0.mp3\" 2>&1; ffprobe -v error -show_entries format=duration -of csv=p=0 \"$d/1792692279_1132123150_mix_01_0.mp3\" 2>&1 | head -1; echo -n \"$n \"; stat -c %s \"$d/1792693870_1132123150_mix_03_1.mp3\" 2>&1; ffprobe -v error -show_entries format=duration -of csv=p=0 \"$d/1792693870_1132123150_mix_03_1.mp3\" 2>&1 | head -1; echo -n \"$n \"; stat -c %s \"$d/1792694659_1132123150_mix_04_0.mp3\" 2>&1; ffprobe -v error -show_entries format=duration -of csv=p=0 \"$d/1792694659_1132123150_mix_04_0.mp3\" 2>&1 | head -1; echo -n \"$n \"; stat -c %s \"$d/1792697008_1132123150_mix_07_2.mp3\" 2>&1; ffprobe -v error -show_entries format=duration -of csv=p=0 \"$d/1792697008_1132123150_mix_07_2.mp3\" 2>&1 | head -1; echo -n \"$n \"; stat -c %s \"$d/1792699088_1132123150_mix_09_3.mp3\" 2>&1; ffprobe -v error -show_entries format=duration -of csv=p=0 \"$d/1792699088_1132123150_mix_09_3.mp3\" 2>&1 | head -1; echo -n \"$n \"; stat -c %s \"$d/1792741521_994044835_mix_01_0.mp3\" 2>&1; ffprobe -v error -show_entries format=duration -of csv=p=0 \"$d/1792741521_994044835_mix_01_0.mp3\" 2>&1 | head -1; echo -n \"$n \"; stat -c %s \"$d/1792742387_994044835_mix_02_1.mp3\" 2>&1; ffprobe -v error -show_entries format=duration -of csv=p=0 \"$d/1792742387_994044835_mix_02_1.mp3\" 2>&1 | head -1; echo -n \"$n \"; stat -c %s \"$d/1792743218_994044835_mix_03_0.mp3\" 2>&1; ffprobe -v error -show_entries format=duration -of csv=p=0 \"$d/1792743218_994044835_mix_03_0.mp3\" 2>&1 | head -1; echo -n \"$n \"; stat -c %s \"$d/1792766961_105801872_mix_00_2.mp3\" 2>&1; ffprobe -v error -show_entries format=duration -of csv=p=0 \"$d/1792766961_105801872_mix_00_2.mp3\" 2>&1 | head -1; echo -n \"$n \"; stat -c %s \"$d/1792769951_105801872_mix_03_0.mp3\" 2>&1; ffprobe -v error -show_entries format=duration -of csv=p=0 \"$d/1792769951_105801872_mix_03_0.mp3\" 2>&1 | head -1"
