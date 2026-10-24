@@ -19,3 +19,11 @@ def test_titles_committed_only_after_publish():
 def test_unpublished_title_reverted_before_rebase():
     step = commit_step(WF.read_text(encoding="utf-8"))
     assert step.index("git checkout -- .state/titles.json") < step.index("git pull --rebase")
+
+
+if __name__ == "__main__":  # t_110fa85f: CI запускает файл как скрипт — без блока def test_* не выполняются
+    _fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
+    for _f in _fns:
+        _f()
+        print("ok", _f.__name__)
+    print(f"PASS {len(_fns)} tests")

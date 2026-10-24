@@ -10,7 +10,9 @@ def dead_tests():
     for f in sorted(Path(__file__).resolve().parent.glob("test_*.py")):
         s = f.read_text(encoding="utf-8")
         m = re.search(r"^if __name__ == .__main__.:", s, re.M)
-        if m and re.search(r"^def test_", s[m.end():], re.M):
+        # t_110fa85f: файл без блока __main__ тоже мёртв — CI гоняет `python test_X.py`,
+        # def test_* без вызова не выполняются (тест t_bank_master так и не гонялся в CI).
+        if re.search(r"^def test_", s, re.M) and (not m or re.search(r"^def test_", s[m.end():], re.M)):
             bad.append(f.name)
     return bad
 

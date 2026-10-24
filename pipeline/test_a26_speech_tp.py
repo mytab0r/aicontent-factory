@@ -13,3 +13,11 @@ def test_speech_loudnorm_tp_headroom():
         tps = [float(x) for x in re.findall(r"loudnorm=[^\"]*?TP=(-?[0-9.]+)", txt)]
         assert tps, s
         assert all(tp <= -2.0 for tp in tps), (s, tps)
+
+
+if __name__ == "__main__":  # t_110fa85f: CI запускает файл как скрипт — без блока def test_* не выполняются
+    _fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
+    for _f in _fns:
+        _f()
+        print("ok", _f.__name__)
+    print(f"PASS {len(_fns)} tests")

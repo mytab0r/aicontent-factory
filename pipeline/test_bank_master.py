@@ -76,3 +76,11 @@ def test_master_final_tp_on_real_audio():
                    capture_output=True, text=True).stderr
         peak = float(re.findall(r"Peak level dB: (-?[0-9.]+)", e)[-1])
         assert peak <= -0.9, f"Peak {peak} dB — выше порога гейта (TP примерно равен peak для синуса)"
+
+
+if __name__ == "__main__":  # t_110fa85f: CI запускает файл как скрипт — без блока def test_* не выполняются
+    _fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
+    for _f in _fns:
+        _f()
+        print("ok", _f.__name__)
+    print(f"PASS {len(_fns)} tests")

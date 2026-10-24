@@ -52,3 +52,11 @@ def test_prep_segments_runs_body_before_edge():
     m.edge_match = lambda ps, log=print: (order.append("edge"), [0.0] * len(ps))[1]
     m.prep_segments(["/r/a.mp3", "/r/b.mp3"], log=lambda *a: None)
     assert order == ["trim", "body", "edge"], order
+
+
+if __name__ == "__main__":  # t_110fa85f: CI запускает файл как скрипт — без блока def test_* не выполняются
+    _fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
+    for _f in _fns:
+        _f()
+        print("ok", _f.__name__)
+    print(f"PASS {len(_fns)} tests")

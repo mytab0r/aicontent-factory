@@ -14,3 +14,11 @@ def test_no_tempfile_before_os_replace():
             if re.search(rf"os\.replace\(\s*{m.group(1)}\b", src[m.end():m.end() + 2000]):
                 bad.append(f"{f.name}:{src[:m.start()].count(chr(10)) + 1}")
     assert not bad, f"tempfile + os.replace (cross-device): {bad}"
+
+
+if __name__ == "__main__":  # t_110fa85f: CI запускает файл как скрипт — без блока def test_* не выполняются
+    _fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
+    for _f in _fns:
+        _f()
+        print("ok", _f.__name__)
+    print(f"PASS {len(_fns)} tests")
