@@ -39,10 +39,15 @@ jobs:
             myoung34/github-runner:ubuntu-noble
           # дождаться регистрации нового
           for i in $(seq 1 60); do docker logs "$TMP" 2>&1 | grep -q "Listening for Jobs" && break; sleep 5; done
-          # старый контейнер (зомби-lease) уходит вместе с RW-слоем
-          docker rm -f "$NAME" || true
+          # t_5cdbb967: порядок критичен. При target=pc джоба бежит ВНУТРИ пересоздаваемого
+          # контейнера: rm старого = суицид джобы, шаги после не выполнятся. Поэтому
+          # rename/сети — ДО rm; rm последним.
+          docker rm -f "$NAME-old" || true
+          docker rename "$NAME" "$NAME-old"
           docker rename "$TMP" "$NAME"
           for n in comfynet gpu-net; do docker network connect $n "$NAME" || true; done
+          # старый контейнер (зомби-lease) уходит вместе с RW-слоем
+          docker rm -f "$NAME-old" || true
           # t_5cdbb967: хвосты прошлых recreate/unbreak-свапов (recreate-117 висел 3.3 ГБ и
           # продолжал писать ~3 ГБ/ч в свой слой). К моменту этой строки свежая регистрация
           # уже в "Listening", все unbreak-*/recreate-* - зомби прошлых циклов.
