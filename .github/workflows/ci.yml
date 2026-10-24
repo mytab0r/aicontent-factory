@@ -133,6 +133,76 @@ jobs:
       - name: ci-bypass-lint («Повтор = класс»)
         run: python3 scripts/ci_bypass_lint.py . && python3 scripts/test_ci_lint_docker_login.py
 
+
+  # t_f18c9f61: egress ПК к github.com деградирует волнами (первое TCP-соединение после ~20с простоя:
+  # TCP 1-15 с / timeout / DNS-fail, немедленный retry всегда ~0.06 с). checkout@v4 ретраится сам,
+  # но молча: если попытки кончатся, job падает с "GnuTLS recv error / Failed to connect port 443".
+  # Гард делает деградацию видимой: ищет сигнатуру в логах упавших jobs этого прогона и роняет
+  # job с ссылкой на карточку; ретраи checkout'а при этом не маскируются (их успех = success).
+  pc-egress-guard:
+    needs: [test, pay-image-smoke, e2e-admin, ci-bypass-lint]
+    if: ${{ !cancelled() }}
+    runs-on: [self-hosted, release]
+    permissions:
+      actions: read
+    steps:
+      - name: fail on unresolved git transport signature (t_f18c9f61)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 - --repo "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" <<'PY'
+          #!/usr/bin/env python3
+          """t_f18c9f61: git-transport деградация egress ПК (GnuTLS recv error / Failed to connect
+          to github.com port 443 / codeload). checkout@v4 ретраит, но при исчерпании попыток job
+          падает с этой сигнатурой. Гард ищет её в логах упавших jobs прогона и завершается
+          ошибкой со ссылкой на карточку, чтобы деградация не проходила незамеченной.
+          Stdlib-only; успешные ретраи не трогает (success = success)."""
+          import argparse, json, re, subprocess, sys
+
+          SIG = re.compile(r"GnuTLS recv error|Failed to connect to github\.com port 443|"
+                           r"Connection refused \(codeload\.github\.com:443\)", re.I)
+
+          def gh(*args):
+              r = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=120)
+              if r.returncode:
+                  raise RuntimeError(r.stderr.strip()[:300])
+              return r.stdout
+
+          def main():
+              ap = argparse.ArgumentParser()
+              ap.add_argument("--repo", required=True)
+              ap.add_argument("--run-id", type=int, required=True)
+              ap.add_argument("--run-attempt", type=int, required=True)
+              a = ap.parse_args()
+              try:
+                  jobs = json.loads(gh("api", f"repos/{a.repo}/actions/runs/{a.run_id}/attempts/{a.run_attempt}/jobs"))["jobs"]
+              except Exception as e:
+                  print(f"::warning::jobs list unavailable, skip guard: {e}")
+                  return 0
+              hits = []
+              for j in jobs:
+                  if j.get("conclusion") != "failure":
+                      continue
+                  try:
+                      log = gh("api", f"repos/{a.repo}/actions/jobs/{j['id']}/logs")
+                  except Exception:
+                      log = ""
+                  # лог может быть недоступен (BlobNotFound при сбое аплоада) — сигнатура живёт в annotations
+                  ann = gh("api", f"repos/{a.repo}/check-runs/{j['id']}/annotations", "-q", ".[].message")
+                  if SIG.search(log) or SIG.search(ann):
+                      hits.append(f"{j['name']} ({j['id']})")
+              if hits:
+                  print("::error::git transport signature (GnuTLS recv error / port 443) в логах: "
+                      + "; ".join(hits)
+                      + " — деградация egress ПК, ретраи checkout исчерпаны. root-cause: t_f18c9f61")
+                  return 1
+              print("pc-egress-guard: сигнатуры нет")
+              return 0
+
+          if __name__ == "__main__":
+              sys.exit(main())
+          PY
+
   # t_b1429246: сам хостед-раннер во время окон деградации PC-egress не смог доставить вердикт
   # (CompleteJobAsync -> HttpIOException "The response ended prematurely") — job падает с
   # System.AggregateException "… (An error occurred while sending the request.)" без реальной
