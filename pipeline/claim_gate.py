@@ -55,7 +55,7 @@ def upload_unlisted(run_dir: Path) -> str:
     idea = json.loads((Path(run_dir) / "idea.json").read_text(encoding="utf-8"))
     meta_path = Path(run_dir) / "music_meta.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.is_file() else {}
-    body = pub.build_body(idea, meta)
+    body = pub.build_body(idea, meta, pub.release_playlist_id(youtube, idea, meta))  # M15
     body["status"]["privacyStatus"] = "unlisted"
     media = MediaFileUpload(str(video_path), mimetype="video/mp4", resumable=True,
                             chunksize=1024 * 1024 * 4)

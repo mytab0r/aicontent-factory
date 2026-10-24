@@ -69,7 +69,7 @@ def playlist_title(genre: str) -> str:
     return f"{genre.title()} Beats"
 
 
-def add_to_genre_playlist(youtube, video_id: str, genre: str) -> str:
+def genre_playlist_id(youtube, genre: str) -> str:
     """One playlist per genre: reuse by title, create on first use (public)."""
     title = playlist_title(genre)
     # ponytail: first page (50) only; paginate when channel has >50 playlists
@@ -80,6 +80,11 @@ def add_to_genre_playlist(youtube, video_id: str, genre: str) -> str:
             "snippet": {"title": title, "description": f"{genre} - instrumental, AI-generated"},
             "status": {"privacyStatus": "public"},
         }).execute()["id"]
+    return pid
+
+
+def add_to_genre_playlist(youtube, video_id: str, genre: str) -> str:
+    pid = genre_playlist_id(youtube, genre)
     youtube.playlistItems().insert(part="snippet", body={"snippet": {
         "playlistId": pid, "resourceId": {"kind": "youtube#video", "videoId": video_id}}}).execute()
     return pid
@@ -89,12 +94,23 @@ HASHTAGS = "#lofi #animelofi #studymusic"
 AI_NOTE = "AI-generated music and visuals (synthetic content)."
 
 
-def full_description(text: str, chapters=None) -> str:
-    """Аудит 4HB26c4yow0: хэштеги + AI-disclosure; треклист-главы (>=3, с 0:00) для часового микса."""
+# M15 (аудит 24.10): лидеры ниши ставят плейлист и подписку в первые 2 строки (видны до «ещё») — переходы между роликами.
+SUBSCRIBE_URL = "https://www.youtube.com/channel/UCoqUWdW9QaQtcbL_02YN4Gg?sub_confirmation=1"
+
+
+def link_lines(playlist_id=None) -> list:
+    pl = [f"▶ Full playlist: https://www.youtube.com/playlist?list={playlist_id}"] if playlist_id else []
+    return pl + [f"🔔 Subscribe for a new mix every day: {SUBSCRIBE_URL}"]
+
+
+def full_description(text: str, chapters=None, playlist_id=None) -> str:
+    """Аудит 4HB26c4yow0: хэштеги + AI-disclosure; треклист-главы (>=3, с 0:00) для часового микса; M15: ссылки сверху."""
+    links = [l for l in link_lines(playlist_id) if l not in text]
     extra = [s for s in (AI_NOTE, HASHTAGS) if s not in text]
-    if chapters and len(chapters) >= 3:
+    if chapters and len(chapters) >= 3 and "Tracklist:" not in text:
         extra.insert(0, "Tracklist:\n" + "\n".join(chapters))
-    return "\n\n".join([text.rstrip(), *extra])
+    head = ["\n".join(links)] if links else []
+    return "\n\n".join([*head, text.rstrip(), *extra])
 
 
 def title_with_length(title: str, duration_sec) -> str:
@@ -124,13 +140,24 @@ def fit_title(title: str, limit: int = TITLE_MAX) -> str:
     return re.sub(r"(\s+(to|and|&|for|\||-))+$", "", cut.rstrip(" |&-,"), flags=re.I)
 
 
-def build_body(idea: dict, meta: dict) -> dict:
+def release_playlist_id(youtube, idea: dict, meta: dict):
+    """M15: id плейлиста жанра для ссылки в описании; сбой API плейлистов не валит выпуск (подписка остаётся)."""
+    if not meta.get("genre") or idea.get("channel") == "owning":
+        return None
+    try:
+        return genre_playlist_id(youtube, meta["genre"])
+    except Exception as e:
+        print(f"playlist link skip: {type(e).__name__}: {e}")
+        return None
+
+
+def build_body(idea: dict, meta: dict, playlist_id=None) -> dict:
     if idea.get("channel") == "owning":  # S1 ch1 «Economics of Owning»: нарративный Short, Education
         import owning_channel
         title, desc, cat = idea["title"][:100], owning_channel.short_description(idea), "27"
     else:
         title = title_with_length(idea["title"], meta.get("duration"))
-        desc, cat = full_description(idea["description"], meta.get("chapters")), "10"  # Music
+        desc, cat = full_description(idea["description"], meta.get("chapters"), playlist_id), "10"  # Music
     return {
         "snippet": {"title": title, "description": desc, "defaultLanguage": "en", "defaultAudioLanguage": "en",
                     "tags": idea.get("tags", []), "categoryId": cat},
@@ -150,7 +177,7 @@ def publish(run_dir: Path) -> str:
     meta_path = run_dir / "music_meta.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
     youtube = _get_youtube_service()
-    body = build_body(idea, meta)
+    body = build_body(idea, meta, release_playlist_id(youtube, idea, meta))
 
     media = MediaFileUpload(str(video_path), mimetype="video/mp4", resumable=True, chunksize=1024 * 1024 * 4)
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
