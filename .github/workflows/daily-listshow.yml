@@ -11,6 +11,10 @@ on:
         description: "сухой прогон launch-гейта: upload private + автосверка, без гейта и без ротации (t_f807dc99)"
         type: boolean
         default: false
+      topic:
+        description: "тема dryrun из free-идей breakout-finder (reports/ch2_breakouts.json summary.free); пусто = ротация TOPICS"
+        type: string
+        default: ""
 
 concurrency:
   group: daily-listshow
@@ -28,6 +32,7 @@ jobs:
       ROUTER_API_KEY: ${{ secrets.ROUTER_API_KEY }}
       LIST2D: ${{ inputs.dryrun && '1' || vars.LIST2D }}  # dryrun = private, публики нет даже при LIST2D=0
       CH2_PRIVACY: ${{ inputs.dryrun && 'private' || 'public' }}
+      LISTSHOW_TOPIC: ${{ inputs.dryrun && inputs.topic || '' }}  # тема только в сухом прогоне
     steps:
       - name: flag
         id: flag

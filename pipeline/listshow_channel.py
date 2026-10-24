@@ -30,6 +30,15 @@ TARGET_MIN_SEC = 570.0  # 9.5 мин плана; published long проверяе
 LONG_MIN_SEC = 540.0  # приёмка публикации: >= 9 мин
 SHORT_LIMIT = wf.SHORT_LIMIT
 PLAYLIST = "Fascinating Lists"
+# t_e44ba4be: хук list-лонга. 0-3 с = крупный текст темы (thumbnails.set=403 -> превью YouTube берёт из кадров),
+# первая фраза пункта 1 = сам пункт за <=5 с речи (12 слов / 2.8 сл/с = 4.3 с), без приветствия и интро.
+HOOK_SEC = 3.0
+HOOK_SIZE = 0.2  # доля min(W,H): 216 px на 1080p, на кадре 0 (наезд 0.7) ~150 px
+HOOK_MAX_WORDS = 12
+INTRO_RE = re.compile(r"\b(welcome|hello|hi|hey|today|in this video|this video|let'?s|let us|we'?re going|we are going|"
+                      r"before we|subscribe|stick around|stay tuned)\b", re.I)
+STOP = {"a", "an", "the", "it", "to", "be", "of", "in", "on", "at", "for", "and", "or", "that", "this", "will", "your",
+        "you", "is", "are", "was", "were", "do", "did", "with", "from", "into", "than", "they", "their", "can"}
 AI_NOTE = "AI-generated narration and code-drawn animation (synthetic content)."
 HASHTAGS = "#facts #list #top10"
 VOICES = ["en-US-GuyNeural", "en-US-AndrewNeural", "en-US-ChristopherNeural"]  # ротация голоса между пунктами
@@ -47,7 +56,7 @@ TOPICS = [  # свои формулировки; источники идей - �
     "Inventions Born From Complete Accidents",
 ]  # 15, взаимно просто с 4 ANGLES и 6 палитрами wf
 ANGLES = [  # 4, взаимно просто с 15
-    "count down from the last item to the first, saving the strangest for the end",
+    "open with the strongest item, then count down the rest, saving a strange one for the end",
     "count up from 1, ending on the most useful one",
     "no numbers, walk by theme: body, history, money, nature",
     "open with the most shocking item, then descend into context",
@@ -79,7 +88,8 @@ def next_plan(state_dir: Path | None = None) -> dict:
     f = d / "listshow_idx.txt"
     i = int(f.read_text()) if f.exists() else 0
     f.write_text(str(i + 1))
-    return {"topic": TOPICS[i % len(TOPICS)], "angle": ANGLES[i % len(ANGLES)],
+    topic = os.environ.get("LISTSHOW_TOPIC", "").strip()[:100]  # dryrun: тема из breakout-хитов (reports/ch2_breakouts.json)
+    return {"topic": topic or TOPICS[i % len(TOPICS)], "angle": ANGLES[i % len(ANGLES)],
             "palette": i % len(wf.PALETTES), "voice0": i % len(VOICES), "idx": i}
 
 
@@ -91,10 +101,14 @@ second person where natural, grounded in real history/science/economics, no hype
 Split into 13-15 list items, each 120-135 words of narration with its own short punchy item title (2-6 words).
 Every item must stand alone: its own angle, its own example, no repeated filler phrasing between items.
 Write everything in your own words; do not copy phrasing from other channels or websites.
-Item 1 must hook in its first sentence. The final item lands a one-line takeaway.
+Item 1 is your strongest item and the cold open: its narration starts with ONE sentence of at most {HOOK_MAX_WORDS} words
+that states the item's core fact and reuses a key word of the item title. No greeting, no "today", no "welcome", no channel
+or video intro - the first words ARE the point. The final item lands a one-line takeaway.
 Return STRICT JSON only (no markdown):
   title: list-style title matching the video, max 70 chars, must START with one of the words:
-         Things, Facts, Habits, Places, Skills, Historical, Everyday, Instincts, Free, Experiments, Legends, Sensations, Rules, Inventions
+         Things, Facts, Habits, Places, Skills, Historical, Everyday, Instincts, Free, Experiments, Legends, Sensations, Rules, Inventions,
+         Why, How, What (if the video topic is a question, keep it as the title)
+  hook: thumbnail text, 3-5 punchy words about the topic
   description: 2 sentences for YouTube
   tags: 6-10 English tags
   items: list of 13-15 objects {{"title": item title, "text": narration of the item,
@@ -118,7 +132,7 @@ def planned_duration_sec(items: list) -> float:
 def validate_script(s: dict) -> dict:
     """Доверенная нормализация вывода LLM: форма, хронометраж, анти-шаблонные проверки; рендер не падает."""
     title = str(s.get("title", "")).strip()
-    if not re.match(r"^(Things|Facts|Habits|Places|Skills|Historical|Everyday|Instincts|Free|Experiments|Legends|Sensations|Rules|Inventions)\b", title, re.I):
+    if not re.match(r"^(Things|Facts|Habits|Places|Skills|Historical|Everyday|Instincts|Free|Experiments|Legends|Sensations|Rules|Inventions|Why|How|What)\b", title, re.I):
         raise ValueError(f"title не списочный: {title!r}")
     s["title"] = title[:100]
     items = [i for i in (s.get("items") or []) if isinstance(i, dict)
@@ -136,6 +150,7 @@ def validate_script(s: dict) -> dict:
         if it.get("place") not in wf.PLACES:
             it["place"] = wf.PLACES[sum(map(ord, it["title"])) % len(wf.PLACES)]
         norm.append(it)
+    cold_open(norm[0])
     if len({i["place"] for i in norm}) < 3:
         raise ValueError("места не варьируются (<3): риск inauthentic-content")
     if planned_duration_sec(norm) < TARGET_MIN_SEC:
@@ -143,6 +158,41 @@ def validate_script(s: dict) -> dict:
     s["items"] = norm
     s["tags"] = [str(t) for t in (s.get("tags") or [])][:15]
     return s
+
+
+def _stems(text: str) -> set:
+    return {w[:5] for w in re.findall(r"[a-z]+", text.lower()) if len(w) >= 4 and w not in STOP}
+
+
+def cold_open(it: dict) -> None:
+    """Хук: первая фраза пункта 1 <= HOOK_MAX_WORDS слов, без приветствия/интро, с ключевым словом заголовка пункта."""
+    first = re.split(r"(?<=[.!?])\s+", str(it["text"]).strip(), maxsplit=1)[0]
+    if len(first.split()) > HOOK_MAX_WORDS:
+        raise ValueError(f"хук {len(first.split())} слов > {HOOK_MAX_WORDS} (> 5 с речи): {first[:80]!r}")
+    if INTRO_RE.search(first):
+        raise ValueError(f"хук = интро/приветствие: {first[:80]!r}")
+    key = _stems(it["title"])
+    if key and not key & _stems(first):
+        raise ValueError(f"хук не про пункт {it['title']!r}: {first[:80]!r}")
+
+
+def hook_text(s: dict) -> str:
+    """Текст кадров 0-3 с: hook от LLM (3-5 слов) или тема без служебных слов (3-5 слов)."""
+    h = re.sub(r"[^A-Za-z0-9' ]", "", str(s.get("hook", ""))).split()
+    if 3 <= len(h) <= 5:
+        return " ".join(h)
+    words = re.sub(r"[^A-Za-z0-9' ]", "", s["title"]).split()
+    key = [w for w in words if w.lower() not in STOP]
+    return " ".join((key if len(key) >= 3 else words)[:5])
+
+
+def hook_kw() -> dict:
+    return {"hook_sec": HOOK_SEC, "hook_size": HOOK_SIZE}
+
+
+def short_title(s: dict, win: list) -> str:
+    """Заголовок Short: пункт окна + тема, без «(part N)» (номер части в Shorts режет CTR)."""
+    return f"{s['items'][win[0]]['title']}: {s['title']}"[:91].rstrip() + " #Shorts"
 
 
 CHARACTERS = [{"id": "you", "label": "You", "color": "#ffb000"},
@@ -237,7 +287,7 @@ def render_workers(jobs: int) -> int:
 
 
 def render_item(sc, bounds, audio, dur, pal, characters, out, W, H, banner="", hook=""):
-    return wf.render_scene(sc, bounds, audio, dur, pal, characters, out, W, H, banner=banner, hook=hook)
+    return wf.render_scene(sc, bounds, audio, dur, pal, characters, out, W, H, banner=banner, hook=hook, **hook_kw())
 
 
 def _render_job(args):
@@ -297,7 +347,7 @@ def render(run_dir: Path) -> dict:
     (w / "timing.json").write_text(json.dumps([{"dur": d, "voice": item_voice(plan.get("idx", 0), k),
                                                 "bounds": b} for k, ((b, _), d) in enumerate(zip(tt, durs))]))
     wins = short_windows(durs, n=cfg["shorts"], limit=cfg_short_limit(cfg))
-    hook = s["title"]
+    hook = hook_text(s)
     firsts = {win[0] for win in wins}
     vname = lambda k, h: w / f"V{k:02d}{'h' if h else ''}.mp4"  # noqa: E731
     jobs = [(scenes[k], tt[k][0], w / f"{k:02d}.mp3", durs[k], pal, chars, w / f"L{k:02d}.mp4", 1920, 1080,
@@ -373,7 +423,7 @@ def verify(run_dir: Path, y=None, probe=None) -> list:
         capture_output=True, text=True, check=True).stdout))
     want = {"long": (meta["long"], s["title"][:100])}
     for k, path in enumerate(meta["shorts"], 1):
-        want[f"short_{k}"] = (path, f"{s['title'][:80]} (part {k}) #Shorts"[:100])
+        want[f"short_{k}"] = (path, short_title(s, meta["windows"][k - 1]))
     pid = _playlist(y)
     in_pl = {i["snippet"]["resourceId"]["videoId"] for i in
              y.playlistItems().list(part="snippet", playlistId=pid, maxResults=50).execute().get("items", [])}
@@ -442,7 +492,7 @@ def publish(run_dir: Path) -> dict:
         key = f"short_{k}"
         if key not in done:
             try:
-                done[key] = up(path, f"{s['title'][:80]} (part {k}) #Shorts", short_d)
+                done[key] = up(path, short_title(s, meta["windows"][k - 1]), short_d)
             except Exception as e:
                 if not upload_limit_hit(e):
                     raise
