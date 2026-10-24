@@ -6,8 +6,25 @@ jobs:
     runs-on: [self-hosted, release]
     timeout-minutes: 10
     steps:
-      - name: env probe
+      - name: probe15
         run: |
           docker exec ace-step sh -c '''
-          echo D=/app/output/bank/anime-lofi; d=/app/output/bank/anime-lofi; ls "$d" | grep -c mp3; ls "$d/broken" 2>/dev/null | grep -c mp3
+          d=/app/output/bank/anime-lofi
+true
+echo -n "1792646909_203763213_mix_00_1 "; stat -c %s "$d/1792646909_203763213_mix_00_1.mp3" 2>/dev/null || echo MISSING; ffprobe -v error -show_entries format=duration -of csv=p=0 "$d/1792646909_203763213_mix_00_1.mp3" 2>/dev/null | head -1
+echo -n "1792647705_203763213_mix_01_1 "; stat -c %s "$d/1792647705_203763213_mix_01_1.mp3" 2>/dev/null || echo MISSING; ffprobe -v error -show_entries format=duration -of csv=p=0 "$d/1792647705_203763213_mix_01_1.mp3" 2>/dev/null | head -1
+echo -n "1792672140_22263383_mix_00_2 "; stat -c %s "$d/1792672140_22263383_mix_00_2.mp3" 2>/dev/null || echo MISSING; ffprobe -v error -show_entries format=duration -of csv=p=0 "$d/1792672140_22263383_mix_00_2.mp3" 2>/dev/null | head -1
+echo -n "1792672869_22263383_mix_01_1 "; stat -c %s "$d/1792672869_22263383_mix_01_1.mp3" 2>/dev/null || echo MISSING; ffprobe -v error -show_entries format=duration -of csv=p=0 "$d/1792672869_22263383_mix_01_1.mp3" 2>/dev/null | head -1
+echo -n "1792676127_22263383_mix_04_0 "; stat -c %s "$d/1792676127_22263383_mix_04_0.mp3" 2>/dev/null || echo MISSING; ffprobe -v error -show_entries format=duration -of csv=p=0 "$d/1792676127_22263383_mix_04_0.mp3" 2>/dev/null | head -1
+echo -n "1792692279_1132123150_mix_01_0 "; stat -c %s "$d/1792692279_1132123150_mix_01_0.mp3" 2>/dev/null || echo MISSING; ffprobe -v error -show_entries format=duration -of csv=p=0 "$d/1792692279_1132123150_mix_01_0.mp3" 2>/dev/null | head -1
+echo -n "1792693870_1132123150_mix_03_1 "; stat -c %s "$d/1792693870_1132123150_mix_03_1.mp3" 2>/dev/null || echo MISSING; ffprobe -v error -show_entries format=duration -of csv=p=0 "$d/1792693870_1132123150_mix_03_1.mp3" 2>/dev/null | head -1
+echo -n "1792694659_1132123150_mix_04_0 "; stat -c %s "$d/1792694659_1132123150_mix_04_0.mp3" 2>/dev/null || echo MISSING; ffprobe -v error -show_entries format=duration -of csv=p=0 "$d/1792694659_1132123150_mix_04_0.mp3" 2>/dev/null | head -1
+echo -n "1792697008_1132123150_mix_07_2 "; stat -c %s "$d/1792697008_1132123150_mix_07_2.mp3" 2>/dev/null || echo MISSING; ffprobe -v error -show_entries format=duration -of csv=p=0 "$d/1792697008_1132123150_mix_07_2.mp3" 2>/dev/null | head -1
+echo -n "1792699088_1132123150_mix_09_3 "; stat -c %s "$d/1792699088_1132123150_mix_09_3.mp3" 2>/dev/null || echo MISSING; ffprobe -v error -show_entries format=duration -of csv=p=0 "$d/1792699088_1132123150_mix_09_3.mp3" 2>/dev/null | head -1
+echo -n "1792741521_994044835_mix_01_0 "; stat -c %s "$d/1792741521_994044835_mix_01_0.mp3" 2>/dev/null || echo MISSING; ffprobe -v error -show_entries format=duration -of csv=p=0 "$d/1792741521_994044835_mix_01_0.mp3" 2>/dev/null | head -1
+echo -n "1792742387_994044835_mix_02_1 "; stat -c %s "$d/1792742387_994044835_mix_02_1.mp3" 2>/dev/null || echo MISSING; ffprobe -v error -show_entries format=duration -of csv=p=0 "$d/1792742387_994044835_mix_02_1.mp3" 2>/dev/null | head -1
+echo -n "1792743218_994044835_mix_03_0 "; stat -c %s "$d/1792743218_994044835_mix_03_0.mp3" 2>/dev/null || echo MISSING; ffprobe -v error -show_entries format=duration -of csv=p=0 "$d/1792743218_994044835_mix_03_0.mp3" 2>/dev/null | head -1
+echo -n "1792766961_105801872_mix_00_2 "; stat -c %s "$d/1792766961_105801872_mix_00_2.mp3" 2>/dev/null || echo MISSING; ffprobe -v error -show_entries format=duration -of csv=p=0 "$d/1792766961_105801872_mix_00_2.mp3" 2>/dev/null | head -1
+echo -n "1792769951_105801872_mix_03_0 "; stat -c %s "$d/1792769951_105801872_mix_03_0.mp3" 2>/dev/null || echo MISSING; ffprobe -v error -show_entries format=duration -of csv=p=0 "$d/1792769951_105801872_mix_03_0.mp3" 2>/dev/null | head -1
+true
           '''
