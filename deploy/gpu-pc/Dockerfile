@@ -49,6 +49,23 @@ RUN mkdir -p /tmp/wheels \
     ; do f="/tmp/wheels/$(basename "$u" | sed 's/%2B/+/')"; \
       for n in 1 2 3 4; do curl -fSL --retry 5 --retry-delay 5 --retry-all-errors -C - -o "$f" "$u" && break; [ $n = 4 ] && exit 1; sleep $((n*10)); done; \
     done \
+# root-cause: t_43dc0241 -- curl -C - докачивает файл частями; при обрыве SSL-сессии
+# и новом Range-запросе части могут склеиться с дыркой/дублем, curl при этом выходит 0.
+# pip ловит "THESE PACKAGES DO NOT MATCH THE HASHES" (nvidia-cudnn-cu12, run 40079877800).
+# Механика: после докачки сверяем размер wheel'а с фактическим Content-Length (HEAD);
+# не совпало -- удаляем и качаем целиком заново (до 3 раз), кривой файл не доходит до pip.
+ && for u in \
+      "https://download.pytorch.org/whl/cu128/torch-2.11.0%2Bcu128-cp310-cp310-manylinux_2_28_x86_64.whl" \
+      "https://download.pytorch.org/whl/cu128/torchvision-0.26.0%2Bcu128-cp310-cp310-manylinux_2_28_x86_64.whl" \
+      "https://download.pytorch.org/whl/cu128/torchaudio-2.11.0%2Bcu128-cp310-cp310-manylinux_2_28_x86_64.whl" \
+    ; do f="/tmp/wheels/$(basename "$u" | sed 's/%2B/+/')"; \
+      want=$(curl -fsSI "$u" | tr -d '\r' | awk 'tolower($1)=="content-length:"{print $2}'); \
+      for n in 1 2 3; do \
+        [ -f "$f" ] && [ "$(stat -c%s "$f")" = "$want" ] && break; \
+        rm -f "$f"; curl -fSL --retry 5 --retry-delay 5 --retry-all-errors -o "$f" "$u"; \
+      done; \
+      [ "$(stat -c%s "$f")" = "$want" ] || exit 1; \
+    done \
  && pip install --no-cache-dir /tmp/wheels/*.whl \
  && rm -rf /tmp/wheels \
  && pip install --no-cache-dir "gradio==5.23.0" \
