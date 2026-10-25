@@ -161,6 +161,22 @@ def _valid_audio(path) -> bool:
         return False
 
 
+MAX_SWING_DB = 8.0  # run 40155188504: сегмент с внутренним провалом 4.7 LU (1143-1203с) валит loudjump гейта трека
+
+
+def internal_swing(path):
+    """(min,max) RMS дБ по 1с-окнам - глубина внутренних провалов громкости."""
+    import re
+    import subprocess
+    proc = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-loglevel", "error", "-i", str(path), "-af",
+                           "astats=metadata=1:reset=1:measure_overall=RMS_level:measure_perchannel=none,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-",
+                           "-f", "null", "-"], capture_output=True, text=True)
+    win = [float(x) if x != "-inf" else -120.0
+           for x in re.findall(r"RMS_level=(-?[\d.]+|-inf)", proc.stdout)]
+    if len(win) < 3:
+        return (-120.0, -120.0)
+    return (min(win), max(win))
+
 def take(genre: str, need: int, run_dir: str, docker_sh=None, now=None, rng=None,
          valid=None) -> list[Path] | None:
     """Выбрать и скопировать need сегментов в run_dir. None = банк/совместимость недостатны.
@@ -204,6 +220,13 @@ def take(genre: str, need: int, run_dir: str, docker_sh=None, now=None, rng=None
                 if not ok:
                     bad.add(n)
                     print(f"::warning::банк {genre}: доставка {n} не удалась (5 попыток cp)")
+                    break
+                lo, hi = internal_swing(dst)
+                if hi - lo > MAX_SWING_DB:
+                    bad.add(n)
+                    good.pop(n, None)
+                    dst.unlink(missing_ok=True)
+                    print(f"::warning::банк {genre}: {n} исключён (внутренний провал {hi - lo:.1f} дБ > {MAX_SWING_DB})")
                     break
                 good[n] = dst
             out.append(good[n])

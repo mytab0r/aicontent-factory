@@ -446,9 +446,61 @@ def test_trim_fade_head_cuts_leading_fade():
         assert d1 >= 60.0  # тело цело
 
 
+def _synth(path, dip=False):
+    """90s -20dB sine; dip=True -> середина (30-60s) на -45dB => swing > 8 дБ."""
+    import subprocess as sp
+    if dip:
+        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+               "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100:duration=30,volume=-20dB",
+               "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100:duration=30,volume=-45dB",
+               "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100:duration=30,volume=-20dB",
+               "-filter_complex", "[0:a][1:a][2:a]concat=n=3:v=0:a=1[a]", "-map", "[a]",
+               "-codec:a", "libmp3lame", "-b:a", "128k", str(path)]
+    else:
+        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+               "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100:duration=90,volume=-20dB",
+               "-codec:a", "libmp3lame", "-b:a", "128k", str(path)]
+    r = sp.run(cmd, capture_output=True, text=True)
+    assert Path(path).exists() and Path(path).stat().st_size > 0, r.stderr
+
+def test_internal_swing_detects_dip():
+    with tempfile.TemporaryDirectory() as td:
+        clean = Path(td) / "clean.mp3"
+        dip = Path(td) / "dip.mp3"
+        _synth(clean)
+        _synth(dip, dip=True)
+        lo0, hi0 = bank_release.internal_swing(clean)
+        lo1, hi1 = bank_release.internal_swing(dip)
+        assert hi0 - lo0 <= bank_release.MAX_SWING_DB, (lo0, hi0)
+        assert hi1 - lo1 > bank_release.MAX_SWING_DB, (lo1, hi1)
+
+
+def test_take_excludes_internal_dip_segment():
+    """run 40155188504: сегмент с внутренним провалом 4.7 LU валит loudjump. take исключает его и добирает другие."""
+    now = time.time()
+    ents = [meta(n, 89, "F major") for n in ("a", "b", "c")]
+    names = "".join(e["name"] + ".mp3\n" for e in ents)
+    metas = {f"/app/output/bank/anime-lofi/{e['name']}.json": json.dumps(
+        {"prompt": e["prompt"], "seed": e["seed"]}) for e in ents}
+    dk = FakeDocker({**metas, "/app/output/bank/anime-lofi": names})
+
+    def cp_real(*a):
+        if a and a[0] == "cp":
+            dst = Path(a[2])
+            _synth(dst, dip=(dst.stem == "a"))
+        return dk(*a)
+
+    with tempfile.TemporaryDirectory() as td:
+        got = bank_release.take("anime lofi", 2, td, docker_sh=cp_real, now=now,
+                                rng=random.Random(1),
+                                valid=lambda p: Path(p).stat().st_size > 0)
+        assert {p.stem for p in got} == {"b", "c"}, got
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for f in fns:
         f()
         print("ok", f.__name__)
     print(f"PASS {len(fns)} tests")
+
+

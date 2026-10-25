@@ -233,6 +233,11 @@ def _sha_container(d, name, docker_sh):
 
 
 def put_verified(p, genre, name, meta, docker_sh, tries=2) -> bool:
+    from bank_release import MAX_SWING_DB, internal_swing
+    lo, hi = internal_swing(p)
+    if hi - lo > MAX_SWING_DB:
+        print(f"::warning::банк {genre}: {name} отклонён (внутренний провал {hi - lo:.1f} дБ > {MAX_SWING_DB})")
+        return False
     """docker cp на ПК бывает рваный в ОБЕ стороны (23.10: два слота по 5 битых из группы =>
     nobank при MARGIN 4). json+mp3 кладутся во временное имя (.part), sha256 контейнера
     сверяется с локальным, затем атомарный mv; не сошлось после ретраев - сегмент НЕ в банк
