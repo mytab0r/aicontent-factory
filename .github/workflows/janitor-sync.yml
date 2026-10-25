@@ -19,6 +19,13 @@ jobs:
           # Файл идёт через stdin (docker run -i), хостовый путь нужен только для /j.
           docker run --rm -i -v "$JANITOR_DIR:/j" alpine \
             sh -c 'cat > /j/janitor.sh && chmod +x /j/janitor.sh && grep -c UV_NO_SYNC=1 /j/janitor.sh' < deploy/gpu-pc/janitor.sh
+          # t_5cdbb967 (ротация /tmp и томов uv-cache/xlv): после ребута ПК docker-janitor пропадает
+          # (создавался вручную вне репо) — поднимаем заново, иначе purge_tmp не крутится.
+          if ! docker inspect docker-janitor >/dev/null 2>&1; then
+            docker run -d --name docker-janitor --restart unless-stopped \
+              -v /var/run/docker.sock:/var/run/docker.sock -v "$JANITOR_DIR:/j" \
+              docker:cli sh /j/janitor.sh
+          fi
           docker restart docker-janitor
           sleep 3
           docker logs --tail 3 docker-janitor 2>&1 || true
