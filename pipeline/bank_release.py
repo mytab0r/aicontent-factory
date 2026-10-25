@@ -164,6 +164,9 @@ def _valid_audio(path) -> bool:
 MAX_SWING_DB = 8.0  # run 40155188504: сегмент с внутренним провалом 4.7 LU (1143-1203с) валит loudjump гейта трека
 
 
+SWING_EDGE, SWING_AVG = 20, 10  # с: края-фейды не судим (= trim_fade max_sec); окно усреднения
+
+
 def internal_swing(path):
     """(min,max) RMS дБ по 1с-окнам - глубина внутренних провалов громкости.
     asetnsamples режет поток на окна по 1 с (44100 сэмплов), astats reset=1 = RMS каждого окна.
@@ -178,9 +181,17 @@ def internal_swing(path):
                            "-f", "null", "-"], capture_output=True, text=True)
     win = [float(x) if x != "-inf" else -120.0
            for x in re.findall(r"RMS_level=(-?[\d.]+|-inf)", proc.stdout)]
-    if len(win) < 3:
+    # 26.10: min/max сырых 1с-окон ловил штатные fade-in/out краёв (до -76 дБ) => провал 52-69 дБ
+    # у КАЖДОГО сегмента, весь банк в карантине (run 40243598650). Края <= SWING_EDGE с не судим
+    # (их и так режут trim_fade_head/tails и acrossfade), окна усредняем по энергии за SWING_AVG с
+    # (как блоки A18 гейта, а не одиночная тихая доля).
+    import math
+    win = win[SWING_EDGE:len(win) - SWING_EDGE]
+    if len(win) < SWING_AVG:
         return (-120.0, -120.0)
-    return (min(win), max(win))
+    lin = [10 ** (x / 10) for x in win]
+    avg = [10 * math.log10(sum(lin[i:i + SWING_AVG]) / SWING_AVG + 1e-12) for i in range(len(lin) - SWING_AVG + 1)]
+    return (min(avg), max(avg))
 
 
 def take(genre: str, need: int, run_dir: str, docker_sh=None, now=None, rng=None,
