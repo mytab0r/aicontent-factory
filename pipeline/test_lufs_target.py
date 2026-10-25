@@ -2,7 +2,7 @@
 
 Plain script, no pytest. RED на старом коде: литералы loudnorm=I=-14 в 4 файлах рендера,
 LUFS_TARGET нет в quality_gate. Фикстура: тихий (-30 LUFS) и громкий (~-4 LUFS) клип
-после общей цепочки LOFI_AF обязаны попасть в MIN_I..MAX_I.
+после прод-мастера (mastering.master, lofi) обязаны попасть в MIN_I..MAX_I.
 """
 import re
 import subprocess
@@ -33,8 +33,7 @@ with tempfile.TemporaryDirectory() as td:
                         f"sine=frequency=330:duration=12:sample_rate=48000,volume={vol}", str(raw)], check=True)
         before = mastering.measure(str(raw))["i"]
         assert qg.loud_why(before), f"{name}: сырой клип {before} LUFS уже в гейте — фикстура не проверяет"
-        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(raw), "-af", mastering.LOFI_AF,
-                        "-c:a", "libmp3lame", "-b:a", "192k", str(out)], check=True)
+        mastering.master(str(raw), str(out), genre="anime lofi")  # t_522ca872: через прод-ветку master()
         got = mastering.measure(str(out))["i"]
         assert qg.loud_why(got) == [], f"{name}: {before} -> {got} LUFS вне {qg.MIN_I}..{qg.MAX_I}"
         print(f"{name}: {before} -> {got} LUFS")
