@@ -76,6 +76,24 @@ jobs:
             echo "=== $f ==="
             node "$f"
           done
+      # P10 (аудит 25.10): branch protection и rulesets на Free/private недоступны (API 403
+      # "Upgrade to GitHub Pro") — гейт «merge только после зелёного test» ставит детектор:
+      # на push в master проверяем HEAD-PR; merge раньше зелёного test = красный job + TG-алерт.
+      # PR-прогоны не задевает (только push).
+      - name: merge-police (P10)
+        id: police
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 pipeline/merge_police.py
+      - name: TG alert merge-police
+        if: failure() && steps.police.outcome == 'failure'
+        working-directory: pipeline
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          TG_THREAD_ID: ${{ secrets.TG_THREAD_ID }}
+        run: python3 -c "from common import tg_send; tg_send('🚨 merge-police (P10): PR смержен раньше зелёного test — master получил непроверенный коммит. Лог: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}')"
 
   pay-image-smoke:
     runs-on: [self-hosted, release]
