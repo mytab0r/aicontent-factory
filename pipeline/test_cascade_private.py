@@ -18,4 +18,10 @@ assert ("dH76zOaDm8o", "p-kkEmLGviU") in got and ("NM04LtSL_4Y", "p-kkEmLGviU") 
 assert ("CCCCCCCCCCC", "ZZZZZZZZZZZ") in got, got          # long удалён = тоже недоступен
 assert all(s not in ("BBBBBBBBBBB", "DDDDDDDDDDD", "AAAAAAAAAAA") for s, _ in got), got  # живой long / уже private
 assert len(got) == 3, got
+# M18 (аудит 24.10): «Chill Phonk Beats» public, 0 public из 2; «Anime Lofi Beats» 1 из 8; «Интересное» unlisted.
+PL = [{"id": "PLQZ7XaUfORfk", "privacy": "public", "items": ["private", "private"]},
+      {"id": "PLWKVid0L67io", "privacy": "public", "items": ["public"] + ["private"] * 7},
+      {"id": "PLempty", "privacy": "public", "items": []},
+      {"id": "PL0eYy9MeE3", "privacy": "unlisted", "items": ["private"]}]
+assert cp.empty_playlists(PL) == ["PLQZ7XaUfORfk", "PLempty"], cp.empty_playlists(PL)
 print("OK test_cascade_private")
