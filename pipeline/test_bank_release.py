@@ -498,6 +498,9 @@ def test_take_excludes_internal_dip_segment():
 
 
 
+
+
+
 def test_flatten_blocks_presses_block_medians():
     """A18: после per-segment loudnorm контраст внутри сегмента остаётся (run 40171388541:
     скачок 4.1 LU на 1623 с). flatten_blocks выравнивает медианы 60-с блоков под гейт."""
@@ -516,13 +519,17 @@ def test_flatten_blocks_presses_block_medians():
         r = _sp.run(["ffmpeg", "-nostats", "-i", str(cat), "-af", "ebur128=framelog=info",
                      "-f", "null", "-"], capture_output=True, text=True)
         s = [float(x) for x in _re.findall(r"S:\\s*(-?[\\d.]+)", r.stderr)][:-1]
-        return [sorted(s[b * 600:(b + 1) * 600])[299] for b in range(len(s) // 600)]
+        if not s:
+            return []
+        return [sorted(s[b * 600:(b + 1) * 600])[len(s[b * 600:(b + 1) * 600]) // 2] for b in range(len(s) // 600)]
     before = meds()
-    assert abs(before[3] - before[0]) > 4.0, "фикстура должна иметь скачок > JUMP_MAX"
+    assert len(before) >= 2, "нужно минимум 2 блока"
+    max_jump_before = max(abs(before[i+1] - before[i]) for i in range(len(before)-1))
+    assert max_jump_before > 4.0, f"фикстура должна иметь скачок > JUMP_MAX, got {max_jump_before}"
     bank_release.flatten_blocks(str(cat), log=print)
     after = meds()
-    jumps = [abs(after[k + 1] - after[k]) for k in range(len(after) - 1)]
-    assert max(jumps) < 4.0, f"медианы блоков не выровнены: {after}"
+    max_jump_after = max(abs(after[i+1] - after[i]) for i in range(len(after)-1))
+    assert max_jump_after < 4.0, f"медианы блоков не выровнены: {after}, max jump {max_jump_after}"
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for f in fns:
