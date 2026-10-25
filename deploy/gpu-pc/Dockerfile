@@ -16,8 +16,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && ln -sf /usr/bin/python3 /usr/bin/python \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+# root-cause: t_a929cfc3 -- venv из jammy несёт pip 22.0.2: он качает 820 MB torch wheel одним
+# HTTP-ответом без докачки, и обрыв egress ПК ("TimeoutError: The read operation timed out",
+# runs 39927449738/39927930315/39928140500/39928382766) валил весь слой. Докачка Range включена
+# по умолчанию с pip 25.2; 26.2 падает на смещённом Range вместо порчи файла (#14131).
+# Пин pip + RESUME_RETRIES; гард: pipeline/test_ace_dockerfile_pins.py.
+RUN python -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir "pip==26.2.2"
+ENV PATH="/opt/venv/bin:$PATH" \
+    PIP_RESUME_RETRIES=20
 
 WORKDIR /app
 # Пин к известному апстрим-коммиту (последний main на 2026-10)
@@ -31,10 +37,11 @@ RUN git clone https://github.com/ace-step/ACE-Step.git /tmp/ace \
 # ponytail: gradio пин — код ACE-Step (фев 2026) несовместим с gradio 6.x
 # (gr.Audio(show_download_button=...) упал в ACE-Step/acestep/ui/components.py);
 # пин 5.x, поднять при обновлении апстрима.
-RUN pip install --no-cache-dir torch torchvision torchaudio \
+# root-cause: t_a929cfc3 -- тройка запинена: без пина индекс мог дать несовместимый набор при релизе.
+RUN pip install --no-cache-dir "torch==2.11.0" "torchvision==0.26.0" "torchaudio==2.11.0" \
       --index-url https://download.pytorch.org/whl/cu128 \
  && pip install --no-cache-dir "gradio==5.23.0" \
- && pip install --no-cache-dir torchcodec --index-url https://download.pytorch.org/whl/cu128 \
+ && pip install --no-cache-dir "torchcodec==0.11.1" --index-url https://download.pytorch.org/whl/cu128 \
  && pip install --no-cache-dir hf_transfer \
  && pip install --no-cache-dir -r requirements.txt \
  && pip install --no-cache-dir .
