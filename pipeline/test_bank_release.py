@@ -501,6 +501,9 @@ def test_take_excludes_internal_dip_segment():
 
 
 
+
+
+
 def test_flatten_blocks_presses_block_medians():
     """A18: после per-segment loudnorm контраст внутри сегмента остаётся (run 40171388541:
     скачок 4.1 LU на 1623 с). flatten_blocks выравнивает медианы 60-с блоков под гейт."""
@@ -508,7 +511,7 @@ def test_flatten_blocks_presses_block_medians():
     import subprocess as _sp
     tmp = Path(tempfile.mkdtemp())
     seg = lambda name, g: _sp.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi",
-        "-i", "sine=frequency=220:duration=180", "-af", f"volume={g}dB",
+        "-i", "sine=frequency=220:duration=200", "-af", f"volume={g}dB",
         "-c:a", "libmp3lame", "-b:a", "192k", str(tmp / name)], check=True)
     seg("a.mp3", -25); seg("b.mp3", -19)
     cat = tmp / "cat.mp3"
