@@ -176,7 +176,7 @@ jobs:
           ACF_RUN_DIR: ${{ github.workspace }}/runs/${{ github.run_id }}
         run: |
           set +e
-          ../.venv/bin/python bank_release.py
+          ../.venv/bin/python release_from_bank.py
           rc=$?
           if [ "$rc" = 2 ]; then
             echo "nobank=1" >> "$GITHUB_OUTPUT"   # банк пуст: слот пропущен, брак не публикуем
