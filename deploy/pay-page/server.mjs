@@ -22,6 +22,7 @@ import * as claimVerify from '../../functions/api/claim/verify.js';
 import * as invoiceCreate from '../../functions/api/invoice/create.js';
 import * as invoiceApi from '../../functions/api/invoice/[[id]].js';
 import * as invoicePage from '../../functions/i/[[id]].js';
+import * as payPage from '../../functions/pay/index.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PROVIDERS_FILE = [path.join(here, 'payment-providers.json'), path.join(here, '../../config/payment-providers.json')].find((f) => fs.existsSync(f));
@@ -136,7 +137,7 @@ export function makeServer({ dataDir, ownerEmail, apiToken, accessTeam, accessAu
     const ctx = (params = {}) => ({ env, request, params });
 
     if (p === '/healthz') return json({ ok: true });
-    if (p === '/' ) return new Response('pay.pxbt.app', { headers: { 'content-type': 'text/plain; charset=utf-8' } });
+    if (p === '/' ) return payPage.onRequestGet(ctx());
 
     // публичное: страница счёта и его API
     let mm;
