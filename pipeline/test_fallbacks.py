@@ -112,7 +112,7 @@ def test_ace_local_down_falls_back_to_space():
 
 
 def test_frame_full_bleed_no_black_bars():
-    """Обложка любого формата заполняет кадр 1280x720 целиком (без чёрных полей)."""
+    """Обложка любого формата заполняет кадр 1920x1080 целиком (без чёрных полей; V8 25.10)."""
     from PIL import Image
     asm = load("04_assemble.py")
     with tempfile.TemporaryDirectory() as d:
@@ -120,8 +120,8 @@ def test_frame_full_bleed_no_black_bars():
         Image.new("RGB", (1024, 1024), (200, 120, 60)).save(src)
         asm.burn_overlay(src, out)
         im = Image.open(out).convert("RGB")
-        assert im.size == (1280, 720), im.size
-        for xy in [(0, 0), (1279, 0), (0, 360), (1279, 360), (640, 5)]:
+        assert im.size == (1920, 1080), im.size
+        for xy in [(0, 0), (1919, 0), (0, 540), (1919, 540), (960, 5)]:
             assert im.getpixel(xy) != (0, 0, 0), (xy, im.getpixel(xy))
 
 
