@@ -446,33 +446,22 @@ def test_trim_fade_head_cuts_leading_fade():
         assert d1 >= 60.0  # тело цело
 
 
-if __name__ == "__main__":
-    fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
-    for f in fns:
-        f()
-        print("ok", f.__name__)
-    print(f"PASS {len(fns)} tests")
-
-
 def _synth(path, dip=False):
-    """90s -20dB sine; dip=True -> середина (30-60s) на -40dB => swing ~20 дБ."""
+    """90s -20dB sine; dip=True -> середина (30-60s) на -45dB => swing > 8 дБ."""
     import subprocess as sp
-    a = "sine=frequency=440:sample_rate=44100:duration=90,volume=-20dB"
-    af = ("atrim=0:30,volume=-20dB[s0];amovie=%s:sp=30[at]" if False else "")  # noqa
     if dip:
-        cmd = ["ffmpeg","-hide_banner","-loglevel","error","-y",
-               "-f","lavfi","-i","sine=frequency=440:sample_rate=44100:duration=30,volume=-20dB",
-               "-f","lavfi","-i","sine=frequency=440:sample_rate=44100:duration=30,volume=-45dB",
-               "-f","lavfi","-i","sine=frequency=440:sample_rate=44100:duration=30,volume=-20dB",
-               "-filter_complex","[0:a][1:a][2:a]concat=n=3:v=0:a=1[a]","-map","[a]",
-               "-codec:a","libmp3lame","-b:a","128k",str(path)]
+        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+               "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100:duration=30,volume=-20dB",
+               "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100:duration=30,volume=-45dB",
+               "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100:duration=30,volume=-20dB",
+               "-filter_complex", "[0:a][1:a][2:a]concat=n=3:v=0:a=1[a]", "-map", "[a]",
+               "-codec:a", "libmp3lame", "-b:a", "128k", str(path)]
     else:
-        cmd = ["ffmpeg","-hide_banner","-loglevel","error","-y",
-               "-f","lavfi","-i","sine=frequency=440:sample_rate=44100:duration=90,volume=-20dB",
-               "-codec:a","libmp3lame","-b:a","128k",str(path)]
+        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+               "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100:duration=90,volume=-20dB",
+               "-codec:a", "libmp3lame", "-b:a", "128k", str(path)]
     r = sp.run(cmd, capture_output=True, text=True)
     assert Path(path).exists() and Path(path).stat().st_size > 0, r.stderr
-
 
 def test_internal_swing_detects_dip():
     with tempfile.TemporaryDirectory() as td:
@@ -506,3 +495,12 @@ def test_take_excludes_internal_dip_segment():
                                 rng=random.Random(1),
                                 valid=lambda p: Path(p).stat().st_size > 0)
         assert {p.stem for p in got} == {"b", "c"}, got
+
+if __name__ == "__main__":
+    fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
+    for f in fns:
+        f()
+        print("ok", f.__name__)
+    print(f"PASS {len(fns)} tests")
+
+
