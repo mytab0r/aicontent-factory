@@ -26,6 +26,9 @@ jobs:
       # root-cause t_0a4cae59: build-push-action не ретраится; transport-обрыв egress ПК (EOF/timeout
       # к ghcr или CloudFront на слоях базы) валил джобу с наскока. Механика класса: pre-pull базы
       # с 4 попытками + buildx --push с 4 попытками (слои докачиваются, не дублируются).
+      # root-cause: сборка образа шла при D: 28 ГБ (пол 40) — у этого пути не было гейта диска.
+      - name: disk gate D (image ~16 GB lands in docker vhdx on D:)
+        run: sh deploy/gpu-pc/disk_gate.sh d 16
       - name: pre-pull base (4 attempts, resumable layers)
         run: |
           B=$(sed -n 's/^FROM //p' deploy/gpu-pc/Dockerfile | head -1)
