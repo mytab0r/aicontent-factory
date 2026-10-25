@@ -593,14 +593,29 @@ def _apply_gain(path, g):
     os.replace(tmp, path)
 
 
+def body_lufs(path, sec=BODY_SEC):
+    """run 40127996482: body_match мерил RMS, гейт A18 (quality_gate.loudjump_why) меряет медиану short-term
+    LUFS (K-weighting). RMS-выровненные тела разошлись на 4.6 LU (блоки 1443/1503/1563 с) -> 03c FAIL.
+    Выравниваем той же метрикой, что судит гейт: медиана S (ebur128, шаг 0.1 с) середины сегмента."""
+    import re
+    import subprocess
+    dur = _probe_sec(path)
+    sec = min(sec, dur * 0.4)
+    start = max(0.0, (dur - sec) / 2)
+    out = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-ss", str(start), "-t", str(sec), "-i", str(path),
+                          "-af", "ebur128=framelog=info", "-f", "null", "-"], capture_output=True, text=True).stderr
+    st = sorted(float(x) for x in re.findall(r"S:\s*(-?[\d.]+)", out)[:-1][30:])  # без первых 3 с (окно S)
+    return st[len(st) // 2] if st else -120.0
+
+
 def body_match(paths, log=print):
     """t_cron1024 (run 40075415222): edge_match правит только первые 30 с, тела сегментов из банка
     расходились до 6 дБ -> гейт 03c «скачок громкости 4.9/5.8 LU между блоками». Константный gain
-    на сегмент по RMS середины (BODY_SEC) к телу первого, клэмп ±BODY_MAX_GAIN. Гейт не ослаблен."""
-    ref = edge_rms(paths[0], "body", sec=BODY_SEC)
+    на сегмент по short-term LUFS середины (body_lufs, метрика гейта A18) к телу первого, клэмп ±BODY_MAX_GAIN. Гейт не ослаблен."""
+    ref = body_lufs(paths[0])
     gains = [0.0]
     for p in paths[1:]:
-        g = max(-BODY_MAX_GAIN, min(BODY_MAX_GAIN, ref - edge_rms(p, "body", sec=BODY_SEC)))
+        g = max(-BODY_MAX_GAIN, min(BODY_MAX_GAIN, ref - body_lufs(p)))
         if abs(g) < BODY_TOL:
             g = 0.0
         else:
