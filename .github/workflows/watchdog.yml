@@ -30,4 +30,9 @@ jobs:
         working-directory: pipeline
         env:
           YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
-        run: python3 cascade_private.py
+          YT_CH1_TOKEN_JSON: ${{ secrets.YT_CH1_TOKEN_JSON }}
+        run: |
+          python3 cascade_private.py
+          # M18 (аудит 25.10): тот же каскад по каналу 1/2 (Economics of Owning) — там
+          # 3 пустых public-плейлиста; без этой строки канал 1/2 вне каскада навсегда
+          YOUTUBE_TOKEN_JSON="${YT_CH1_TOKEN_JSON}" python3 cascade_private.py
