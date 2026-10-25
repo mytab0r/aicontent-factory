@@ -97,8 +97,14 @@ async function appkitEvm() {
   if (!addr()) {
     // Висящая WC-сессия без аккаунта (прошлая попытка/другая сеть) дизейблит все кошельки в модалке (AppKit: hasAnyConnection). Сбрасываем.
     try { await m.disconnect(); } catch (e) {}
+    // iOS Telegram in-app browser: deep links из модалки не работают — сразу подсказка, модалка вторична.
+    if (/Telegram/i.test(navigator.userAgent)) {
+      throw Object.assign(new Error('кошелёк не найден'), { nowallet: true });
+    }
     await m.open();
+    // Модалку закрыли — выходим сразу ({code:4001,connect:true}), иначе кнопка висит disabled до 180 с.
     for (let t = 0; !addr(); t += 500) {
+      if (!m.getState().open) throw Object.assign(new Error('подключение отклонено'), { code: 4001, connect: true });
       if (t > 180000) throw Object.assign(new Error('подключение отклонено'), { code: 4001, connect: true });
       await new Promise((r) => setTimeout(r, 500));
     }
@@ -182,7 +188,7 @@ async function claim(chain) {
     else if (rejected(e)) log('✘ ' + chain + ': ' + (e && e.connect ? 'подключение отклонено в кошельке' : 'подпись отклонена в кошельке'));
     else if (e && e.nowallet) {
       log('✘ ' + chain + ': кошелёк не найден');
-      document.getElementById('nowallet-msg').textContent = 'Откройте pay.pxbt.app/admin во встроенном браузере кошелька (SafePal: Discover → ввести адрес) и повторите.';
+      document.getElementById('nowallet-msg').textContent = 'Откройте pay.pxbt.app/admin во встроенном браузере кошелька (SafePal: Discover → ввести адрес) или в Safari на iPhone (в Telegram: «…» → Открыть) и повторите.';
       document.getElementById('nowallet').hidden = false;
     }
     else log('✘ ' + chain + ': ' + ((e && e.message) || String(e)));

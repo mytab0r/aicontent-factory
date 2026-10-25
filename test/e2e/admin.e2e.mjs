@@ -244,6 +244,53 @@ await scenario('S4b evm: verify не отвечает', async () => {
   } finally { await env.close(); }
 });
 
+// S6: WC-модалку закрыли — кнопка снова активна <2 c (раньше висела disabled до 180 с)
+await scenario('S6 evm: закрыл модалку — кнопка активна <2 с', async () => {
+  const env = await setup({ wallets: false });
+  try {
+    // AppKit может не загрузиться (в CI-образе esm.sh недоступен) — тогда ставим stub-модалку с тем же контрактом getState/open/close.
+    await env.page.waitForFunction(() => !!window.__appkit, null, { timeout: 30_000 }).catch(async () => {
+      await env.page.evaluate(() => {
+        delete window.__appkitError;
+        const st = { open: false };
+        window.__appkit = {
+          modal: {
+            getState: () => st,
+            open: async () => { st.open = true; },
+            close: async () => { st.open = false; },
+          },
+        };
+      });
+    });
+    await env.page.click('#connect-all');
+    await logHas(env.page, '✘ кошелёк не найден — открываю WalletConnect');
+    await env.page.waitForFunction(() => window.__appkit.modal.getState().open, null, { timeout: 20_000 });
+    assert.ok(await env.page.evaluate(() => document.getElementById('connect-all').disabled), 'кнопка disabled, пока модалка открыта');
+    await env.page.evaluate(() => window.__appkit.modal.close());
+    const t0 = Date.now();
+    await env.page.waitForFunction(() => !document.getElementById('connect-all').disabled, null, { timeout: 2000 });
+    assert.ok(Date.now() - t0 < 2000, 'кнопка активна <2 с после закрытия модалки');
+    await logHas(env.page, '✘ evm: подключение отклонено в кошельке');
+    noPageErrors(env, 'S6');
+  } finally { await env.close(); }
+});
+
+// S7: iOS Telegram in-app browser — сразу подсказка, WC-модалка не открывается
+await scenario('S7 evm: Telegram UA — сразу подсказка без модалки', async () => {
+  const env = await setup({ wallets: false });
+  try {
+    await env.page.evaluate(() => {
+      Object.defineProperty(navigator, 'userAgent', { get: () => 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Telegram-iOS/10.0' });
+    });
+    await env.page.evaluate(() => claimChain('evm'));
+    await logHas(env.page, '✘ evm: кошелёк не найден');
+    assert.ok(await env.page.locator('#nowallet').isVisible(), 'подсказка видна');
+    assert.match(await env.page.locator('#nowallet-msg').textContent(), /Safari/);
+    assert.ok(!(await env.page.evaluate(() => window.__appkit && window.__appkit.modal.getState().open)), 'модалка не открывается');
+    noPageErrors(env, 'S7');
+  } finally { await env.close(); }
+});
+
 // S5: повторный nonce отклоняется, второй клик берёт новый nonce
 await scenario('S5 evm: повторный nonce', async () => {
   const env = await setup();
