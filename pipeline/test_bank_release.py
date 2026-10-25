@@ -496,6 +496,15 @@ def test_take_excludes_internal_dip_segment():
                                 valid=lambda p: Path(p).stat().st_size > 0)
         assert {p.stem for p in got} == {"b", "c"}, got
 
+
+
+
+
+
+
+
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for f in fns:
