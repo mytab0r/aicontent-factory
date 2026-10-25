@@ -10,7 +10,7 @@ import { CONFIG_KEY, defaultConfig } from '../lib/config.js';
 
 export async function onRequestGet({ env, request }) {
   const chain = new URL(request.url).searchParams.get('chain');
-  if (!['evm', 'tron', 'solana'].includes(chain)) return json({ error: 'bad chain, use evm|tron|solana' }, 400);
+  if (!['evm', 'tron', 'solana', 'btc', 'ton'].includes(chain)) return json({ error: 'bad chain, use evm|tron|solana|btc|ton' }, 400);
   const cfg = JSON.parse((await env.KV.get(CONFIG_KEY)) || JSON.stringify(defaultConfig()));
   const address = (cfg.addresses || {})[chain];
   if (!address) return json({ error: `no ${chain} address in registry (owner must claim it at pay.pxbt.app/admin)` }, 404);

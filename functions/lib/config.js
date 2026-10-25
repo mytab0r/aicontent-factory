@@ -20,6 +20,19 @@ export const PAIRS = {
   'USDC-BASE': { chain: 'base', asset: 'USDC', label: 'USDC (Base)', token: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', decimals: 6 },
 };
 
+// Address shapes: trust boundary for owner-entered values (PUT /api/admin/config).
+const ADDRESS_VALIDATORS = {
+  btc: (v) => /^(bc1[a-z0-9]{25,62}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})$/.test(v),
+  ton: (v) => /^[EU]Q[A-Za-z0-9_-]{46}$/.test(v),
+  tron: (v) => /^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(v),
+  solana: (v) => /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(v),
+  evm: (v) => /^0x[0-9a-fA-F]{40}$/.test(v),
+};
+
+export function validAddress(chain, v) {
+  return typeof v === 'string' && !!ADDRESS_VALIDATORS[chain] && ADDRESS_VALIDATORS[chain](v);
+}
+
 export function defaultConfig() {
   return { addresses: {}, pairs: {} };
 }

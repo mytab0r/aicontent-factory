@@ -93,6 +93,14 @@ try {
   assert.strictEqual(c.ok, false);
   assert.strictEqual(paypalCalls.at(-1).url, 'https://api-m.paypal.com/v1/oauth2/token');
 
+
+  // root: public page, no secrets leak
+  {
+    const rootHtml = await (await req('/')).text();
+    assert.match(rootHtml, /\u0420\u0435\u043a\u0432\u0438\u0437\u0438\u0442\u044b/);
+    assert.ok(!rootHtml.includes('good') && !rootHtml.includes('sso-secret-123'), 'secrets not in root');
+  }
+
   // инвойс: создать можно владельцу или по bearer-токену бота, анониму нельзя
   assert.strictEqual((await req('/api/invoice', { method: 'POST', body: '{"amount":1}' })).status, 403);
   // Zoraxy шлёт SSO-заголовок и на публичные исключения (/api/invoice): он не даёт права создавать счёт
@@ -110,6 +118,17 @@ try {
   await req('/api/admin/config', { method: 'PUT', headers: owner, body: JSON.stringify({ pairs: { 'USDT-TRC20': true } }) });
   const inv = await (await req('/api/invoice/' + id)).json();
   assert.deepStrictEqual(inv.pairs.map((p) => p.id), ['USDT-TRC20']);
+  // root deep: tron first, one evm address, btc hidden yet
+  {
+    const rootHtml = await (await req('/')).text();
+    const tronPos = rootHtml.indexOf('TQrY8try6YCHAEuZGB9puHKiQWy6iRfnCw');
+    const ethPos = rootHtml.indexOf('Ethereum (ERC20)');
+    assert.ok(tronPos !== -1 && ethPos !== -1 && tronPos < ethPos, 'tron first');
+    assert.ok(rootHtml.includes('0xabc'), 'evm address present');
+    assert.ok(!rootHtml.includes('bc1q'), 'btc hidden without address');
+    assert.ok(rootHtml.includes('\u0432\u044b\u0441\u043e\u043a\u0430\u044f \u043a\u043e\u043c\u0438\u0441\u0441\u0438\u044f'), 'eth fee warning');
+  }
+
   const page = await (await req('/i/' + id)).text();
   assert.match(page, /TQrY8try6YCHAEuZGB9puHKiQWy6iRfnCw/);
   assert.ok(!page.includes('USDT-ERC20'), 'выключенная пара не видна');
@@ -126,8 +145,36 @@ try {
     r = await req('/api/address?chain=solana');
     assert.strictEqual(r.status, 404, 'нет адреса -> 404, не дефолт');
     assert.match((await r.json()).error, /no solana address in registry/);
-    r = await req('/api/address?chain=btc');
-    assert.strictEqual(r.status, 400, 'неизвестная цепочка -> 400');
+    r = await req('/api/address?chain=xrp');
+    assert.strictEqual(r.status, 400, 'unknown chain -> 400');
+
+    // btc/ton: owner writes address via admin PUT; validated server-side
+    r = await req('/api/admin/config', { method: 'PUT', headers: owner, body: JSON.stringify({ addresses: { btc: '1BadAddress' } }) });
+    assert.strictEqual(r.status, 400, 'non-bc1 btc rejected');
+    j = await (await req('/api/address?chain=btc')).json();
+    assert.ok(!j.address, 'rejected put saved nothing');
+    r = await req('/api/admin/config', { method: 'PUT', headers: owner, body: JSON.stringify({ addresses: { btc: 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080' } }) });
+    assert.strictEqual(r.status, 200);
+    j = await (await req('/api/address?chain=btc')).json();
+    assert.strictEqual(j.address, 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080', 'btc from registry');
+    r = await req('/api/admin/config', { method: 'PUT', headers: owner, body: JSON.stringify({ addresses: { ton: 'UQCHG8Sxyw5yJct7cXb2AFAvyPPdAJsF4Sko5Y6F8Rx1AAAA' } }) });
+    assert.strictEqual(r.status, 200, 'ton user-friendly addr valid');
+    j = await (await req('/api/address?chain=ton')).json();
+    assert.strictEqual(j.address, 'UQCHG8Sxyw5yJct7cXb2AFAvyPPdAJsF4Sko5Y6F8Rx1AAAA', 'ton from registry');
+
+    // root now shows btc; evm single address across all EVM nets; warning texts
+    {
+      const rootHtml = await (await req('/')).text();
+      assert.ok(rootHtml.includes('bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080'), 'btc visible after owner put');
+      assert.ok(rootHtml.includes('UQCHG8Sxyw5yJct7cXb2AFAvyPPdAJsF4Sko5Y6F8Rx1AAAA'), 'ton visible');
+      const evmCount = (rootHtml.match(/"address":"0xabc"/g) || []).length;
+      assert.ok(evmCount >= 5, 'one evm address reused by all EVM nets, got ' + evmCount);
+      assert.ok(rootHtml.includes('\u0432\u044b\u0441\u043e\u043a\u0430\u044f \u043a\u043e\u043c\u0438\u0441\u0441\u0438\u044f'), 'eth high-fee warning');
+      assert.ok(rootHtml.includes('10\u201330 \u043c\u0438\u043d'), 'btc confirmations warning');
+    }
+    r = await req('/api/admin/config', { method: 'PUT', headers: owner, body: JSON.stringify({ addresses: { ton: 'EQ_NOT_VALID' } }) });
+    assert.strictEqual(r.status, 400, 'bad ton rejected');
+
   }
   // projectId для /admin перечитывается из secrets.json на каждый запрос (PUT reown -> без рестарта)
   {

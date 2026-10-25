@@ -53,7 +53,13 @@ export async function onRequestGet({ env } = {}) {
  <div id="nowallet" hidden><p id="nowallet-msg"></p></div>
 </div>
 <div class="card">
- <h3>2. Какие пары показывать клиенту</h3>
+ <h3>2. BTC и TON (вписать адрес вручную)</h3>
+ <label class="pairline">BTC (bc1q SegWit): <input id="addr_btc" class="addrin" placeholder="bc1q..." style="width:100%"></label>
+ <label class="pairline">TON: <input id="addr_ton" class="addrin" placeholder="UQ..." style="width:100%"></label>
+ <button class="primary" onclick="saveAddresses()">Сохранить BTC/TON</button>
+</div>
+<div class="card">
+ <h3>3. Какие пары показывать клиенту</h3>
  <div id="pairs"></div>
  <button class="primary" onclick="savePairs()">Сохранить</button>
 </div>
@@ -218,12 +224,26 @@ async function claimAll() {
 }
 window.claimAll = claimAll;
 
+async function saveAddresses() {
+  const v = (id) => document.getElementById(id).value.trim();
+  const addresses = {};
+  if (v('addr_btc')) addresses.btc = v('addr_btc');
+  if (v('addr_ton')) addresses.ton = v('addr_ton');
+  if (!Object.keys(addresses).length) return log('✘ введите адрес');
+  const r = await fetch('/api/admin/config', { method: 'PUT', headers: {'content-type':'application/json'}, body: JSON.stringify({ addresses }) });
+  const j = await r.json().catch(() => ({}));
+  log(r.ok ? '✔ BTC/TON сохранены' : '✘ ' + (j.error || 'ошибка сохранения'));
+}
+window.saveAddresses = saveAddresses;
+
 async function loadConfig() {
   const cfg = await (await fetch('/api/admin/config')).json();
   const a = document.getElementById('addresses');
   a.textContent = '';
   for (const [k, v] of Object.entries(cfg.addresses)) { const d = document.createElement('div'); d.textContent = k + ': ' + v; a.appendChild(d); }
   if (!a.firstChild) a.innerHTML = '<i>адреса ещё не подключены</i>';
+  document.getElementById('addr_btc').value = cfg.addresses.btc || '';
+  document.getElementById('addr_ton').value = cfg.addresses.ton || '';
   const p = document.getElementById('pairs');
   p.innerHTML = Object.keys(PAIRS).map((id) =>
     '<label class="pairline"><input type="checkbox" id="pair_' + id + '"' + (cfg.pairs[id] ? ' checked' : '') + '>' + PAIRS[id].label + '</label>'
