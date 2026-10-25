@@ -206,7 +206,7 @@ def test_title_fits_feed_70():
 
 def test_mix_segment_mastered_before_gate():
     """Ревью t_187762da: кандидат сегмента мастерится как прод ДО критика/objective —
-    гейт меряет то, что уйдёт на канал (LOFI_AF меняет 20-60 Гц и LRA = метрики провала 17.10)."""
+    гейт меряет то, что уйдёт на канал (мастер меняет 20-60 Гц и LRA = метрики провала 17.10)."""
     import tempfile
     d = Path(tempfile.mkdtemp())
     calls = []

@@ -63,7 +63,7 @@ def main(argv):
     spec = importlib.util.spec_from_file_location("music03", Path(__file__).parent / "03_music.py")
     from03 = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(from03)
-    chains = {"lofi": getattr(mastering, "LOFI_AF", "")}
+    chains = {"lofi": inspect.getsource(mastering.master)}  # t_522ca872: LOFI_AF удалён, lofi = ветка master()
     src = inspect.getsource(mastering.master)
     chains["phonk"] = src if "phonk" in src and "acompressor" in src else ""
 

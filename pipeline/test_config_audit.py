@@ -22,7 +22,7 @@ assert audit_config(["anime lofi", "chill phonk"], REF_OK, 8, CH) == []
 spec = importlib.util.spec_from_file_location("music03", Path(__file__).parent / "03_music.py")
 music = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(music)
-real_chains = {"lofi": mastering.LOFI_AF,
+real_chains = {"lofi": inspect.getsource(mastering.master),
                "phonk": inspect.getsource(mastering.master)}
 assert audit_config(music.GENRE_PROMPTS.keys(), qg.REF, len(qg.BANDS), real_chains) == []
 # 3) жанр без эталон-профиля -> FAIL, в сообщении жанр и ключ

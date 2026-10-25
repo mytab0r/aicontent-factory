@@ -370,7 +370,7 @@ def ace_restart(wait_sec=600):
 
 def mix_raw(run_dir, prompt, seed, ref, genre_name):
     """Кандидат сегмента час-микса, отмастеренный как прод ДО гейта (ревью t_187762da):
-    LOFI_AF (highpass 28 + loudnorm LRA=11) меняет полосу 20-60 Гц и LRA — ровно метрики
+    лофи-мастер (highpass 28 + громкость) меняет полосу 20-60 Гц и LRA — ровно метрики
     провала 17.10, поэтому гейт сегмента обязан мерить мастер, как cand() в best-of."""
     def raw(i, k):
         p = Path(run_dir) / f"mix_{i:02d}_{k}.mp3"
