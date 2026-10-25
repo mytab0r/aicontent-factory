@@ -93,7 +93,8 @@ jobs:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           TG_THREAD_ID: ${{ secrets.TG_THREAD_ID }}
-        run: python3 -c "from common import tg_send; tg_send('🚨 merge-police (P10): PR смержен раньше зелёного test — master получил непроверенный коммит. Лог: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}')"
+        run: |
+          python3 -c "from common import tg_send; tg_send('🚨 merge-police (P10): PR смержен раньше зелёного test — master получил непроверенный коммит. Лог: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}')"
 
   pay-image-smoke:
     runs-on: [self-hosted, release]
