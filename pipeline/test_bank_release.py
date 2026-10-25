@@ -374,6 +374,78 @@ def test_pick_short_mix_instead_of_skip():
     assert got is None, got
 
 
+
+
+def test_master_final_loudnorms_when_too_quiet():
+    """run 40145954650: TP=-2.0 -> loudnorm пропускался, трек остался I=-17.4 (< -16) = 03c FAIL.
+    Контракт: master_final нормализует не только при клиппинге, но и при I вне окна гейта."""
+    import importlib.util
+    import subprocess as sp
+    import types
+    from pathlib import Path as P
+    HERE2 = P(__file__).resolve().parent
+    spec = importlib.util.spec_from_file_location("br_mf", HERE2 / "bank_release.py")
+    br = importlib.util.module_from_spec(spec)
+    sys.modules["br_mf"] = br
+    spec.loader.exec_module(br)
+
+    class R:
+        stderr = ""
+        stdout = ""
+        returncode = 0
+
+    ran = []
+    fake_mastering = types.ModuleType("mastering")
+    fake_mastering.measure = lambda track: {"tp": -2.0, "i": -17.4}
+    saved_mastering = sys.modules.get("mastering")
+    saved_music = br._music_mod
+    sys.modules["mastering"] = fake_mastering
+    br._music_mod = lambda: types.SimpleNamespace(fade_end=lambda *a, **k: None)
+    orig_run = sp.run
+    import tempfile
+    td = tempfile.mkdtemp()
+    track = f"{td}/track.mp3"
+    P(track).write_bytes(b"x")
+    sp.run = lambda cmd, check=False, **k: (ran.append(cmd), P(str(cmd[-1])).write_bytes(b"y"), R())[2]
+    try:
+        import quality_gate as qg
+        if qg.MIN_I <= -17.4 <= qg.MAX_I:
+            fake_mastering.measure = lambda track: {"tp": -2.0, "i": qg.MIN_I - 2.0}
+        br.master_final(track, "anime lofi")
+    finally:
+        sp.run = orig_run
+        br._music_mod = saved_music
+        if saved_mastering is None:
+            sys.modules.pop("mastering", None)
+        else:
+            sys.modules["mastering"] = saved_mastering
+    assert any("loudnorm" in " ".join(map(str, c)) for c in ran), ran[:2]
+
+
+def test_trim_fade_head_cuts_leading_fade():
+    """run 40145954650: тихое вступление первого сегмента = блоки 3-63 с на 4.8 LU ниже тела = A18 FAIL.
+    trim_fade_head обязан существовать и срезать лидирующий фейд (синтетика: sine с фейдом 0->-30 дБ)."""
+    import importlib.util
+    import subprocess as sp
+    import tempfile
+    HERE2 = __import__("pathlib").Path(__file__).resolve().parent
+    spec = importlib.util.spec_from_file_location("m03h", HERE2 / "03_music.py")
+    m = importlib.util.module_from_spec(spec)
+    sys.modules["m03h"] = m
+    spec.loader.exec_module(m)
+    assert hasattr(m, "trim_fade_head")
+    with tempfile.TemporaryDirectory() as td:
+        f = f"{td}/seg.mp3"
+        sp.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=90",
+                "-af", "volume=-12dB,afade=t=in:st=0:d=20", "-ac", "2",
+                "-c:a", "libmp3lame", "-b:a", "192k", f], check=True)
+        d0 = m._probe_sec(f)
+        m.trim_fade_head([f], max_sec=20.0, log=lambda *a: None)
+        d1 = m._probe_sec(f)
+        assert d0 - d1 >= 5.0, (d0, d1)  # срезал вступление
+        assert d1 >= 60.0  # тело цело
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for f in fns:

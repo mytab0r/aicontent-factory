@@ -264,13 +264,15 @@ def master_final(track: str, genre: str) -> None:
     и поднимает пики — TP склейки -0.8 dBTP > порога гейта -1.0 (клиппинг).
     TP в норме -> только fade_end (0 проходов: шаг в P18-бюджете 20 мин; полный
     mastering.master на часовом файле > 20 мин, run 40095684453 — timeout).
-    TP > -1 -> один проход loudnorm TP=-2 (EQ сегменты получили при записи в банк)."""
+    TP > -1 или громкость I вне окна гейта -> loudnorm (run 40145954650: TP=-2.0, пропуск оставил I=-17.4 < -16 = FAIL). один проход loudnorm TP=-2 (EQ сегменты получили при записи в банк)."""
     import os
     import subprocess
     m = _music_mod()
     import mastering
     from quality_gate import LUFS_TARGET
-    if mastering.measure(track)["tp"] > -1.0:
+    from quality_gate import MIN_I, MAX_I
+    mi = mastering.measure(track)
+    if mi["tp"] > -1.0 or not (MIN_I <= mi.get("i", -99.0) <= MAX_I):
         tmp = track + ".tp.mp3"
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", track,
                         "-af", f"loudnorm=I={LUFS_TARGET:g}:TP=-2:LRA=11", "-c:a", "libmp3lame", "-b:a", "192k", tmp],

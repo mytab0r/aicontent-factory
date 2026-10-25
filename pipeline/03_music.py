@@ -581,6 +581,43 @@ def trim_fade_tails(paths, max_sec=20.0, floor_db=6.0, log=print):
     return cuts
 
 
+def trim_fade_head(paths, max_sec=20.0, floor_db=6.0, log=print):
+    """run 40145954650: ACE-Step фейдит и НАЧАЛО сегмента; первым в миксе он даёт тихие блоки 3-63 с ->
+    гейт A18 «скачок 4.8 LU между блоками 3 и 63». Зеркало trim_fade_tails: срезаем 1с-окна с НАЧАЛА,
+    пока RMS окна ниже медианы тела на floor_db; не более max_sec на сегмент."""
+    import os
+    import re
+    import statistics
+    import subprocess
+    cuts = []
+    for p in paths:
+        dur = _probe_sec(p)
+        proc = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-loglevel", "error", "-i", p, "-af",
+                               "astats=metadata=1:reset=1:measure_overall=RMS_level:measure_perchannel=none,"
+                               "ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-",
+                               "-f", "null", "-"], capture_output=True, text=True)
+        win = [float(x) if x != "-inf" else -120.0
+               for x in re.findall(r"RMS_level=(-?[\d.]+|-inf)", proc.stdout)]
+        if len(win) < 10:
+            cuts.append(0.0)
+            continue
+        frame = dur / len(win)
+        body = statistics.median(win)
+        n = 0
+        for r in win:
+            if r > body - floor_db or (n + 1) * frame >= max_sec or (n + 1) * frame > dur * 0.4:
+                break
+            n += 1
+        cut = n * frame
+        if cut >= 1.0:
+            tmp = f"{p}.h.mp3"
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", p, "-ss", str(cut),
+                            "-c:a", "libmp3lame", "-b:a", "192k", tmp], check=True)
+            os.replace(tmp, p)
+        cuts.append(float(cut))
+        log(f"trim_fade_head {os.path.basename(p)}: -{cut:.0f} с (вступление-затухание)")
+    return cuts
+
 BODY_SEC, BODY_MAX_GAIN, BODY_TOL = 60.0, 6.0, 0.5
 
 
@@ -630,6 +667,7 @@ def prep_segments(paths, log=print):
     мерил тихий фейд, давил следующие сегменты на -18 дБ, после среза хвоста стык 336 с -> R3 FAIL.
     Фейд последнего сегмента остаётся концом микса."""
     trim_fade_tails(paths[:-1], log=log)
+    trim_fade_head(paths, log=log)  # run 40145954650: тихое вступление первого сегмента = A18-скачок в начале
     body_match(paths, log=log)
     return edge_match(paths, log=log)
 

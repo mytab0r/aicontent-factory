@@ -60,10 +60,11 @@ def test_prep_segments_runs_body_before_edge():
     m = _load("acf_music03_bm3", HERE / "03_music.py")
     order = []
     m.trim_fade_tails = lambda ps, log=print: order.append("trim")
+    m.trim_fade_head = lambda ps, log=print: order.append("head")
     m.body_match = lambda ps, log=print: (order.append("body"), [0.0] * len(ps))[1]
     m.edge_match = lambda ps, log=print: (order.append("edge"), [0.0] * len(ps))[1]
     m.prep_segments(["/r/a.mp3", "/r/b.mp3"], log=lambda *a: None)
-    assert order == ["trim", "body", "edge"], order
+    assert order == ["trim", "head", "body", "edge"], order
 
 
 if __name__ == "__main__":  # t_110fa85f: CI запускает файл как скрипт — без блока def test_* не выполняются
