@@ -198,9 +198,18 @@ jobs:
                       continue
                   try:
                       log = gh("api", f"repos/{a.repo}/actions/jobs/{j['id']}/logs")
+                      has_sig = "BlobNotFound" in log or bool(SIG.search(log))
                   except Exception:
-                      continue  # log expired/unavailable -> can't confirm signature, treat as real verdict
-                  if not SIG.search(log):
+                      # Log blob never uploaded (t_98562d0e): a transport-failed job
+                      # dies mid-step, so GitHub shows failure + a frozen in_progress
+                      # step and no logs. A real test failure uploads logs and leaves
+                      # the failing step completed - only the frozen combo reruns.
+                      steps = j.get("steps") or []
+                      has_sig = any(
+                          s.get("status") == "in_progress" and s.get("conclusion") is None
+                          for s in steps
+                      )
+                  if not has_sig:
                       continue
                   print(f"runner transport failure: job {j['name']} ({j['id']}) -> rerun")
                   time.sleep(15)  # let the worker release the job before the rerun lands
