@@ -166,19 +166,22 @@ MAX_SWING_DB = 8.0  # run 40155188504: сегмент с внутренним п
 
 def internal_swing(path):
     """(min,max) RMS дБ по 1с-окнам - глубина внутренних провалов громкости.
-    Используем ebur128 с window=1s для корректного измерения динамики, а не per-frame astats.
-    """
-    import subprocess
-    proc = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-loglevel", "error", "-i", str(path),
-                           "-af", "ebur128=window=1:metadata=1", "-f", "null", "-"],
-                          capture_output=True, text=True)
-    # ebur128 prints: "M: -xx.x S: -xx.x I: -xx.x LRA: xx.x ..."
-    # We need momentary (M) loudness per window
+    asetnsamples режет поток на окна по 1 с (44100 сэмплов), astats reset=1 = RMS каждого окна.
+    25.10: ebur128-вариант (df3b0ab) парсил stdout при -loglevel error, а ebur128 пишет в stderr ->
+    всегда (-120,-120), детектор провалов был выключен, CI master красный."""
     import re
-    momentary = [float(x) for x in re.findall(r"M:\s*(-?[\d.]+)", proc.stdout)]
-    if len(momentary) < 3:
+    import subprocess
+    proc = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-loglevel", "error", "-i", str(path), "-af",
+                           "aresample=44100,asetnsamples=n=44100:p=0,"
+                           "astats=metadata=1:reset=1:measure_overall=RMS_level:measure_perchannel=none,"
+                           "ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-",
+                           "-f", "null", "-"], capture_output=True, text=True)
+    win = [float(x) if x != "-inf" else -120.0
+           for x in re.findall(r"RMS_level=(-?[\d.]+|-inf)", proc.stdout)]
+    if len(win) < 3:
         return (-120.0, -120.0)
-    return (min(momentary), max(momentary))
+    return (min(win), max(win))
+
 
 def take(genre: str, need: int, run_dir: str, docker_sh=None, now=None, rng=None,
          valid=None) -> list[Path] | None:

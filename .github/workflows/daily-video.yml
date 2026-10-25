@@ -238,6 +238,9 @@ jobs:
         timeout-minutes: 60  # P18: зависание шага = failure -> TG alert, не 240 мин
         working-directory: pipeline
         env:
+          # P18 x claim-гейт: ожидание вердикта Content ID обязано влезать в timeout шага вместе с аплоадом
+          # (5400 с по умолчанию + аплоад > 60 мин -> шаг убивался таймаутом, ролик оставался unlisted, 25.10).
+          CLAIM_TIMEOUT_SEC: "1500"
           YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}  # uploadLimitExceeded -> одно TG-сообщение
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
