@@ -496,12 +496,6 @@ def test_take_excludes_internal_dip_segment():
                                 valid=lambda p: Path(p).stat().st_size > 0)
         assert {p.stem for p in got} == {"b", "c"}, got
 
-if __name__ == "__main__":
-    fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
-    for f in fns:
-        f()
-        print("ok", f.__name__)
-    print(f"PASS {len(fns)} tests")
 
 
 def test_flatten_blocks_presses_block_medians():
@@ -521,7 +515,7 @@ def test_flatten_blocks_presses_block_medians():
     def meds():
         r = _sp.run(["ffmpeg", "-nostats", "-i", str(cat), "-af", "ebur128=framelog=info",
                      "-f", "null", "-"], capture_output=True, text=True)
-        s = [float(x) for x in _re.findall(r"S:\s*(-?[\d.]+)", r.stderr)][:-1]
+        s = [float(x) for x in _re.findall(r"S:\\s*(-?[\\d.]+)", r.stderr)][:-1]
         return [sorted(s[b * 600:(b + 1) * 600])[299] for b in range(len(s) // 600)]
     before = meds()
     assert abs(before[3] - before[0]) > 4.0, "фикстура должна иметь скачок > JUMP_MAX"
@@ -529,3 +523,11 @@ def test_flatten_blocks_presses_block_medians():
     after = meds()
     jumps = [abs(after[k + 1] - after[k]) for k in range(len(after) - 1)]
     assert max(jumps) < 4.0, f"медианы блоков не выровнены: {after}"
+if __name__ == "__main__":
+    fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
+    for f in fns:
+        f()
+        print("ok", f.__name__)
+    print(f"PASS {len(fns)} tests")
+
+
