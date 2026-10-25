@@ -303,6 +303,7 @@ def master_final(track: str, genre: str) -> None:
                        check=True)
         os.replace(tmp, track)
     m.fade_end(track)
+    flatten_blocks(track)
 
 
 def _norm_segments(paths: list[Path], log=print) -> None:
@@ -322,6 +323,48 @@ def _norm_segments(paths: list[Path], log=print) -> None:
             os.replace(tmp, p)
         else:
             log(f"::warning::loudnorm {p.name} не удался, сегмент как есть: {(r.stderr or '').strip()[:160]}")
+
+
+
+def flatten_blocks(track: str, log=print) -> None:
+    """A18-гейт меряет медианы short-term LUFS 60-с блоков (JUMP_MAX=4.0). Интегрированная
+    нормализация сегментов не выравнивает музыкальный контраст внутри сегмента: run 40171388541
+    дал скачок 4.1 LU между блоками 1623/1683 с уже после per-segment loudnorm.
+    Выравнивание по гейту: один проход ebur128 собирает медианы блоков, volume-автоматизация
+    прижимает каждый блок к медиане трека (цель: дельта <= 2.5 LU < 4.0). Два прохода ffmpeg
+    по готовому файлу, минуты на час — в P18-бюджете."""
+    import re as _re
+    import subprocess
+    from quality_gate import JUMP_BLOCK, JUMP_MAX
+    target = JUMP_MAX - 1.5
+    r = subprocess.run(["ffmpeg", "-nostats", "-i", track,
+                        "-af", "ebur128=framelog=info", "-f", "null", "-"],
+                       capture_output=True, text=True)
+    st = [float(x) for x in _re.findall(r"S:\s*(-?[\d.]+)", r.stderr)][:-1]  # шаг 0.1 с
+    nblk = len(st) // (JUMP_BLOCK * 10)
+    if nblk < 2:
+        log("::warning::flatten_blocks: мало отсчётов ebur128, пропуск")
+        return
+    meds = []
+    for b in range(nblk):
+        ch = sorted(st[b * JUMP_BLOCK * 10:(b + 1) * JUMP_BLOCK * 10])
+        meds.append(ch[len(ch) // 2])
+    whole = sorted(st)[len(st) // 2]
+    gains = [max(-6.0, min(6.0, whole - m)) for m in meds]
+    if all(abs(g) <= target for g in gains):
+        return
+    expr = "+".join(
+        f"({10 ** (g / 20):.4f}-1)*between(t,{i * JUMP_BLOCK},{(i + 1) * JUMP_BLOCK})"
+        for i, g in enumerate(gains) if abs(g) > target)
+    af = f"volume=volume='1.0+{expr}':eval=frame"
+    tmp = track + ".fl.mp3"
+    rr = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", track,
+                         "-af", af, "-c:a", "libmp3lame", "-b:a", "192k", tmp],
+                        capture_output=True, text=True)
+    if rr.returncode == 0 and os.path.getsize(tmp) > 0:
+        os.replace(tmp, track)
+    else:
+        log(f"::warning::flatten_blocks не удался, трек как есть: {(rr.stderr or '').strip()[:160]}")
 
 
 def assemble(paths: list[Path], run_dir: Path, metas: list[dict], genre: str, out: str = "track.mp3") -> dict:

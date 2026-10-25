@@ -504,3 +504,28 @@ if __name__ == "__main__":
     print(f"PASS {len(fns)} tests")
 
 
+def test_flatten_blocks_presses_block_medians():
+    """A18: после per-segment loudnorm контраст внутри сегмента остаётся (run 40171388541:
+    скачок 4.1 LU на 1623 с). flatten_blocks выравнивает медианы 60-с блоков под гейт."""
+    import re as _re
+    import subprocess as _sp
+    tmp = Path(tempfile.mkdtemp())
+    seg = lambda name, g: _sp.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi",
+        "-i", "sine=frequency=220:duration=180", "-af", f"volume={g}dB",
+        "-c:a", "libmp3lame", "-b:a", "192k", str(tmp / name)], check=True)
+    seg("a.mp3", -25); seg("b.mp3", -19)
+    cat = tmp / "cat.mp3"
+    _sp.run("ffmpeg -y -loglevel error -i %s -i %s -filter_complex "
+            "'[0:a][1:a]concat=n=2:v=0:a=1[out]' -map '[out]' %s"
+            % (tmp / "a.mp3", tmp / "b.mp3", cat), shell=True, check=True)
+    def meds():
+        r = _sp.run(["ffmpeg", "-nostats", "-i", str(cat), "-af", "ebur128=framelog=info",
+                     "-f", "null", "-"], capture_output=True, text=True)
+        s = [float(x) for x in _re.findall(r"S:\s*(-?[\d.]+)", r.stderr)][:-1]
+        return [sorted(s[b * 600:(b + 1) * 600])[299] for b in range(len(s) // 600)]
+    before = meds()
+    assert abs(before[3] - before[0]) > 4.0, "фикстура должна иметь скачок > JUMP_MAX"
+    bank_release.flatten_blocks(str(cat), log=print)
+    after = meds()
+    jumps = [abs(after[k + 1] - after[k]) for k in range(len(after) - 1)]
+    assert max(jumps) < 4.0, f"медианы блоков не выровнены: {after}"
