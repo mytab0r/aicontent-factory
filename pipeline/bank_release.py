@@ -13,6 +13,7 @@ import importlib.util
 import json
 import os
 import random
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -281,6 +282,25 @@ def master_final(track: str, genre: str) -> None:
     m.fade_end(track)
 
 
+def _norm_segments(paths: list[Path], log=print) -> None:
+    """Сгладить внутренние LU-скачки сегмента ДО склейки (run 40155188504: 4.7 LU внутри
+    одного сегмента -> 03c FAIL). Single-pass loudnorm (динамический режим) на каждом
+    сегменте, тот же профиль, что master_final (I/TP/LRA); сегмент 180 с ~= секунды.
+    ponytail: однопроходный loudnorm не так точен, как two-pass; при возврате FAIL на
+    LU-скачках — перейти на two-pass с кэшем измерений в meta сегмента."""
+    from quality_gate import LUFS_TARGET
+    for p in paths:
+        tmp = str(p) + ".ln.mp3"
+        r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(p),
+                            "-af", f"loudnorm=I={LUFS_TARGET:g}:TP=-2:LRA=11",
+                            "-c:a", "libmp3lame", "-b:a", "192k", tmp],
+                           capture_output=True, text=True)
+        if r.returncode == 0 and os.path.getsize(tmp) > 0:
+            os.replace(tmp, p)
+        else:
+            log(f"::warning::loudnorm {p.name} не удался, сегмент как есть: {(r.stderr or '').strip()[:160]}")
+
+
 def assemble(paths: list[Path], run_dir: Path, metas: list[dict], genre: str, out: str = "track.mp3") -> dict:
     """Склейка сегментов банка тем же кодом, что час-микс (prep_segments + concat_tracks)."""
     m = _music_mod()
@@ -289,6 +309,7 @@ def assemble(paths: list[Path], run_dir: Path, metas: list[dict], genre: str, ou
     prompts = " | ".join(dict.fromkeys(str(e.get("prompt")) for e in metas))
     seed = int(metas[0].get("seed") or 0) if metas else 0
 
+    _norm_segments(paths, log=print)
     m.prep_segments([str(p) for p in paths], log=print)
     durs = [m._probe_sec(p) for p in paths]
     m.concat_tracks([str(p) for p in paths], str(Path(run_dir) / out))

@@ -58,6 +58,7 @@ def assemble_loop(run_dir, loop, track, out_path) -> None:
     lst.write_text(f"file '{seg.name}'\n" * repeats(dur(seg), dur(track)))
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(lst),
                     "-i", str(track), "-map", "0:v", "-map", "1:a", "-c:v", "copy",
+                    "-af", "alimiter=limit=-1.5dB:level=false",
                     "-c:a", "aac", "-b:a", "192k", "-shortest", str(out_path)], check=True)
 
 
@@ -83,6 +84,7 @@ def main() -> None:
         "-loop", "1", "-r", "5", "-i", str(frame),
         "-i", str(track),
         "-c:v", "libx264", "-preset", "ultrafast", "-tune", "stillimage", "-pix_fmt", "yuv420p",
+        "-af", "alimiter=limit=-1.5dB:level=false",
         "-c:a", "aac", "-b:a", "192k",
         "-shortest",
         str(out_path),
