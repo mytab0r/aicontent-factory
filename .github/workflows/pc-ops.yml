@@ -28,6 +28,8 @@ on:
         required: false
         type: string
 
+# t_77eb56b7: все gh-runner-* монтируют общий том gh-actions-archive-cache + ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE —
+# runner берёт tar.gz action из кеша, если codeload.github.com лежит. Recreate без этих двух строк = кеш потерян.
 jobs:
   ops:
     runs-on: [self-hosted, pc]
@@ -49,6 +51,7 @@ jobs:
             -e RUNNER_NAME=pc-acf-release -e LABELS=release -e RUNNER_TOKEN="$REG" \
             -e RUNNER_WORKDIR=/tmp/runner/acf-release -e CONFIGURED_ACTIONS_RUNNER_FILES_DIR=/runner/data \
             -e DISABLE_AUTOMATIC_DEREGISTRATION=true \
+            -e ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE=/opt/actions-archive-cache -v gh-actions-archive-cache:/opt/actions-archive-cache \
             -v /var/run/docker.sock:/var/run/docker.sock -v gh-runner-acf-release-data:/runner/data \
             -v gh-runner-aicontent-factory-tools:/opt/hostedtoolcache \
             -v gh-runner-acf-release-work:/tmp/runner/acf-release myoung34/github-runner:ubuntu-noble
@@ -73,6 +76,7 @@ jobs:
             -e RUNNER_TOKEN="${{ inputs.token }}" \
             -e RUNNER_WORKDIR="/tmp/runner/$R" -e CONFIGURED_ACTIONS_RUNNER_FILES_DIR="/runner/data" \
             -e DISABLE_AUTOMATIC_DEREGISTRATION=true \
+            -e ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE=/opt/actions-archive-cache -v gh-actions-archive-cache:/opt/actions-archive-cache \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v "gh-runner-$R-data:/runner/data" \
             -v "gh-runner-$R-work:/tmp/runner/$R" \
