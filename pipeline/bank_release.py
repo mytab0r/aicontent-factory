@@ -13,6 +13,7 @@ import importlib.util
 import json
 import os
 import random
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -264,21 +265,38 @@ def master_final(track: str, genre: str) -> None:
     и поднимает пики — TP склейки -0.8 dBTP > порога гейта -1.0 (клиппинг).
     TP в норме -> только fade_end (0 проходов: шаг в P18-бюджете 20 мин; полный
     mastering.master на часовом файле > 20 мин, run 40095684453 — timeout).
-    TP > -1 или громкость I вне окна гейта -> loudnorm (run 40145954650: TP=-2.0, пропуск оставил I=-17.4 < -16 = FAIL). один проход loudnorm TP=-2 (EQ сегменты получили при записи в банк)."""
+    TP > -1 -> один проход loudnorm TP=-2 (EQ сегменты получили при записи в банк)."""
     import os
     import subprocess
     m = _music_mod()
     import mastering
     from quality_gate import LUFS_TARGET
-    from quality_gate import MIN_I, MAX_I
-    mi = mastering.measure(track)
-    if mi["tp"] > -1.0 or not (MIN_I <= mi.get("i", -99.0) <= MAX_I):
+    if mastering.measure(track)["tp"] > -1.0:
         tmp = track + ".tp.mp3"
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", track,
                         "-af", f"loudnorm=I={LUFS_TARGET:g}:TP=-2:LRA=11", "-c:a", "libmp3lame", "-b:a", "192k", tmp],
                        check=True)
         os.replace(tmp, track)
     m.fade_end(track)
+
+
+def _norm_segments(paths: list[Path], log=print) -> None:
+    """Сгладить внутренние LU-скачки сегмента ДО склейки (run 40155188504: 4.7 LU внутри
+    одного сегмента -> 03c FAIL). Single-pass loudnorm (динамический режим) на каждом
+    сегменте, тот же профиль, что master_final (I/TP/LRA); сегмент 180 с ~= секунды.
+    ponytail: однопроходный loudnorm не так точен, как two-pass; при возврате FAIL на
+    LU-скачках — перейти на two-pass с кэшем измерений в meta сегмента."""
+    from quality_gate import LUFS_TARGET
+    for p in paths:
+        tmp = str(p) + ".ln.mp3"
+        r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(p),
+                            "-af", f"loudnorm=I={LUFS_TARGET:g}:TP=-2:LRA=11",
+                            "-c:a", "libmp3lame", "-b:a", "192k", tmp],
+                           capture_output=True, text=True)
+        if r.returncode == 0 and os.path.getsize(tmp) > 0:
+            os.replace(tmp, p)
+        else:
+            log(f"::warning::loudnorm {p.name} не удался, сегмент как есть: {(r.stderr or '').strip()[:160]}")
 
 
 def assemble(paths: list[Path], run_dir: Path, metas: list[dict], genre: str, out: str = "track.mp3") -> dict:
@@ -289,6 +307,7 @@ def assemble(paths: list[Path], run_dir: Path, metas: list[dict], genre: str, ou
     prompts = " | ".join(dict.fromkeys(str(e.get("prompt")) for e in metas))
     seed = int(metas[0].get("seed") or 0) if metas else 0
 
+    _norm_segments(paths, log=print)
     m.prep_segments([str(p) for p in paths], log=print)
     durs = [m._probe_sec(p) for p in paths]
     m.concat_tracks([str(p) for p in paths], str(Path(run_dir) / out))
