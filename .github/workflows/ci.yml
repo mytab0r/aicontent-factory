@@ -5,14 +5,15 @@ on:
   push:
     branches: [master]
   pull_request:
-# Вытеснение (t_7461c726, t_e7b938b0): PR — группа на ветку, новый коммит отменяет прогон старого (by design,
-# итог ветки судит прогон HEAD). push в master — уникальная группа на прогон (run_id), без отмены: общая группа
-# ci-refs/heads/master при очереди ~1 ч на 2 раннера вытесняла каждый pending-прогон («higher priority waiting
-# request for ci-refs/heads/master»), master оставался без вердикта, pay-image (workflow_run ci success) не собирался.
-# Ключ не огрублять, push не расширять за master. Инвариант: pipeline/test_ci_concurrency.py.
+# Вытеснение (t_7461c726, t_e7b938b0): группа = ветка (мастер или PR-ветка), отменяется ТОЛЬКО ожидающий
+# прогон (cancel-in-progress: false): начатый всегда доводится до вердикта, в очереди остаётся один — новейший.
+# Версия с cancel-in-progress: true убивала начатые прогоны мастера при очереди >1 ч (16 отмен 24.10);
+# версия с уникальной группой на прогон (run_id) копила неограниченный бэклог: 25.10 HEAD ждал старта 10+ ч,
+# каждый вытеснённый push сжигал ~40 мин GPU-раннера. Вытеснённый в очереди прогон — шум (verdict у новейшего),
+# см. supersede_verdict в recurrence_scan. Инвариант: pipeline/test_ci_concurrency.py.
 concurrency:
-  group: ci-${{ github.head_ref || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.head_ref || github.ref }}
+  cancel-in-progress: false
 jobs:
   test:
     runs-on: [self-hosted, release]
