@@ -47,17 +47,17 @@ def test_video_gate_on_render_json():
     import quality_gate as qg
     with tempfile.TemporaryDirectory() as td:
         d = pathlib.Path(td)
-        good = {"long": _mk(d / "long.mp4", 320, 180, 4), "shorts": [_mk(d / "s1.mp4", 180, 320, 3)]}
+        good = {"long": _mk(d / "long.mp4", 1920, 1080, 4), "shorts": [_mk(d / "s1.mp4", 1080, 1920, 3)]}
         (d / "render.json").write_text(json.dumps(good))
         assert qg.video_why(d) == [], qg.video_why(d)
         # брак: шортс горизонтальный, long чёрный 4 с
-        bad = {"long": _mk(d / "blk.mp4", 320, 180, 4, "black"), "shorts": [_mk(d / "s2.mp4", 320, 180, 3)]}
+        bad = {"long": _mk(d / "blk.mp4", 1920, 1080, 4, "black"), "shorts": [_mk(d / "s2.mp4", 320, 180, 3)]}
         (d / "render.json").write_text(json.dumps(bad))
         why = " | ".join(qg.video_why(d))
         assert "чёрный кадр" in why and "не 9:16" in why, why
         # owning: нет render.json, video.mp4 = Short
         (d / "render.json").unlink()
-        _mk(d / "video.mp4", 180, 320, 3)
+        _mk(d / "video.mp4", 1080, 1920, 3)
         assert qg.video_why(d) == [], qg.video_why(d)
 
 
@@ -70,13 +70,13 @@ def test_video_gate_speech_audio():
     import quality_gate as qg
     with tempfile.TemporaryDirectory() as td:
         d = pathlib.Path(td)
-        quiet = _mk(d / "q.mp4", 180, 320, 4, audio="sine=f=220:d=4,volume=-6dB")  # -28 LUFS
+        quiet = _mk(d / "q.mp4", 1080, 1920, 4, audio="sine=f=220:d=4,volume=-6dB")  # -28 LUFS
         hot = _mk(d / "h.mp4", 180, 320, 4, audio="sine=f=220:d=4,volume=17.5dB")  # TP ~ -0.6
-        hole = _mk(d / "g.mp4", 180, 320, 20, audio="aevalsrc='0.9*sin(2*PI*220*t)*not(between(t,3,7))':d=20")  # 4 с тишины
+        hole = _mk(d / "g.mp4", 1080, 1920, 20, audio="aevalsrc='0.9*sin(2*PI*220*t)*not(between(t,3,7))':d=20")  # 4 с тишины
         assert any("громкость" in w for w in qg.speech_why(quiet)), qg.speech_why(quiet)
         assert any("true peak" in w for w in qg.speech_why(hot)), qg.speech_why(hot)
         assert any("тишина" in w for w in qg.speech_why(hole)), qg.speech_why(hole)
-        (d / "render.json").write_text(json.dumps({"long": _mk(d / "l.mp4", 320, 180, 4), "shorts": [quiet]}))
+        (d / "render.json").write_text(json.dumps({"long": _mk(d / "l.mp4", 1920, 1080, 4), "shorts": [quiet]}))
         assert any("громкость" in w for w in qg.video_why(d)), qg.video_why(d)
 
 

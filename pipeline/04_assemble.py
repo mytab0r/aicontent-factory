@@ -18,7 +18,7 @@ from PIL import Image, ImageDraw, ImageOps
 
 from common import latest_run_dir
 
-TARGET_W, TARGET_H = 1280, 720
+TARGET_W, TARGET_H = 1920, 1080  # V8: 720p в нише = «дёшево», HD-ранжирование ниже
 
 
 def burn_overlay(cover_path, out_path) -> None:
@@ -46,12 +46,12 @@ def dur(path) -> float:
 
 
 def assemble_loop(run_dir, loop, track, out_path) -> None:
-    """Петля: перекодируем ОДИН короткий цикл (1280x720 + AI-метка), дальше concat -c copy."""
-    seg = run_dir / "loop_720.mp4"
-    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(loop), "-vf",
-                    "scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,fps=24,"
-                    "drawbox=x=16:y=684:w=250:h=20:color=black@0.55:t=fill,"
-                    "drawtext=text='AI-generated / synthetic content':x=22:y=688:fontsize=13:fontcolor=white@0.7",
+    """Петля: перекодируем ОДИН короткий цикл (TARGET 1920x1080 + AI-метка), дальше concat -c copy."""
+    seg = run_dir / "loop_1080.mp4"
+    vf = (f"scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=increase,crop={TARGET_W}:{TARGET_H},fps=24,"
+          f"drawbox=x=16:y={TARGET_H - 36}:w=250:h=20:color=black@0.55:t=fill,"
+          f"drawtext=text='AI-generated / synthetic content':x=22:y={TARGET_H - 32}:fontsize=13:fontcolor=white@0.7")
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(loop), "-vf", vf,
                     "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p", "-an",
                     str(seg)], check=True)
     lst = run_dir / "loop_list.txt"

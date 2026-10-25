@@ -370,6 +370,23 @@ SHORT_FADES = "afade=t=in:d=0.5,afade=t=out:st={st:.2f}:d=1.5"
 EDGE_WIN, EDGE_DROP = 0.05, 12.0
 
 
+# V8: 720p в ленте выглядит дёшево и не получает HD-ранжирование (p-kkEmLGviU был 1280x720).
+MIN_SHORT = 1080
+
+
+def res_why(f):
+    """V8: [причина], если короткая сторона видео < 1080 (720p = дёшево, HD-ранжирование ниже)."""
+    j = json.loads(subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                                   "stream=width,height", "-of", "json", str(f)],
+                                  capture_output=True, text=True).stdout or "{}")
+    st = (j.get("streams") or [{}])[0]
+    w, h = int(st.get("width") or 0), int(st.get("height") or 0)
+    if not w or not h:
+        return []  # нет видео-потока — разрешение не наша проверка
+    return [f"разрешение {w}x{h}: короткая сторона < {MIN_SHORT} (V8: 720p выглядит дёшево)"] \
+        if min(w, h) < MIN_SHORT else []
+
+
 def short_edge_why(f):
     """A24: [причины], если шортс начинается/кончается скачком (нет фейда)."""
     d = duration(f)
@@ -491,7 +508,7 @@ def video_why(d):
             why.append(f"нет файла {os.path.basename(str(f))}")
             continue
         tag = os.path.basename(str(f))
-        why += [f"{tag}: {w}" for w in integrity_why(f) + black_why(f) + speech_why(f) + (short_why(f) if f in shorts else [])]
+        why += [f"{tag}: {w}" for w in integrity_why(f) + black_why(f) + res_why(f) + speech_why(f) + (short_why(f) if f in shorts else [])]
     return why + cover_why(os.path.join(d, "cover.png"))
 
 
@@ -528,7 +545,7 @@ def main(argv):
     why += tuning_why(f)  # A19
     why += end_why(f)  # A16: только целый трек/финальный mp4, не сегменты best-of (их хвосты режет склейка)
     if "--final" in argv:
-        why += integrity_why(f, expect) + black_why(f)
+        why += integrity_why(f, expect) + black_why(f) + res_why(f)
         why += cover_why(os.path.join(os.path.dirname(str(f)), "cover.png"))  # V9
         why += fallback_why(os.path.dirname(str(f)))  # V14
     if "--no-ce" not in argv:  # R4: окна CE/дрейф/стыки и на финальном mp4 (04b) — мерим то, что заливается
