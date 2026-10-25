@@ -336,25 +336,26 @@ def flatten_blocks(track: str, log=print) -> None:
     import re as _re
     import subprocess
     from quality_gate import JUMP_BLOCK, JUMP_MAX
+    JB10 = int(JUMP_BLOCK * 10)  # JUMP_BLOCK float в quality_gate (60.0)
     target = JUMP_MAX - 1.5
     r = subprocess.run(["ffmpeg", "-nostats", "-i", track,
                         "-af", "ebur128=framelog=info", "-f", "null", "-"],
                        capture_output=True, text=True)
     st = [float(x) for x in _re.findall(r"S:\s*(-?[\d.]+)", r.stderr)][:-1]  # шаг 0.1 с
-    nblk = len(st) // (JUMP_BLOCK * 10)
+    nblk = len(st) // JB10
     if nblk < 2:
         log("::warning::flatten_blocks: мало отсчётов ebur128, пропуск")
         return
     meds = []
     for b in range(nblk):
-        ch = sorted(st[b * JUMP_BLOCK * 10:(b + 1) * JUMP_BLOCK * 10])
+        ch = sorted(st[b * JB10:(b + 1) * JB10])
         meds.append(ch[len(ch) // 2])
     whole = sorted(st)[len(st) // 2]
     gains = [max(-6.0, min(6.0, whole - m)) for m in meds]
     if all(abs(g) <= target for g in gains):
         return
     expr = "+".join(
-        f"({10 ** (g / 20):.4f}-1)*between(t,{i * JUMP_BLOCK},{(i + 1) * JUMP_BLOCK})"
+        f"({10 ** (g / 20):.4f}-1)*between(t,{i * JB10 / 10:.1f},{(i + 1) * JB10 / 10:.1f})"
         for i, g in enumerate(gains) if abs(g) > target)
     af = f"volume=volume='1.0+{expr}':eval=frame"
     tmp = track + ".fl.mp3"
