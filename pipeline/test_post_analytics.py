@@ -175,6 +175,27 @@ def test_p17_probe_transient_retry_and_alert():
     assert len(sent) == 1 and "аналитик" in sent[0] and "timed out" not in sent[0]
 
 
+def test_reach_403_logs_google_reason():
+    """t_f807dc99: reach 403 логировался как «HTTP Error 403: Forbidden» — причина (API выключен / scope) терялась."""
+    import contextlib
+    import io as _io
+    import urllib.error
+    body = _io.BytesIO(b'{"error": {"code": 403, "message": "YouTube Reporting API has not been used in project 1"}}')
+    err = urllib.error.HTTPError(pa.REPTR + "jobs", 403, "Forbidden", {}, body)
+    saved = (pa.uploads, pa.metric, pa.ensure_reach_job)
+    pa.uploads = lambda at: [{"id": "a", "title": "t", "published": NOW}]
+    pa.metric = lambda *a: {"a": 50.0}
+    pa.ensure_reach_job = lambda at: (_ for _ in ()).throw(err)
+    buf = _io.StringIO()
+    try:
+        with contextlib.redirect_stderr(buf):
+            vids, note = REAL["collect"]("t")
+    finally:
+        pa.uploads, pa.metric, pa.ensure_reach_job = saved
+    assert "has not been used" in buf.getvalue() and "403" in buf.getvalue(), buf.getvalue()
+    assert vids[0]["retention"] == 50.0 and vids[0]["ctr"] is None and "CTR н/д" in note
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

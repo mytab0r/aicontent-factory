@@ -7,7 +7,7 @@ on:
     - cron: "30 12 * * *"  # ежедневный снапшот (t_f807dc99)
   workflow_dispatch: {}
   pull_request:
-    paths: [pipeline/ch2_snapshot.py, .github/workflows/ch2-snapshot.yml]
+    paths: [pipeline/ch2_snapshot.py, pipeline/08_post_analytics.py, .github/workflows/ch2-snapshot.yml]
 
 permissions:
   contents: read

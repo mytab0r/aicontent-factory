@@ -204,8 +204,10 @@ def collect(at):
         if not ctr:
             ctr_note = "CTR н/д: reach-отчёт YouTube ещё не сформирован (суточная выгрузка, задержка до 2 дней)"
     except Exception as e:  # noqa: BLE001 — любая ошибка reach = одна русская строка, без сырого текста
-        print("reach unavailable:", type(e).__name__, e, file=sys.stderr)
-        ctr_note = "CTR н/д: нет доступа к reach-отчёту до перевыпуска токена YouTube"
+        # t_f807dc99: текст Google из тела 403 (API выключен / нет scope / нет канала) — без него причина не видна
+        why = _http_err(e) if isinstance(e, urllib.error.HTTPError) else repr(e)
+        print("reach unavailable:", getattr(e, "url", ""), why, file=sys.stderr)
+        ctr_note = "CTR н/д: reach-отчёт YouTube недоступен (причина в логе CI)"
     for v in vids:
         v["retention"], v["ctr"] = ret.get(v["id"]), ctr.get(v["id"])
     return vids, ctr_note
