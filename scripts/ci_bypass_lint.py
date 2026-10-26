@@ -90,7 +90,8 @@ def lint_text(text):
         if BUILDX.search(line) and not any(DRIVER_DOCKER.match(x) for x in lines[i + 1:i + 6]):
             ctx, j = [line], i - 1
             while j >= 0 and lines[j].strip().startswith("#"):
-                ctx.append(lines[j]); j -= 1
+                ctx.append(lines[j])
+            j -= 1
             if not any(ROOT_CAUSE.search(c) for c in ctx):
                 out.append((i + 1, "buildx-driver"))
         for rule, waiver in _rules(line, lines, i):
@@ -158,7 +159,8 @@ def lint_artifacts(lines):
             continue
         ctx, j = [line], i - 1
         while j >= 0 and lines[j].strip().startswith("#"):
-            ctx.append(lines[j]); j -= 1
+            ctx.append(lines[j])
+            j -= 1
         m = next((ARTIFACT_SIZE.search(c) for c in ctx if ARTIFACT_SIZE.search(c)), None)
         mb = float(m.group(1).replace(",", ".")) / (1024 if m and m.group(2).upper() in ("KB", "КБ") else 1) if m else None
         if mb is None or mb >= SIZE_MAX_MB:

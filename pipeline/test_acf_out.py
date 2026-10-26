@@ -1,6 +1,9 @@
 """t_265d0147: acf_out.sh — медиа прогона на C:\\dockerlocal\\acf-out\\<run_id>\\ вместо GitHub artifacts.
 put/get/keep, ретеншн 7 дней (кроме keep), лимит 20 ГБ (старейшие не-keep), пол C: из disk_gate.sh."""
-import os, subprocess, tempfile, time
+import os
+import subprocess
+import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -13,7 +16,7 @@ def run(*a, free=500, cap=None, cwd=None):
     env = {**os.environ, "ACF_OUT_ROOT": str(store), "DISK_FREE_GB": str(free)}
     if cap:
         env["ACF_OUT_CAP_KB"] = str(cap)
-    return subprocess.run(["sh", str(SH), *a], capture_output=True, text=True, env=env, cwd=cwd)
+    return subprocess.run(["sh", str(SH), *a], check=False, capture_output=True, text=True, env=env, cwd=cwd)
 
 
 with tempfile.TemporaryDirectory() as t:
