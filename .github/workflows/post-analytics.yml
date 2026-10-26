@@ -33,6 +33,11 @@ jobs:
       - name: 48h report -> TG
         working-directory: pipeline
         run: python3 08_post_analytics.py
+      - uses: astral-sh/setup-uv@v3
+        timeout-minutes: 5  # t_6758c86f: сетевой шаг не висит до таймаута джобы
+        with:
+          enable-cache: true
+          cache-local-path: /tmp/acf-uv-cache
       - name: 28d report (views/watch time + показы и CTR обложек) -> лог
         working-directory: pipeline
         run: |
