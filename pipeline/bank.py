@@ -282,7 +282,8 @@ def group_counts(genre, docker_sh, now=None):
     out = {}
     d = br.bank_dir(genre)
     bad = []  # 24.10: битые учитывались в группах -> fill кормил «полную» группу, а take() её же карантинил (круговое голодание F major, t_ba72c7aa)
-    for e in br.entries(genre, docker_sh=docker_sh):
+    # 26.10: быстрые lofi (>LOFI_MAX_BPM) выпуск не берёт -> в группы не считаем, иначе банк «полон» и fill стоит
+    for e in br.energy_ok(br.entries(genre, docker_sh=docker_sh), genre):
         n = e["name"]
         if n in skip:
             continue

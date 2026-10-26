@@ -275,3 +275,23 @@ if __name__ == "__main__":
     test_target_grows_until_largest_group_has_margin()
     test_put_verifies_checksum_and_skips_torn_copy()
     print("ok test_bank")
+
+
+def test_lofi_group_counts_ignore_fast_segments():
+    """26.10: energy-гейт выпуска (<=75 BPM) не берёт 89/92/82, но банк считал их «полными»
+    (53 сегмента, цель 40) -> bank-fill выходил за минуту, медленные 68-70 BPM не генерировались,
+    выпуск 27.10 остался бы без сегментов. Быстрые lofi-сегменты не идут в группы и в have()."""
+    import json as _j
+    metas = {"a": "x, 89 BPM, F major", "b": "x, 92 BPM, G major", "c": "x, 70 BPM, F major"}
+    def sh(*a):
+        cmd = " ".join(a)
+        if "ls " in cmd:
+            return "\n".join(f"{k}.mp3" for k in metas)
+        if "cat " in cmd:
+            k = cmd.split("/")[-1].split(".json")[0]
+            return _j.dumps({"genre": "anime lofi", "prompt": metas[k]})
+        if "ffprobe" in cmd:
+            return "180.0"
+        return ""
+    assert bank.group_counts("anime lofi", sh) == {(70, "F major"): 1}
+    assert bank.group_counts("chill phonk", sh) == {(89, "F major"): 1, (92, "G major"): 1, (70, "F major"): 1}
