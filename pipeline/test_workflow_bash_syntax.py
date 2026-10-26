@@ -16,7 +16,7 @@ def bad_runs(root=ROOT):
                 if "run" not in st or st.get("shell", "bash").split()[0] not in ("bash", "sh"):
                     continue
                 script = re.sub(r"\$\{\{.*?\}\}", "X", st["run"])
-                r = subprocess.run(["bash", "-n"], input=script, capture_output=True, text=True)
+                r = subprocess.run(["bash", "-n"], input=script, capture_output=True, text=True, check=False)
                 if r.returncode:
                     out.append(f"{wf.name}: {st.get('name')}: {r.stderr.strip()}")
     return out
@@ -27,7 +27,7 @@ def test_all_run_blocks_parse():
 
 
 def test_catches_trailing_backslash_quote():
-    r = subprocess.run(["bash", "-n"], input='echo "a\\b\\"\n', capture_output=True, text=True)
+    r = subprocess.run(["bash", "-n"], input='echo "a\\b\\"\n', capture_output=True, text=True, check=False)
     assert r.returncode
 
 
