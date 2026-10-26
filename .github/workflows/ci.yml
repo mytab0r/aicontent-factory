@@ -17,6 +17,13 @@ concurrency:
 jobs:
   test:
     runs-on: [self-hosted, release]
+    # merge-police (P10) читает /commits/{sha}/pulls и /check-runs: default read-токен (contents+metadata+packages)
+    # даёт 403 -> master ci красный с 25.10, pay-image не публиковал образ (t_3ecce166). Инвариант: test_merge_police.py.
+    permissions:
+      contents: read
+      packages: read
+      pull-requests: read
+      checks: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
