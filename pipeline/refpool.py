@@ -46,14 +46,14 @@ REF_DIR = Path(__file__).resolve().parent.parent / ".state" / "refpool"
 # берёт bpm/key из текста промпта -> вариант воспроизводит одобренный звук.
 # 10 и 2 взаимно просты -> пара (эталон, промпт) не повторяется 20 дней.
 PROMPT_VARIANTS = [
-    # ab_1: seed 9007 -> bpm 89, F major (эталон U00146agWgg)
+    # ab_1: seed 9007 -> bpm 89, F major (эталон U00146agWgg); 25.10 владелец: 89 «слишком энергично» -> 70
     "dreamy lofi chillout instrumental, mellow electric piano chords, glockenspiel highlights, "
     "soft brushed drums, warm bassline, gentle swing, polished clean mix, "
-    "wide stereo, serene and bright, 89 BPM, F major, no vocals",
-    # ab_3: seed 9021 -> bpm 82, D major (эталон qS1wrF4XHtc)
+    "wide stereo, serene and bright, 70 BPM, F major, no vocals",
+    # ab_3: seed 9021 -> bpm 82, D major (эталон qS1wrF4XHtc); 25.10 -> 68
     "dreamy lofi chillout instrumental, glassy synth pads with celesta melody, "
     "light fingerstyle guitar accents, mellow laid back drums, round bass, "
-    "polished airy mix, wide stereo, heartwarming, 82 BPM, D major, no vocals",
+    "polished airy mix, wide stereo, heartwarming, 68 BPM, D major, no vocals",
 ]
 
 

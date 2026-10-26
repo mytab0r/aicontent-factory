@@ -24,6 +24,7 @@ BANK_ROOT = "/app/output/bank"
 USED_BLOCK_DAYS = 14   # сегмент не попадает во второй выпуск 14 дней
 RETAIN_USED_DAYS = 30  # использованный сегмент удаляется из банка через 30 дней
 COMPAT_BPM = 4         # добор из соседних групп: BPM в пределах +-4 (коммент 24.10 «±4 BPM»)
+LOFI_MAX_BPM = 75     # 25.10 владелец: 89 BPM «слишком энергично» для lofi, цель 64-72
 MIN_SEG = 5            # короткий микс вместо пропуска слота: 5 x 180 с = 15 мин (прошлый минимум)
 ROOT = HERE.parent
 
@@ -103,6 +104,20 @@ def _keys_related(k1: tuple, k2: tuple) -> bool:
     if abs(b1 - b2) > COMPAT_BPM:
         return False
     return t1.split()[0] == t2.split()[0]
+
+
+def energy_ok(entries_: list[dict], genre: str) -> list[dict]:
+    """Lofi: только сегменты с темпом <= LOFI_MAX_BPM (темп = поле bpm генерации из текста
+    промпта, иначе meta bpm). Нет темпа = не берём: проверить нельзя. Другие жанры как есть."""
+    if "lofi" not in genre:
+        return entries_
+    m = _music()
+    out = []
+    for e in entries_:
+        b = m.prompt_bpm(e.get("prompt") or "") or e.get("bpm")
+        if b and int(b) <= LOFI_MAX_BPM:
+            out.append(e)
+    return out
 
 
 def pick(entries_: list[dict], need: int, now: float, used_lines=None, rng=None) -> list[dict] | None:
@@ -201,7 +216,7 @@ def take(genre: str, need: int, run_dir: str, docker_sh=None, now=None, rng=None
     другим; битых не хватает на замену = None (слот пропускается, не падает)."""
     valid = valid or _valid_audio
     d = bank_dir(genre)
-    ents = entries(genre, docker_sh=docker_sh)
+    ents = energy_ok(entries(genre, docker_sh=docker_sh), genre)
     used_path = ROOT / ".state/bank_used.jsonl"
     used_lines = []
     try:

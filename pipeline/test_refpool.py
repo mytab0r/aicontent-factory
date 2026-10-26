@@ -53,14 +53,14 @@ def test_prompt_hygiene_no_noise_words_no_vocals():
 
 def test_prompts_are_owner_approved_family():
     """t_ef393676: ротация = только семейство ab_1/ab_3 (одобрены 20.10). music box (ab_0)
-    и harp (ab_2) без оценки владельца -> не в ротации; темп = одобренный (82/89)."""
+    и harp (ab_2) без оценки владельца -> не в ротации; темп 64-72 (25.10 владелец: 89 «слишком энергично»)."""
     import re
     for p in rp.PROMPT_VARIANTS:
         low = p.lower()
         assert low.startswith("dreamy lofi chillout instrumental"), p
         assert "glockenspiel" in low or "celesta" in low, f"нет колокольчиков: {p!r}"
         assert not any(w in low for w in ("music box", "harp", "anime lofi")), p
-        assert int(re.search(r"(\d+) BPM", p).group(1)) in (82, 89), p
+        assert int(re.search(r"(\d+) BPM", p).group(1)) in range(64, 73), p
 
 
 def test_ref_fragment_not_from_zero():

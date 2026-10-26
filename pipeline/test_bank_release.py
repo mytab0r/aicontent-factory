@@ -88,7 +88,7 @@ def test_take_refills_after_delivery_failure():
     """Проверка ОДНА (put_verified при записи). take() только доставляет: cp не удался =
     сегмент добирается другим, БЕЗ карантина и БЕЗ ffprobe-вердикта."""
     now = time.time()
-    ents = [meta(n, 89, "F major") for n in ("a", "b", "c")]
+    ents = [meta(n, 70, "F major") for n in ("a", "b", "c")]
     names = "".join(e["name"] + ".mp3\n" for e in ents)
     metas = {f"/app/output/bank/anime-lofi/{e['name']}.json": json.dumps(
         {"prompt": e["prompt"], "seed": e["seed"]}) for e in ents}
@@ -109,7 +109,7 @@ def test_take_refills_after_delivery_failure():
 
 def test_take_copies_each_segment_or_none():
     now = time.time()
-    ents = [meta("a", 89, "F major"), meta("b", 89, "F major")]
+    ents = [meta("a", 70, "F major"), meta("b", 70, "F major")]
     names = "\n".join(e["name"] + ".mp3" for e in ents) + "\n"
     metas = {f"/app/output/bank/anime-lofi/{e['name']}.json": json.dumps(
         {"prompt": e["prompt"], "seed": e["seed"]}) for e in ents}
@@ -234,7 +234,7 @@ def test_margin_absorbs_ragged_cp_burst():
 def test_take_retries_failed_cp():
     """Рваный/несостоявшийся cp перекачивается (до 5 попыток) и не карантинится."""
     now = time.time()
-    ents = [meta("a", 89, "F major"), meta("b", 89, "F major")]
+    ents = [meta("a", 70, "F major"), meta("b", 70, "F major")]
     names = "\n".join(e["name"] + ".mp3" for e in ents) + "\n"
     metas = {f"/app/output/bank/anime-lofi/{e['name']}.json": json.dumps(
         {"prompt": e["prompt"], "seed": e["seed"]}) for e in ents}
@@ -264,7 +264,7 @@ def test_take_never_quarantines():
     tmp-папки). Контракт: take() не двигает файлы банка, только предупреждает."""
 
     now = time.time()
-    ents = [meta(n, 89, "F major") for n in ("a", "b", "c")]
+    ents = [meta(n, 70, "F major") for n in ("a", "b", "c")]
     names = "".join(e["name"] + ".mp3\n" for e in ents)
     metas = {f"/app/output/bank/anime-lofi/{e['name']}.json": json.dumps(
         {"prompt": e["prompt"], "seed": e["seed"]}) for e in ents}
@@ -309,7 +309,7 @@ def test_take_creates_missing_run_dir():
     'invalid output path' -> все сегменты «не доставлены» -> nobank. Контракт: take() создаёт run_dir."""
     import contextlib, io
     now = time.time()
-    ents = [meta(n, 89, "F major") for n in ("a", "b")]
+    ents = [meta(n, 70, "F major") for n in ("a", "b")]
     names = "\n".join(e["name"] + ".mp3" for e in ents) + "\n"
     metas = {f"/app/output/bank/anime-lofi/{e['name']}.json": json.dumps(
         {"prompt": e["prompt"], "seed": e["seed"]}) for e in ents}
@@ -479,7 +479,7 @@ def test_internal_swing_detects_dip():
 def test_take_excludes_internal_dip_segment():
     """run 40155188504: сегмент с внутренним провалом 4.7 LU валит loudjump. take исключает его и добирает другие."""
     now = time.time()
-    ents = [meta(n, 89, "F major") for n in ("a", "b", "c")]
+    ents = [meta(n, 70, "F major") for n in ("a", "b", "c")]
     names = "".join(e["name"] + ".mp3\n" for e in ents)
     metas = {f"/app/output/bank/anime-lofi/{e['name']}.json": json.dumps(
         {"prompt": e["prompt"], "seed": e["seed"]}) for e in ents}
@@ -518,6 +518,19 @@ def test_internal_swing_ignores_edge_fades():
                check=True)
         lo, hi = bank_release.internal_swing(f)
         assert hi - lo <= bank_release.MAX_SWING_DB, (lo, hi)
+
+
+def test_lofi_energy_gate_excludes_fast_segments():
+    """25.10 владелец: 89 BPM для lofi «слишком энергично, под это не уснёшь» (цель 64-72).
+    Выпуск 26.10 «Autumn Attic Hideaway» собран из банка 89 BPM. Сегменты lofi > 75 BPM
+    в выпуск не берутся: пусто = слот пропущен, а не опубликован брак."""
+    fast = [meta(f"f{i}", 89, "F major") for i in range(25)]
+    assert bank_release.energy_ok(fast, "anime lofi") == []
+    calm = [meta(f"c{i}", 70, "F major") for i in range(25)]
+    assert len(bank_release.energy_ok(fast + calm, "anime lofi")) == 25
+    # phonk вне правила (другой жанр, свой эталон)
+    assert len(bank_release.energy_ok(fast, "chill phonk")) == 25
+
 
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
