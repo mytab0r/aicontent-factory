@@ -33,3 +33,13 @@ jobs:
       - name: 48h report -> TG
         working-directory: pipeline
         run: python3 08_post_analytics.py
+      - name: 28d report (views/watch time + показы и CTR обложек) -> лог
+        working-directory: pipeline
+        run: |
+          # Reporting API channel_reach_basic_a1 (Analytics v2 thumbnail-метрики = 400). Сбой reach = столбцы н/д, не красный job.
+          mkdir -p ../.state
+          printf '%s' "$YOUTUBE_TOKEN_JSON" > ../.state/youtube_token.json
+          uv venv -q ../.venv-report
+          for i in 1 2 3; do UV_HTTP_TIMEOUT=120 uv pip install --quiet --python ../.venv-report/bin/python google-api-python-client google-auth-oauthlib && break; [ $i = 3 ] && exit 1; sleep 30; done
+          ../.venv-report/bin/python 06_report.py
+          rm -f ../.state/youtube_token.json
