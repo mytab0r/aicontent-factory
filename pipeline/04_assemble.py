@@ -17,6 +17,7 @@ import subprocess
 from PIL import Image, ImageDraw, ImageOps
 
 from common import latest_run_dir
+from quality_gate import LUFS_TARGET
 
 TARGET_W, TARGET_H = 1920, 1080  # V8: 720p в нише = «дёшево», HD-ранжирование ниже
 
@@ -45,6 +46,14 @@ def dur(path) -> float:
                                 check=True).stdout)
 
 
+def normalize(track, dst) -> None:
+    """t_c68d7f9c: loudnorm трека ДО mux (TP -2 dBTP, запас под AAC); WAV — без второго lossy-прохода MP3.
+    лимитер в mux остаётся страховкой от пиков перекодирования."""
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(track),
+                    "-af", f"loudnorm=I={LUFS_TARGET:g}:TP=-2:LRA=8,aresample=48000",
+                    "-c:a", "pcm_s16le", str(dst)], check=True)
+
+
 def assemble_loop(run_dir, loop, track, out_path) -> None:
     """Петля: перекодируем ОДИН короткий цикл (TARGET 1920x1080 + AI-метка), дальше concat -c copy."""
     seg = run_dir / "loop_1080.mp4"
@@ -70,6 +79,9 @@ def main() -> None:
     out_path = run_dir / "video.mp4"
 
     burn_overlay(cover, frame)  # кадр нужен и Shorts/миниатюре
+    track_norm = run_dir / "track_norm.wav"
+    normalize(track, track_norm)
+    track = track_norm  # оба пути (петля и статика) муксят нормализованный трек
     loop = run_dir / "loop.mp4"
     if loop.exists():
         try:
