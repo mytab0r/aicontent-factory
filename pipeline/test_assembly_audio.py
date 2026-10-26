@@ -60,6 +60,32 @@ def test_norm_segments_keeps_original_on_failure():
     assert any("не удался" in str(x) for x in logs)
 
 
+def test_assemble_static_passes_tp_and_loudness_gate():
+    """t_c68d7f9c: горячий трек (~-4 LUFS, клиппинг) после 04_assemble (статичный путь) в гейте I и TP.
+    RED на старом коде: только alimiter, громкость вне MIN_I..MAX_I."""
+    import os
+    import subprocess
+    import tempfile
+    import quality_gate as qg
+    from PIL import Image
+    with tempfile.TemporaryDirectory() as td:
+        d = Path(td)
+        Image.new("RGB", (640, 360), (40, 40, 80)).save(d / "cover.png")
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i",
+                        "sine=frequency=330:duration=8:sample_rate=48000,volume=7.5",
+                        "-c:a", "libmp3lame", "-b:a", "192k", str(d / "track.mp3")], check=True)
+        asm = _load("asm_tp", "04_assemble.py")
+        with patch.dict(os.environ, {"ACF_RUN_DIR": td}):
+            asm.main()
+        e = qg.ff(str(d / "video.mp4"), "ebur128=peak=true")
+        import re
+        tp = float(re.findall(r"Peak:\s+(-?[\d.]+|-inf)", e)[-1].replace("-inf", "-200"))
+        li = float(re.findall(r"I:\s+(-?[\d.]+) LUFS", e)[-1])
+        print(f"video: I={li} TP={tp}")
+        assert tp <= qg.MAX_TP, tp
+        assert qg.loud_why(li) == [], li
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for f in fns:
