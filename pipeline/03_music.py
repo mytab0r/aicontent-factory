@@ -468,12 +468,7 @@ def chunk_plan(total_sec: int, max_chunk_sec: int = 240) -> list[int]:
     return chunks
 
 
-XFADE = 16.0  # t_3f0f7b91, t_ffa7ff01: стыки сегментов через acrossfade (шире — плавнее RMS-переход R3), не встык
-
-
-def seam_times(durs, xfade=XFADE) -> list[float]:
-    """Центры кроссфейдов в склейке concat_tracks: их проверяет quality_gate R3 (окно ±5 с, RMS)."""
-    return [sum(durs[:i]) - i * xfade + xfade / 2 for i in range(1, len(durs))]
+XFADE = 16.0  # фолбэк-переход без бит-сетки (dj_plan); основной стык = DJ_BARS тактов (t_96de1cc6)
 
 
 def edge_rms(path, side, sec=5.0) -> float:
@@ -494,19 +489,103 @@ EDGE_RAMP_SEC = 30.0  # gain только на начале сегмента, к
 EDGE_MAX_GAIN = 18.0  # 3 прохода x клэмп 6 дБ
 
 
-def seam_rms(prev, nxt, xfade=XFADE):
-    """RMS дБ слева/справа от центра стыка prev->nxt ровно как гейт R3: acrossfade(tri) как в concat_tracks,
-    окна [c-SEAM_HALF, c] и [c, c+SEAM_HALF], c = dur(prev) - xfade/2 как в seam_times (t_e0c297c7).
-    prev целиком: acrossfade с входом длиной ровно xfade отдаёт пустой поток."""
+DJ_BARS = 8      # t_96de1cc6: переход 8 тактов 4/4 (16 тактов = 43 с при 89 BPM съедают час-микс)
+BASS_HZ = 200.0  # bass swap: ниже — бас, его в переходе держит только один трек
+
+
+@__import__("functools").lru_cache(maxsize=256)
+def _downbeats(path, start, dur):
+    """(bpm, абс. времена сильных долей) окна [start, start+dur]; None = нет librosa/сетки (синус, тишина).
+    librosa даёт биты, не такты: сильная доля = фаза 4-дольной сетки с наибольшей onset-энергией."""
+    try:
+        import librosa
+        import numpy as np
+    except ImportError:
+        return None
+    y, sr = librosa.load(str(path), sr=22050, mono=True, offset=max(0.0, start), duration=dur)
+    if len(y) < sr * 8:
+        return None
+    env = librosa.onset.onset_strength(y=y, sr=sr)
+    tempo, beats = librosa.beat.beat_track(onset_envelope=env, sr=sr)
+    bpm = float(np.atleast_1d(tempo)[0])
+    # октавная ошибка librosa: на банке 89 BPM отдаёт 172 (удвоенные биты). Свёртка в <=125 по сильной фазе:
+    # для быстрых жанров «такт» = 2 реальных такта, переход всё равно по сильным долям
+    while bpm > 125 and len(beats) >= 32:
+        h = max(range(2), key=lambda k: float(env[beats[k::2]].mean()))
+        beats, bpm = beats[h::2], bpm / 2
+    if not 50 <= bpm <= 200 or len(beats) < 16:
+        return None
+    ph = max(range(4), key=lambda k: float(env[beats[k::4]].mean()))
+    return bpm, tuple(float(t) + max(0.0, start) for t in librosa.frames_to_time(beats[ph::4], sr=sr))
+
+
+def dj_plan(prev, nxt, bars=DJ_BARS, xfade=XFADE):
+    """Стык prev->nxt как у DJ: (конец prev, начало nxt, длина перехода L, bass swap), секунды в исходных файлах.
+    Переход стартует на последней сильной доле prev, где влезает bars тактов; nxt входит со своей первой
+    сильной доли -> сетки совпадают (сегменты одной BPM-группы). Нет сетки = xfade qsin без среза и bass swap."""
+    dp, dn = _probe_sec(prev), _probe_sec(nxt)
+    a, b = _downbeats(str(prev), round(dp - 60.0, 2), 60.0), _downbeats(str(nxt), 0.0, 30.0)
+    if not a or not b:
+        return dp, 0.0, xfade, False
+    L = bars * 4 * 60.0 / a[0]
+    starts = [t for t in a[1] if t + L <= dp]
+    if not starts or L > 0.4 * min(dp, dn):
+        return dp, 0.0, xfade, False
+    return starts[-1] + L, b[1][0], L, True
+
+
+def _dj_seg(src, dst, start, end, lin, lout):
+    """Вырезать [start, end] src в dst (flac: mp3-паддинг сдвигал бы сетку) с bass swap:
+    бас входящей части (первые lin с) и уходящей (последние lout с) вычитается до/после середины
+    перехода, рампа полдоли. acrossover (Linkwitz-Riley): полосы в сумме = исходник; вычитание lowpass
+    давало фазовый хвост и +3 дБ низа на середине (замер на банке 89F)."""
     import subprocess
+    d = end - start
+    k = []
+    if lin > 0:
+        q = lin / (DJ_BARS * 8)
+        k.append(f"clip(({lin / 2 + q:.4f}-t)/{2 * q:.4f},0,1)")
+    if lout > 0:
+        q = lout / (DJ_BARS * 8)
+        k.append(f"clip((t-{d - lout / 2 - q:.4f})/{2 * q:.4f},0,1)")
+    fc = f"[0:a]atrim=start={start:.4f}:end={end:.4f},asetpts=PTS-STARTPTS"
+    if k:
+        kill = k[0] if len(k) == 1 else f"max({k[0]},{k[1]})"
+        fc += (f",acrossover=split={BASS_HZ:g}:order=4th[l][h];[l]volume='1-{kill}':eval=frame[lk];"
+               "[lk][h]amix=inputs=2:normalize=0")
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(src), "-filter_complex", fc + "[o]",
+                    "-map", "[o]", str(dst)], check=True)
+    return dst
+
+
+def _xfade_chain(ins, ls, out):
+    """Цепочка acrossfade qsin/qsin (equal-power: на середине оба -3 дБ, мощность постоянна)."""
+    import subprocess
+    if len(ins) == 1:
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(ins[0]), str(out)], check=True)
+        return
+    fc, prev = [], "[0:a]"
+    for i in range(1, len(ins)):
+        o = "[a]" if i == len(ins) - 1 else f"[x{i}]"
+        fc.append(f"{prev}[{i}:a]acrossfade=d={ls[i - 1]:.4f}:c1=qsin:c2=qsin{o}")
+        prev = o
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", *[x for p in ins for x in ("-i", str(p))],
+                    "-filter_complex", ";".join(fc), "-map", "[a]", str(out)], check=True, capture_output=True)
+
+
+def seam_rms(prev, nxt, xfade=XFADE):
+    """RMS дБ слева/справа от центра стыка prev->nxt ровно как гейт R3 (окна по SEAM_HALF) на том же
+    переходе, что concat_tracks (dj_plan + bass swap + qsin). prev берётся хвостом L + 2*SEAM_HALF."""
     import tempfile
     from quality_gate import SEAM_HALF, rms_db
+    pe, ns, L, sw = dj_plan(prev, nxt, xfade=xfade)
+    a0 = max(0.0, pe - L - 2 * SEAM_HALF)
     with tempfile.TemporaryDirectory() as td:
+        a = _dj_seg(prev, f"{td}/a.flac", a0, pe, 0, L if sw else 0)
+        b = _dj_seg(nxt, f"{td}/b.flac", ns, min(_probe_sec(nxt), ns + L + 2 * SEAM_HALF), L if sw else 0, 0)
         x = f"{td}/seam.wav"
-        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(prev), "-t", str(xfade + 2 * SEAM_HALF),
-                        "-i", str(nxt), "-filter_complex", f"[0:a][1:a]acrossfade=d={xfade}:c1=tri:c2=tri[a]",
-                        "-map", "[a]", "-c:a", "pcm_s16le", x], check=True)
-        c = _probe_sec(prev) - xfade / 2
+        _xfade_chain([a, b], [L], x)
+        c = pe - a0 - L / 2
         return rms_db(x, c - SEAM_HALF, SEAM_HALF), rms_db(x, c, SEAM_HALF)
 
 
@@ -687,22 +766,38 @@ def fade_end(path, sec: float = FADE_END_SEC) -> None:
     os.replace(tmp, path)
 
 
-def concat_tracks(paths: list[str], out_path, xfade: float = XFADE) -> None:
-    """Склеивает треки цепочкой acrossfade (tri/tri, xfade с): без разрыва громкости и щелчка на стыке."""
+def concat_tracks(paths: list[str], out_path, xfade: float = XFADE) -> tuple[list[float], list[float]]:
+    """t_96de1cc6: склейка как у DJ вместо acrossfade tri 16 с (03c FAIL 24.10: стык +3.3 дБ).
+    Каждый стык: dj_plan (сильная доля, DJ_BARS тактов) + bass swap + qsin. Возвращает (старты треков,
+    центры стыков) в секундах склейки — их меряет гейт R3 и из них главы."""
     import shutil
-    import subprocess
-
+    import tempfile
     if len(paths) == 1:
         shutil.copy(paths[0], out_path)
-        return
-    ins = [x for p in paths for x in ("-i", str(p))]
-    fc, prev = [], "[0:a]"
-    for i in range(1, len(paths)):
-        out = "[a]" if i == len(paths) - 1 else f"[x{i}]"
-        fc.append(f"{prev}[{i}:a]acrossfade=d={xfade}:c1=tri:c2=tri{out}")
-        prev = out
-    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", *ins, "-filter_complex", ";".join(fc), "-map", "[a]",
-                    str(out_path)], check=True, capture_output=True)
+        return [0.0], []
+    plans = [dj_plan(paths[i - 1], paths[i], xfade=xfade) for i in range(1, len(paths))]
+    starts, seams, t = [], [], 0.0
+    # рядом с выходом: час flac ~600 МБ, /tmp раннера мал; TemporaryDirectory удалит при любом исходе
+    with tempfile.TemporaryDirectory(dir=os.path.dirname(os.path.abspath(out_path))) as td:
+        segs = []
+        for i, p in enumerate(paths):
+            s0 = plans[i - 1][1] if i else 0.0
+            e0 = plans[i][0] if i < len(plans) else _probe_sec(p)
+            lin = plans[i - 1][2] if i else 0.0
+            sin_ = lin if i and plans[i - 1][3] else 0.0
+            sout = plans[i][2] if i < len(plans) and plans[i][3] else 0.0
+            segs.append(_dj_seg(p, f"{td}/{i:03d}.flac", s0, e0, sin_, sout))
+            if i:
+                t -= lin
+                seams.append(t + lin / 2)
+            starts.append(t)
+            t += e0 - s0
+        _xfade_chain(segs, [pl[2] for pl in plans], out_path)
+    return starts, seams
+
+
+def chapters_at(starts, names) -> list[str]:
+    return [f"{_ts(s)} {n}" for s, n in zip(starts, names)]
 
 
 def main() -> None:
@@ -778,11 +873,9 @@ def main() -> None:
         paths, durs = plan_mix(duration, gen_mix, _probe_sec, budget_sec=mix_budget,
                                max_tracks=-(-duration // MIX_SEG_SEC) + 2)
         prep_segments(paths, log=print)
-        durs = [_probe_sec(p) for p in paths]  # срез хвостов меняет длительности — перезамер
-        concat_tracks(paths, out_path)
-        chaps = chapters(durs, track_names(len(paths), seed), xfade=XFADE)
-        seams = seam_times(durs)
-        duration = int(sum(durs) - XFADE * (len(durs) - 1))
+        starts, seams = concat_tracks(paths, out_path)
+        chaps = chapters_at(starts, track_names(len(paths), seed))
+        duration = int(_probe_sec(out_path))
     elif os.environ.get("ACE15_ENDPOINT"):
         duration = min(duration, ACE15_MAX_SEC)
         n = int(os.environ.get("ACE15_BESTOF") or 0)  # t_b4006a6e: best-of-N через quality_gate, 0 = 1 кандидат

@@ -424,9 +424,9 @@ def test_edge_match_measures_crossfaded_seam_like_gate():
     fs = [seg("a.mp3", "1", 1), seg("b.mp3", "if(lt(t,5),2.5,if(between(t,47,54),0.4,1))", 2), seg("c.mp3", "1", 3)]
     music.prep_segments(fs, log=lambda *x: None)
     out = str(d / "mix.mp3")
-    music.concat_tracks(fs, out)
+    _, ts = music.concat_tracks(fs, out)
     seams = [{"t": t, "ce": 9.0, "rms_l": qg.rms_db(out, t - qg.SEAM_HALF, qg.SEAM_HALF),
-              "rms_r": qg.rms_db(out, t, qg.SEAM_HALF)} for t in music.seam_times([music._probe_sec(p) for p in fs])]
+              "rms_r": qg.rms_db(out, t, qg.SEAM_HALF)} for t in ts]
     assert qg.seam_why(seams) == [], seams
 
 
