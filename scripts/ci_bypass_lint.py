@@ -91,7 +91,7 @@ def lint_text(text):
             ctx, j = [line], i - 1
             while j >= 0 and lines[j].strip().startswith("#"):
                 ctx.append(lines[j])
-            j -= 1
+                j -= 1
             if not any(ROOT_CAUSE.search(c) for c in ctx):
                 out.append((i + 1, "buildx-driver"))
         for rule, waiver in _rules(line, lines, i):
