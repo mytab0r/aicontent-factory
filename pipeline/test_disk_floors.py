@@ -33,8 +33,9 @@ rc, out = gate("c", 0, 30); assert rc == 0, out
 rc, out = gate("x", 1, 99); assert rc != 0, out                                     # неизвестный диск = отказ
 print("R3 gate refuses with numbers OK")
 
-# R2: named volumes в workflows запрещены, кроме служебных (не веса): раннер, hermes-data
-ALLOW = re.compile(r"^(gh-runner-[\w-]+|hermes-data)$")
+# R2: named volumes в workflows запрещены, кроме служебных (не веса): раннер, hermes-data,
+# общий кеш action-архивов раннеров (~50 МБ tar.gz, t_77eb56b7)
+ALLOW = re.compile(r"^(gh-runner-[\w-]+|hermes-data|gh-actions-archive-cache)$")
 bad = []
 for f in (ROOT / ".github/workflows").glob("*.yml"):
     for n, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
