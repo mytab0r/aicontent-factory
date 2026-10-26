@@ -358,15 +358,6 @@ jobs:
         if: always()
         run: sh deploy/gpu-pc/gpu_yield.sh restore || true
 
-      - name: upload run artifact
+      - name: upload run files -> C:\dockerlocal\acf-out\<run_id>\ (t_265d0147)
         if: steps.guard.outputs.published != '1'
-        # ponytail: artifact is debug-only (video is on YouTube); storage quota must never fail the release
-        continue-on-error: true  # root-cause: t_f95a06da
-        uses: actions/upload-artifact@v4  # artifact-ok: логи прогона; доставка результата вне артефактов
-        timeout-minutes: 15  # t_6758c86f: сетевой шаг не висит до таймаута джобы
-        with:
-          name: video-${{ github.run_id }}-${{ strategy.job-index }}
-          path: |
-            runs/*/video.mp4
-            runs/*/short_*.mp4
-          retention-days: 1  # t_9d452170: доставка вне артефактов (TG/git); квота storage 500MB
+        run: sh deploy/gpu-pc/acf_out.sh put ${{ github.run_id }} runs/*/video.mp4 runs/*/short_*.mp4

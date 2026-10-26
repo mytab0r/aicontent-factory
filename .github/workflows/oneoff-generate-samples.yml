@@ -113,10 +113,5 @@ jobs:
           if remaining:
               print(f"GAVE UP on: {list(remaining)}", flush=True)
           PY
-      - uses: actions/upload-artifact@v4  # artifact-ok: логи прогона; доставка результата вне артефактов
-        timeout-minutes: 15  # t_6758c86f: сетевой шаг не висит до таймаута джобы
-        with:
-          retention-days: 1  # t_9d452170: доставка вне артефактов (TG/git); квота storage 500MB
-          name: candidate-samples
-          path: samples_candidates/*.mp3
-          if-no-files-found: warn
+      - name: candidate-samples -> C:\dockerlocal\acf-out\<run_id>\ (t_265d0147)
+        run: sh deploy/gpu-pc/acf_out.sh put ${{ github.run_id }} samples_candidates/*.mp3

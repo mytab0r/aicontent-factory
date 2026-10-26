@@ -22,15 +22,9 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: .venv/bin/python pipeline/dd_samples.py
-      - name: upload artifact (даже при неполном результате)
+      - name: upload files (даже при неполном результате) -> C:\dockerlocal\acf-out\<run_id>\ (t_265d0147)
         if: always()
-        uses: actions/upload-artifact@v4  # artifact-ok: логи прогона; доставка результата вне артефактов
-        timeout-minutes: 15  # t_6758c86f: сетевой шаг не висит до таймаута джобы
-        with:
-          name: dd-samples-${{ github.run_id }}
-          path: samples_candidates/dd_*.mp3
-          if-no-files-found: error
-          retention-days: 1  # t_9d452170: доставка вне артефактов (TG/git); квота storage 500MB
+        run: sh deploy/gpu-pc/acf_out.sh put ${{ github.run_id }} samples_candidates/dd_*.mp3
       - name: report
         if: always()
         run: |
