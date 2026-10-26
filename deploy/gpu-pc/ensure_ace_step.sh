@@ -13,7 +13,8 @@ INGEST=/var/lib/desktop-containerd/daemon/io.containerd.content.v1.content/inges
 dfree() { echo "D: free $(docker run --rm -v /run/desktop/mnt/host/d:/d:ro alpine:3.20 df -BG /d | awk 'NR==2{print $4}') [$1]"; }
 host() { docker run --rm --privileged --pid=host alpine:3.20 nsenter -t 1 -m -- sh -c "$1"; }
 
-exec 9>/tmp/ensure_ace_step.lock; flock 9   # R1 within this runner
+# R1 within this runner; lock wait bounded (t_0c540f50)
+exec 9>"${ACE_LOCK:-/tmp/ensure_ace_step.lock}"; flock -w "${ACE_LOCK_WAIT_S:-600}" 9 || { echo "::error::ensure_ace_step lock busy"; exit 1; }
 dfree start
 if docker inspect ace-step >/dev/null 2>&1; then
   [ "${1:-}" = restart ] && docker restart ace-step >/dev/null || docker start ace-step >/dev/null 2>&1 || true
@@ -24,20 +25,26 @@ else
     # ponytail: оценка, не точный размер; при недоступном манифесте берём 25G (ace-step 1.5 ~ 20G).
     gb=$(docker manifest inspect -v "$IMG" 2>/dev/null | python3 -c "import json,sys;d=json.load(sys.stdin);d=d if isinstance(d,list) else [d];print(int(sum(l['size'] for m in d[:1] for l in m['OCIManifest' if 'OCIManifest' in m else 'SchemaV2Manifest']['layers'])*2/1e9)+1)" 2>/dev/null || echo 25)
     sh "$(dirname "$0")/disk_gate.sh" d "$gb"
-    ok=0
+    # root-cause: t_0c540f50 (= t_14d314c2 on ops/ace-step-restore): runs 39195973181/39201205845/39205125539
+    # hung 60/280/280 min — each PC->ghcr pull stalled ~70 min ("commit failed: rename", "short read ... EOF")
+    # and the retry loop had no overall deadline. R2 retries stay, but every pull runs under `timeout`
+    # against one total budget; budget spent -> ::error:: instead of hanging until the step timeout.
+    ok=0; end=$(( $(date +%s) + ${ACE_PULL_BUDGET_S:-3600} ))
     for i in 1 2 3 4 5 6 7 8; do
+      left=$(( end - $(date +%s) ))
+      [ "$left" -gt 0 ] || { echo "pull budget ${ACE_PULL_BUDGET_S:-3600}s spent after $((i-1)) attempts"; break; }
       # R2: plain pull resumes; log only layer outcome lines
-      if docker pull "$IMG" 2>&1 | tee /tmp/pull.log | grep -E 'Already exists|Pull complete|Digest|Status|rror'; then :; fi
+      if timeout "$left" docker pull "$IMG" 2>&1 | tee /tmp/pull.log | grep -E 'Already exists|Pull complete|Digest|Status|rror'; then :; fi
       echo "attempt $i: layers already-present=$(grep -c 'Already exists' /tmp/pull.log || true) completed=$(grep -c 'Pull complete' /tmp/pull.log || true)"
       dfree "after pull attempt $i"
       docker image inspect "$IMG" >/dev/null 2>&1 && { ok=1; break; }
-      sleep 20
+      [ $(( end - $(date +%s) )) -gt 20 ] && sleep 20
     done
     if [ $ok = 0 ]; then
       dfree "before ingest cleanup"
       host "du -sh $INGEST 2>/dev/null; find $INGEST -mindepth 1 -maxdepth 1 -type d -mmin +10 -exec rm -rf {} +; du -sh $INGEST 2>/dev/null" || true
       dfree "after ingest cleanup"
-      echo "::error::pull failed after 8 attempts"; exit 1
+      echo "::error::ace-step pull failed (8 attempts or ${ACE_PULL_BUDGET_S:-3600}s budget)"; exit 1
     fi
   fi
   docker run -d --name ace-step --restart unless-stopped --gpus all --network comfynet \
