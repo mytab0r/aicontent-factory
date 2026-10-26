@@ -77,6 +77,22 @@ def test_master_final_tp():
         assert abs(m["i"] - qg.LUFS_TARGET) <= 1.0, m
 
 
+def test_master_final_tp_synthetic_peaks():
+    """Синтетика с пиками: розовый шум + 20-мс всплески 3 кГц каждые 2 с (TP > -1 до мастера) -> TP <= MAX_TP."""
+    import subprocess
+    br = _load("bank_release_dj2", "bank_release.py")
+    with tempfile.TemporaryDirectory() as d:
+        out = f"{d}/track.mp3"
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "anoisesrc=c=pink:a=0.1:d=40:r=48000",
+                        "-f", "lavfi", "-i", "aevalsrc='if(lt(mod(t,2),0.02),0.99*sin(2*PI*3000*t),0)':s=48000:d=40",
+                        "-filter_complex", "[0:a][1:a]amix=inputs=2:normalize=0,volume=4dB",
+                        "-ac", "2", "-c:a", "libmp3lame", "-b:a", "192k", out], check=True)
+        assert mastering.measure(out)["tp"] > qg.MAX_TP  # фикстура реально с пиками
+        br.master_final(out, "anime lofi")
+        m = mastering.measure(out)
+        assert m["tp"] <= qg.MAX_TP, m
+
+
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"):
