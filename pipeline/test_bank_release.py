@@ -153,7 +153,7 @@ def test_assemble_writes_music_meta_and_concat():
     spec.loader.exec_module(m)
     calls = {}
     m.prep_segments = lambda ps, log=print: calls.setdefault("prep", ps)
-    m.concat_tracks = lambda ps, out, xfade=m.XFADE: calls.update(out=str(out), paths=ps)
+    m.concat_tracks = lambda ps, out, xfade=m.XFADE: (calls.update(out=str(out), paths=ps), ([0.0, 164.0], [172.0]))[1]
     bank_release.master_final = lambda path, genre: calls.update(master=str(path), genre=genre)  # mastering не тестируем
     m._probe_sec = lambda p: 180.0
     with tempfile.TemporaryDirectory() as td:
@@ -389,8 +389,9 @@ def test_master_final_loudnorms_when_too_quiet():
     sys.modules["br_mf"] = br
     spec.loader.exec_module(br)
 
-    class R:
-        stderr = ""
+    class R:  # t_96de1cc6: loudnorm 2-проходный, 1-й проход отдаёт замер json в stderr
+        stderr = ('{"input_i": "-17.4", "input_tp": "-2.0", "input_lra": "6.0", '
+                  '"input_thresh": "-27.5", "target_offset": "0.0"}')
         stdout = ""
         returncode = 0
 

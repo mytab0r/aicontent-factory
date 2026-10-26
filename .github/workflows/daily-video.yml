@@ -92,7 +92,7 @@ jobs:
           command -v ffmpeg || { sudo dpkg --configure -a || true; for i in 1 2 3; do sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg && break; sleep 20; done; }
           command -v ffmpeg
           uv venv .venv
-          for i in 1 2 3; do UV_HTTP_TIMEOUT=120 uv pip install --python .venv/bin/python pillow gradio_client numpy yt-dlp && break; [ $i = 3 ] && exit 1; sleep 30; done  # refpool.ensure_ref (21.10: FileNotFoundError yt-dlp -> fallback)
+          for i in 1 2 3; do UV_HTTP_TIMEOUT=120 uv pip install --python .venv/bin/python pillow gradio_client numpy yt-dlp librosa && break; [ $i = 3 ] && exit 1; sleep 30; done  # refpool.ensure_ref (21.10: FileNotFoundError yt-dlp -> fallback); librosa = DJ-стык bank_release (t_96de1cc6)
 
       - name: 01 idea
         id: idea

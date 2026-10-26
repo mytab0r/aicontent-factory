@@ -300,27 +300,50 @@ def _music_mod():
     return m
 
 
-def master_final(track: str, genre: str) -> None:
-    """t_cron1024b (run 40087548227): сегменты мастерились поодиночке, но concat перекодирует
-    и поднимает пики — TP склейки -0.8 dBTP > порога гейта -1.0 (клиппинг).
-    TP в норме -> только fade_end (0 проходов: шаг в P18-бюджете 20 мин; полный
-    mastering.master на часовом файле > 20 мин, run 40095684453 — timeout).
-    TP > -1 или громкость I вне окна гейта -> loudnorm (run 40145954650: TP=-2.0, пропуск оставил I=-17.4 < -16 = FAIL). один проход loudnorm TP=-2 (EQ сегменты получили при записи в банк)."""
-    import os
+LIMIT_DB = -1.5  # t_96de1cc6: потолок alimiter; гейт MAX_TP -1.0, 0.5 дБ запаса на mp3-овершут
+TP_SAFE = -1.2   # после кодирования TP выше -> статический доворот вниз (гейт -1.0 не трогаем)
+
+
+def loudnorm_2pass(src: str, dst: str) -> dict:
+    """Двухпроходный loudnorm linear=true: 1-й проход меряет (print_format=json), 2-й получает measured_*
+    и даёт ОДИН постоянный gain (динамики нет, LRA не давится). Затем alimiter LIMIT_DB.
+    03c FAIL 24.10 (TP -0.8): однопроходный loudnorm + mp3-перекодирование поднимали пики над -1."""
+    import json
     import subprocess
-    m = _music_mod()
-    import mastering
     from quality_gate import LUFS_TARGET
-    from quality_gate import MIN_I, MAX_I
-    mi = mastering.measure(track)
-    if mi["tp"] > -1.0 or not (MIN_I <= mi.get("i", -99.0) <= MAX_I):
-        tmp = track + ".tp.mp3"
-        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", track,
-                        "-af", f"loudnorm=I={LUFS_TARGET:g}:TP=-2:LRA=11", "-c:a", "libmp3lame", "-b:a", "192k", tmp],
-                       check=True)
-        os.replace(tmp, track)
-    m.fade_end(track)
+    tgt = f"I={LUFS_TARGET:g}:TP={LIMIT_DB:g}:LRA=20"
+    err = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", src, "-af", f"loudnorm={tgt}:print_format=json",
+                          "-f", "null", "-"], capture_output=True, text=True, check=True).stderr
+    j = json.loads(err[err.rindex("{"):err.rindex("}") + 1])
+    # лимитер на 4x частоте: на 48 кГц он ловит сэмплы, не межсэмпловые пики (замер на банке: TP -0.7 vs -1.0)
+    lim = f"aresample=192000,alimiter=limit={10 ** (LIMIT_DB / 20):.4f}:level=disabled:attack=1:release=50"
+    af = (f"loudnorm={tgt}:linear=true:measured_I={j['input_i']}:measured_TP={j['input_tp']}:"
+          f"measured_LRA={j['input_lra']}:measured_thresh={j['input_thresh']}:offset={j['target_offset']},"
+          f"{lim},aresample=48000")
+    tmp = dst + ".ln2.mp3"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", src, "-af", af, "-ar", "48000",
+                    "-c:a", "libmp3lame", "-b:a", "192k", tmp], check=True)
+    os.replace(tmp, dst)
+    # mp3-кодер добавляет овершут ~0.3-0.5 дБ: замер и статический доворот (I сдвигается на те же доли дБ)
+    import mastering
+    for _ in range(2):
+        tp = mastering.measure(dst)["tp"]
+        if tp <= TP_SAFE:
+            break
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", dst, "-af", f"volume={TP_SAFE - tp - 0.1:.2f}dB",
+                        "-c:a", "libmp3lame", "-b:a", "192k", tmp], check=True)
+        os.replace(tmp, dst)
+    return j
+
+
+def master_final(track: str, genre: str) -> None:
+    """t_96de1cc6: финальный мастер склейки = flatten_blocks (относительные gain блоков A18) ->
+    fade_end -> loudnorm_2pass (постоянный gain к LUFS_TARGET + alimiter -1.5 дБ). Порядок: лимитер
+    последним, flatten/fade до него (раньше flatten шёл после loudnorm и поднимал пики)."""
+    m = _music_mod()
     flatten_blocks(track)
+    m.fade_end(track)  # до лимитера: linear loudnorm хвост не подтягивает, а лишнее mp3-кодирование после — овершут
+    loudnorm_2pass(track, track)
 
 
 def _norm_segments(paths: list[Path], log=print) -> None:
@@ -395,12 +418,13 @@ def assemble(paths: list[Path], run_dir: Path, metas: list[dict], genre: str, ou
 
     _norm_segments(paths, log=print)
     m.prep_segments([str(p) for p in paths], log=print)
-    durs = [m._probe_sec(p) for p in paths]
-    m.concat_tracks([str(p) for p in paths], str(Path(run_dir) / out))
+    import importlib.util
+    if importlib.util.find_spec("librosa") is None:  # без сетки dj_plan молча откатился бы на xfade
+        raise RuntimeError("librosa не установлен: DJ-стык по битам невозможен (t_96de1cc6)")
+    starts, seams = m.concat_tracks([str(p) for p in paths], str(Path(run_dir) / out))
     master_final(str(Path(run_dir) / out), genre)
-    chapters = m.chapters(durs, m.track_names(len(paths), seed), xfade=m.XFADE)
-    seams = m.seam_times(durs)
-    duration = int(sum(durs) - m.XFADE * (len(durs) - 1))
+    chapters = m.chapters_at(starts, m.track_names(len(paths), seed))
+    duration = int(m._probe_sec(Path(run_dir) / out))
     meta = {"genre": genre, "prompt": prompts, "seed": seed, "duration": duration,
             "segments": seg, "chapters": chapters, "seams": seams, "bank": True}
     (Path(run_dir) / "music_meta.json").write_text(

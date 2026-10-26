@@ -29,7 +29,7 @@ def test_assemble_calls_master_final():
     m = br._music_mod()
     calls = []
     m.prep_segments = lambda ps, log=print: calls.append("prep")
-    m.concat_tracks = lambda ps, out, xfade=m.XFADE: calls.append("concat")
+    m.concat_tracks = lambda ps, out, xfade=m.XFADE: (calls.append("concat"), ([0.0, 164.0], [172.0]))[1]
     m._probe_sec = lambda p: 180.0
     with tempfile.TemporaryDirectory() as td:
         rd = Path(td)
