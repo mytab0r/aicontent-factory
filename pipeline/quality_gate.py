@@ -475,6 +475,13 @@ def tuning_why(f):
 
 
 
+# A27: YouTube перекодирует звук в Opus и поднимает true peak речи. Замер 26.10 YouTube-копий канала 2:
+# K5cqI_AX4hk TP -0.3, kQauDNrBAWU -0.8 dBTP (мастер проходил MAX_TP -1.0); A26: Opus +0.6 дБ.
+# Мастер речи обязан иметь запас: TP <= MAX_TP - OPUS_OVERSHOOT (-1.6). Мастер A26 (loudnorm TP=-2.0) проходит.
+OPUS_OVERSHOOT = 0.6
+SPEECH_TP_MAX = MAX_TP - OPUS_OVERSHOOT
+
+
 def speech_why(f):
     """A25: звук речевого ролика (edge-tts): громкость MIN_I..MAX_I, true peak <= MAX_TP, нет тишины >= SIL_MIN с
     ниже SIL_DB (сбой TTS пункта = пустой mp3) вне первых 0.5 с и последней 1 с. Замер 23.10 канала 2 с YouTube
@@ -487,7 +494,8 @@ def speech_why(f):
     dur = duration(f)
     st = [float(x) for x in re.findall(r"silence_start: (-?[\d.]+)", e)]
     en = [float(x) for x in re.findall(r"silence_end: ([\d.]+)", e)] + [dur] * len(st)
-    why = loud_why(li) + ([f"true peak {tp:+.1f} dBTP > {MAX_TP}: клиппинг"] if tp > MAX_TP else [])
+    why = loud_why(li) + ([f"true peak {tp:+.1f} dBTP > {SPEECH_TP_MAX}: клиппинг после Opus YouTube"]
+                          if tp > SPEECH_TP_MAX else [])
     return why + [f"тишина {b - a:.1f} с на {a:.1f} с (< {SIL_DB} дБ): сбой озвучки" for a, b in zip(st, en)
                   if a > 0.5 and b < dur - 1.0]
 
