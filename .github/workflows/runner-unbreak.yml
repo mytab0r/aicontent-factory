@@ -1,65 +1,42 @@
 name: runner-unbreak
-# Класс «lease самохостед-раннера завис после смерти джобы/рекреации контейнера» (25.10: pc-acf-release
-# busy=true при нуле активных джоб, вся очередь CI/release встала). Запускается ВРУЧНУЮ, пересоздаёт
-# контейнер целевого раннера (новая регистрация по RUNNER_REG_TOKEN, новый lease).
-# t_5cdbb967: свап идёт С ЧУЖОГО живого раннера (target=release -> джоба на pc; target=pc -> джоба на
-# release): если lease целевого раннера зомби (busy=true без джоб), джоба на нём никогда не получит слот —
-# дедлок «unbreak сам стоит в очереди за зомби». Оба раннера монтируют один docker.sock хоста.
+# Пересоздание контейнера раннера aicontent-factory (deploy/gpu-pc/runner-swap.sh).
+# t_5cdbb967: по расписанию раз в 6 ч — авто-свап, если RW-слой > 1 ГБ и раннер простаивает.
+# Ручной запуск — принудительный свап (класс «зависший lease» 25.10 и т.п.).
+# Свап идёт С ЧУЖОГО раннера: rm целевого контейнера убил бы свою же джобу.
 on:
+  schedule:
+    - cron: "17 */6 * * *"
   workflow_dispatch:
     inputs:
       target:
-        description: "release | pc"
+        description: "release | pc | both"
         default: "release"
         type: choice
-        options: [release, pc]
+        options: [release, pc, both]
+
+concurrency:
+  group: runner-unbreak
+  cancel-in-progress: false
 
 jobs:
-  recreate:
-    runs-on: ${{ fromJSON(format('["self-hosted","{0}"]', inputs.target == 'release' && 'pc' || 'release')) }}
-    timeout-minutes: 12
+  swap-release:
+    if: github.event_name == 'schedule' || inputs.target != 'pc'
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 30
     steps:
-      - name: recreate runner container (fresh registration)
+      - uses: actions/checkout@v4
+      - name: swap gh-runner-acf-release
         env:
           REG: ${{ secrets.RUNNER_REG_TOKEN }}
-        run: |
-          set -e
-          if [ "${{ inputs.target }}" = "release" ]; then
-            NAME=gh-runner-acf-release; RUNNER_NAME=pc-acf-release; LBL=release; WORK=/tmp/runner/acf-release; VOL=gh-runner-acf-release-work
-          else
-            NAME=gh-runner-aicontent-factory; RUNNER_NAME=pc-acf; LBL=pc; WORK=/tmp/runner/aicontent-factory; VOL=gh-runner-aicontent-factory-work
-          fi
-          # t_5cdbb967 (критерий «пишущие пути вне слоя»): uv-кэш и xlv — в именованных томах
-          # (общий кэш между свапами: джобы не перекачивают ~1 ГБ uv-кэша заново). Ротация —
-          # штатный janitor purge_tmp (find /tmp -mmin +720), видит содержимое примаунченных томов.
-          docker volume create gh-runner-uv-cache >/dev/null 2>&1 || true
-          docker volume create gh-runner-xlv >/dev/null 2>&1 || true
-          TMP="unbreak-$$"
-          docker run -d --name "$TMP" --restart unless-stopped --cpus 4 --memory 4g \
-            -e REPO_URL=https://github.com/mytab0r/aicontent-factory -e RUNNER_SCOPE=repo \
-            -e RUNNER_NAME="$RUNNER_NAME" -e LABELS="$LBL" -e RUNNER_TOKEN="$REG" \
-            -e RUNNER_WORKDIR="$WORK" -e CONFIGURED_ACTIONS_RUNNER_FILES_DIR=/runner/data \
-            -e DISABLE_AUTOMATIC_DEREGISTRATION=true \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            -v "$NAME-data:/runner/data" \
-            -v gh-runner-aicontent-factory-tools:/opt/hostedtoolcache \
-            -v gh-runner-uv-cache:/tmp/acf-uv-cache \
-            -v gh-runner-xlv:/tmp/xlv \
-            -v "$VOL:$WORK" \
-            myoung34/github-runner:ubuntu-noble
-          # дождаться регистрации нового
-          for i in $(seq 1 60); do docker logs "$TMP" 2>&1 | grep -q "Listening for Jobs" && break; sleep 5; done
-          # t_5cdbb967: порядок критичен. При target=pc джоба бежит ВНУТРИ пересоздаваемого
-          # контейнера: rm старого = суицид джобы, шаги после не выполнятся. Поэтому
-          # rename/сети — ДО rm; rm последним.
-          docker rm -f "$NAME-old" || true
-          docker rename "$NAME" "$NAME-old"
-          docker rename "$TMP" "$NAME"
-          for n in comfynet gpu-net; do docker network connect $n "$NAME" || true; done
-          # старый контейнер (зомби-lease) уходит вместе с RW-слоем
-          docker rm -f "$NAME-old" || true
-          # t_5cdbb967: хвосты прошлых recreate/unbreak-свапов (recreate-117 висел 3.3 ГБ и
-          # продолжал писать ~3 ГБ/ч в свой слой). К моменту этой строки свежая регистрация
-          # уже в "Listening", все unbreak-*/recreate-* - зомби прошлых циклов.
-          for z in $(docker ps -aq --filter "name=recreate-" --filter "name=unbreak-"); do docker rm -f "$z" || true; done
-          docker ps --format "{{.Names}} {{.Size}}" | grep -E "$NAME|recreate-|unbreak-" || true
+        run: bash deploy/gpu-pc/runner-swap.sh release ${{ github.event_name == 'schedule' && 'auto' || 'force' }}
+  swap-pc:
+    needs: swap-release
+    if: always() && (github.event_name == 'schedule' || inputs.target != 'release')
+    runs-on: [self-hosted, release]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: swap gh-runner-aicontent-factory
+        env:
+          REG: ${{ secrets.RUNNER_REG_TOKEN }}
+        run: bash deploy/gpu-pc/runner-swap.sh pc ${{ github.event_name == 'schedule' && 'auto' || 'force' }}
