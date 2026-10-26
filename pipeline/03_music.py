@@ -489,6 +489,17 @@ EDGE_RAMP_SEC = 30.0  # gain только на начале сегмента, к
 EDGE_MAX_GAIN = 18.0  # 3 прохода x клэмп 6 дБ
 
 
+def pmap(fn, items):
+    """t_ba72c7aa (run 40253826993: 03 music > 20 мин на 20 сегментах): ffmpeg однопоточен на сегмент,
+    сегменты независимы -> параллельно по ядрам. Порядок результатов = порядок items."""
+    from concurrent.futures import ThreadPoolExecutor
+    items = list(items)
+    if len(items) <= 1:
+        return [fn(x) for x in items]
+    with ThreadPoolExecutor(max_workers=min(len(items), os.cpu_count() or 4)) as ex:
+        return list(ex.map(fn, items))
+
+
 DJ_BARS = 8      # t_96de1cc6: переход 8 тактов 4/4 (16 тактов = 43 с при 89 BPM съедают час-микс)
 BASS_HZ = 200.0  # bass swap: ниже — бас, его в переходе держит только один трек
 
@@ -629,8 +640,7 @@ def trim_fade_tails(paths, max_sec=20.0, floor_db=6.0, log=print):
     import statistics
     import subprocess
     import tempfile
-    cuts = []
-    for p in paths:
+    def one(p):
         dur = _probe_sec(p)
         # metadata=1 кладёт RMS в метаданные кадра, в stderr их нет: без ametadata=print win пуст и срез = no-op
         proc = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-loglevel", "error", "-i", p, "-af",
@@ -640,8 +650,7 @@ def trim_fade_tails(paths, max_sec=20.0, floor_db=6.0, log=print):
         win = [float(x) if x != "-inf" else -120.0
                for x in re.findall(r"RMS_level=(-?[\d.]+|-inf)", proc.stdout)]
         if len(win) < 10:  # тимеровая сетка: короткий/битый файл не режем
-            cuts.append(0.0)
-            continue
+            return 0.0
         frame = dur / len(win)  # astats reset=1 -> окно на кадр (~23 мс)
         body = statistics.median(win)
         n = 0
@@ -655,8 +664,9 @@ def trim_fade_tails(paths, max_sec=20.0, floor_db=6.0, log=print):
             subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", p, "-t", str(dur - cut),
                             "-c:a", "libmp3lame", "-b:a", "192k", tmp], check=True)
             os.replace(tmp, p)
-        cuts.append(float(cut))
         log(f"trim_fade_tail {os.path.basename(p)}: -{cut:.0f} с (хвост-затухание)")
+        return float(cut)
+    cuts = pmap(one, paths)
     return cuts
 
 
@@ -668,8 +678,7 @@ def trim_fade_head(paths, max_sec=20.0, floor_db=6.0, log=print):
     import re
     import statistics
     import subprocess
-    cuts = []
-    for p in paths:
+    def one(p):
         dur = _probe_sec(p)
         proc = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-loglevel", "error", "-i", p, "-af",
                                "astats=metadata=1:reset=1:measure_overall=RMS_level:measure_perchannel=none,"
@@ -678,8 +687,7 @@ def trim_fade_head(paths, max_sec=20.0, floor_db=6.0, log=print):
         win = [float(x) if x != "-inf" else -120.0
                for x in re.findall(r"RMS_level=(-?[\d.]+|-inf)", proc.stdout)]
         if len(win) < 10:
-            cuts.append(0.0)
-            continue
+            return 0.0
         frame = dur / len(win)
         body = statistics.median(win)
         n = 0
@@ -693,8 +701,9 @@ def trim_fade_head(paths, max_sec=20.0, floor_db=6.0, log=print):
             subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", p, "-ss", str(cut),
                             "-c:a", "libmp3lame", "-b:a", "192k", tmp], check=True)
             os.replace(tmp, p)
-        cuts.append(float(cut))
         log(f"trim_fade_head {os.path.basename(p)}: -{cut:.0f} с (вступление-затухание)")
+        return float(cut)
+    cuts = pmap(one, paths)
     return cuts
 
 BODY_SEC, BODY_MAX_GAIN, BODY_TOL = 60.0, 6.0, 0.5
@@ -729,16 +738,16 @@ def body_match(paths, log=print):
     расходились до 6 дБ -> гейт 03c «скачок громкости 4.9/5.8 LU между блоками». Константный gain
     на сегмент по short-term LUFS середины (body_lufs, метрика гейта A18) к телу первого, клэмп ±BODY_MAX_GAIN. Гейт не ослаблен."""
     ref = body_lufs(paths[0])
-    gains = [0.0]
-    for p in paths[1:]:
+
+    def one(p):
         g = max(-BODY_MAX_GAIN, min(BODY_MAX_GAIN, ref - body_lufs(p)))
         if abs(g) < BODY_TOL:
             g = 0.0
         else:
             _apply_gain(p, g)
-        gains.append(round(g, 2))
         log(f"body_match {p}: {g:+.2f} дБ")
-    return gains
+        return round(g, 2)
+    return [0.0] + pmap(one, paths[1:])
 
 
 def prep_segments(paths, log=print):
@@ -775,23 +784,24 @@ def concat_tracks(paths: list[str], out_path, xfade: float = XFADE) -> tuple[lis
     if len(paths) == 1:
         shutil.copy(paths[0], out_path)
         return [0.0], []
-    plans = [dj_plan(paths[i - 1], paths[i], xfade=xfade) for i in range(1, len(paths))]
+    plans = pmap(lambda i: dj_plan(paths[i - 1], paths[i], xfade=xfade), range(1, len(paths)))
     starts, seams, t = [], [], 0.0
     # рядом с выходом: час flac ~600 МБ, /tmp раннера мал; TemporaryDirectory удалит при любом исходе
     with tempfile.TemporaryDirectory(dir=os.path.dirname(os.path.abspath(out_path))) as td:
-        segs = []
+        cuts = []
         for i, p in enumerate(paths):
             s0 = plans[i - 1][1] if i else 0.0
             e0 = plans[i][0] if i < len(plans) else _probe_sec(p)
             lin = plans[i - 1][2] if i else 0.0
             sin_ = lin if i and plans[i - 1][3] else 0.0
             sout = plans[i][2] if i < len(plans) and plans[i][3] else 0.0
-            segs.append(_dj_seg(p, f"{td}/{i:03d}.flac", s0, e0, sin_, sout))
+            cuts.append((p, f"{td}/{i:03d}.flac", s0, e0, sin_, sout))
             if i:
                 t -= lin
                 seams.append(t + lin / 2)
             starts.append(t)
             t += e0 - s0
+        segs = pmap(lambda c: _dj_seg(*c), cuts)
         _xfade_chain(segs, [pl[2] for pl in plans], out_path)
     return starts, seams
 

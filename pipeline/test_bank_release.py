@@ -389,9 +389,9 @@ def test_master_final_loudnorms_when_too_quiet():
     sys.modules["br_mf"] = br
     spec.loader.exec_module(br)
 
-    class R:  # t_96de1cc6: loudnorm 2-проходный, 1-й проход отдаёт замер json в stderr
-        stderr = ('{"input_i": "-17.4", "input_tp": "-2.0", "input_lra": "6.0", '
-                  '"input_thresh": "-27.5", "target_offset": "0.0"}')
+    class R:  # t_96de1cc6: loudnorm 2-проходный; 1-й проход = ebur128 Summary в stderr (t_ba72c7aa: быстрее json-анализа)
+        stderr = ("Summary:\n  Integrated loudness:\n    I:         -17.4 LUFS\n    Threshold: -27.5 LUFS\n"
+                  "  Loudness range:\n    LRA:         6.0 LU\n  True peak:\n    Peak:       -2.0 dBFS\n")
         stdout = ""
         returncode = 0
 
