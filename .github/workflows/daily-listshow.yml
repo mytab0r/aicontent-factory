@@ -97,18 +97,8 @@ jobs:
           git add -f .state/listshow_idx.txt
           git diff --cached --quiet || git commit -m "chore: advance listshow rotation [skip ci]"
           git pull --rebase -q && git push || true  # root-cause: t_f95a06da (rebase-гонка ежедневных воркфлоу)
-      - name: upload artifact
-        if: steps.flag.outputs.go == '1' && always()
-        continue-on-error: true  # root-cause: t_f95a06da (артефакт не обязан существовать)
-        uses: actions/upload-artifact@v4  # artifact-ok: логи прогона; доставка результата вне артефактов
-        timeout-minutes: 15  # t_6758c86f: сетевой шаг не висит до таймаута джобы
-        with:
-          name: listshow-${{ github.run_id }}
-          path: |
-            runs/*/idea.json
-            runs/*/render.json
-            runs/*/published.json
-          retention-days: 1  # t_9d452170: доставка вне артефактов (TG/git); квота storage 500MB
+      # t_1011874c: upload-artifact убран — артефакт никто не скачивал (результат в YouTube/TG/логе шага),
+      # а каждая загрузка копила GB-часы общей квоты storage аккаунта (500MB x часы месяца).
       - name: cleanup token
         if: always()
         run: rm -f .state/youtube_token.json

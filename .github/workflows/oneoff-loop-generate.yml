@@ -112,12 +112,3 @@ jobs:
             runs/loopgen/raw/00000.png
             runs/loopgen/raw/00080.png
           if-no-files-found: warn
-      - name: upload full frames (fallback, big)
-        if: failure()
-        uses: actions/upload-artifact@v4  # artifact-ok: логи прогона; доставка результата вне артефактов
-        timeout-minutes: 15  # t_6758c86f: сетевой шаг не висит до таймаута джобы
-        with:
-          retention-days: 1  # t_9d452170: доставка вне артефактов (TG/git); квота storage 500MB
-          name: loopgen-frames-full
-          path: runs/loopgen/
-          if-no-files-found: warn

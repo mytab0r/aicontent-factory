@@ -38,5 +38,11 @@ with tempfile.TemporaryDirectory() as d:
     pathlib.Path(d, ".github/workflows/img.yml").write_text("      - run: echo ok\n")
     g("commit", "-qam", "fix"); g("update-ref", "refs/remotes/origin/main", "HEAD")
     assert lint.lint_branches(d) == []
+# t_1011874c: квота storage в GB-часах — upload каталогом и upload вне ARTIFACT_ALLOW обязаны ронять линт
+up = "      - uses: actions/upload-artifact@v4\n        with:\n          retention-days: 1\n          path: runs/loopgen/\n"
+assert lint.lint_upload_budget("daily-video.yml", up.splitlines()) == [(4, "upload-dir")]
+assert lint.lint_upload_budget("new-daily.yml", up.replace("runs/loopgen/", "runs/x.mp4").splitlines()) == [(1, "upload-not-allowed")]
+assert lint.lint_upload_budget("daily-video.yml", up.replace("runs/loopgen/", "runs/*/video.mp4").splitlines()) == []
+assert lint.lint_upload_budget("daily-video.yml", up.replace("runs/loopgen/", "out/*  # x").splitlines()) == []
 assert lint.main(str(ROOT)) == 0
 print("ok")

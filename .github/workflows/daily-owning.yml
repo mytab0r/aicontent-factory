@@ -76,18 +76,8 @@ jobs:
           git add -f .state/owning_idx.txt
           git diff --cached --quiet || git commit -m "chore: advance owning rotation [skip ci]"
           git pull --rebase -q && git push || true  # root-cause: t_f95a06da
-      - name: upload artifact
-        if: steps.guard.outputs.go == '1'
-        continue-on-error: true  # квота artifact storage репо (22:03 18.10) не должна валить выпуск  # root-cause: t_f95a06da
-        uses: actions/upload-artifact@v4  # artifact-ok: логи прогона; доставка результата вне артефактов
-        timeout-minutes: 15  # t_6758c86f: сетевой шаг не висит до таймаута джобы
-        with:
-          name: owning-${{ github.run_id }}
-          path: |
-            runs/*/video.mp4
-            runs/*/idea.json
-            runs/*/spokes/*
-          retention-days: 1  # t_9d452170: доставка вне артефактов (TG/git); квота storage 500MB
+      # t_1011874c: upload-artifact убран — артефакт никто не скачивал (результат в YouTube/TG/логе шага),
+      # а каждая загрузка копила GB-часы общей квоты storage аккаунта (500MB x часы месяца).
       - name: cleanup token
         if: always()
         run: rm -f .state/youtube_token.json
