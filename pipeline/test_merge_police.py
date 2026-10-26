@@ -47,6 +47,18 @@ def test_decide_passes_green_case():
     assert v["premature"] is False, v
 
 
+def test_ci_test_job_token_can_read_pulls_and_checks():
+    # t_3ecce166: default read-токен = contents+metadata+packages -> merge-police 403, master ci красный,
+    # pay-image не публиковал образ. Без этих прав P10 никогда не зелёный на push.
+    import re
+    from pathlib import Path
+    wf = (Path(__file__).resolve().parent.parent / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    m = re.search(r"^  test:\n(.*?)(?=^  [a-z-]+:\n)", wf, re.M | re.S)
+    assert m, "ci.yml: нет job test"
+    for perm in ("pull-requests: read", "checks: read", "contents: read"):
+        assert re.search(rf"^      {perm}\s*$", m.group(1), re.M), f"job test: нет permissions '{perm}' (merge-police 403)"
+
+
 if __name__ == "__main__":  # t_110fa85f: CI запускает файл как скрипт
     _fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for _f in _fns:
