@@ -66,7 +66,7 @@ assert sh.scene_of("Midnight Train") == "Midnight Train"
 print("test_shorts hooks OK")
 
 # сетевой TimeoutError на next_chunk валил выпуск 13.10 — загрузка обязана ретраить
-for f in ("05_publish.py", "07_shorts.py"):
+for f in ("05_publish.py",):  # 07_shorts идёт через upload_resumable (ниже)
     assert "next_chunk(num_retries=" in (Path(__file__).parent / f).read_text(encoding="utf-8"), f
 print("test_shorts upload-retry OK")
 
@@ -98,3 +98,9 @@ print("test_shorts V3 gate wired OK")
 _src = (Path(__file__).parent / "07_shorts.py").read_text(encoding="utf-8")
 assert "SHORT_FADES" in _src.split("def render")[1].split("def ")[0], "render без фейдов A24"
 assert "short_edge_why(" in _src.split("def main")[1], "main без проверки краёв A24"
+
+
+# Регрессия 26.10 (run 40260975482): шортс падал TimeoutError на next_chunk без resume.
+_src = (Path(__file__).parent / "07_shorts.py").read_text(encoding="utf-8")
+assert "upload_resumable(" in _src and "next_chunk(" not in _src, "заливка шортсов обязана идти через 05_publish.upload_resumable"
+print("OK shorts upload resume")
