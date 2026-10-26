@@ -399,11 +399,15 @@ def flatten_blocks(track: str, log=print) -> None:
     import subprocess
     from quality_gate import JUMP_BLOCK, JUMP_MAX
     JB10 = int(JUMP_BLOCK * 10)  # JUMP_BLOCK float в quality_gate (60.0)
-    target = JUMP_MAX - 1.5
+    # t_a771ef4f: допуск = половина цели. Блоки +2.4/-2.4 от медианы (каждый «в норме» при допуске 2.5)
+    # дают соседям 4.8 LU > JUMP_MAX. При |g| <= tol для всех оставленных блоков сосед <= 2*tol < JUMP_MAX.
+    tol = (JUMP_MAX - 1.5) / 2
+    off = 30  # сетка блоков = сетка гейта (loudjump_why пропускает первые 3 с)
     r = subprocess.run(["ffmpeg", "-nostats", "-i", track,
                         "-af", "ebur128=framelog=info", "-f", "null", "-"],
                        capture_output=True, text=True)
     st = [float(x) for x in _re.findall(r"S:\s*(-?[\d.]+)", r.stderr)][:-1]  # шаг 0.1 с
+    st = st[off:]
     nblk = len(st) // JB10
     if nblk < 2:
         log("::warning::flatten_blocks: мало отсчётов ebur128, пропуск")
@@ -414,11 +418,13 @@ def flatten_blocks(track: str, log=print) -> None:
         meds.append(ch[len(ch) // 2])
     whole = sorted(st)[len(st) // 2]
     gains = [max(-6.0, min(6.0, whole - m)) for m in meds]
-    if all(abs(g) <= target for g in gains):
+    if all(abs(g) <= tol for g in gains):
         return
+    # последний блок тянется до конца файла: хвост < 60 с иначе остаётся без поправки
+    end = lambda i: (i + 1) * JB10 / 10 + off / 10 if i < nblk - 1 else 1e9
     expr = "+".join(
-        f"({10 ** (g / 20):.4f}-1)*between(t,{i * JB10 / 10:.1f},{(i + 1) * JB10 / 10:.1f})"
-        for i, g in enumerate(gains) if abs(g) > target)
+        f"({10 ** (g / 20):.4f}-1)*between(t,{(i * JB10 + (off if i else 0)) / 10:.1f},{end(i):.1f})"
+        for i, g in enumerate(gains) if abs(g) > tol)
     af = f"volume=volume='1.0+{expr}':eval=frame"
     tmp = track + ".fl.mp3"
     rr = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", track,
