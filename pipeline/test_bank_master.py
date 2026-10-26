@@ -78,6 +78,29 @@ def test_master_final_tp_on_real_audio():
         assert peak <= -0.9, f"Peak {peak} dB — выше порога гейта (TP примерно равен peak для синуса)"
 
 
+def test_master_final_lufs_in_gate_on_peaky_audio():
+    """t_2c32a785: выпуски банка -16.1..-16.5 LUFS = 03c FAIL «громкость вне -16..-13: YouTube-нормализация».
+    loudnorm linear=true на пиковом треке (gain поднимает TP выше цели) молча уходил в динамический режим
+    и недотягивал. Фикстура: тихий pink + бочка 55 Гц (I -23.5, TP -6). Старый код: I -18.4 FAIL.
+    Цель и окно гейта из quality_gate (LUFS_TARGET/MIN_I/MAX_I)."""
+    import quality_gate as qg
+    import mastering
+    br = _load("bank_release_lufs", HERE / "bank_release.py")
+    br._music_mod = lambda: type("M", (), {"fade_end": staticmethod(lambda *a, **k: None)})
+    with tempfile.TemporaryDirectory() as td:
+        out = f"{td}/track.mp3"
+        sp.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "anoisesrc=c=pink:a=0.05:d=60:r=48000",
+                "-f", "lavfi", "-i", "aevalsrc='if(lt(mod(t,0.5),0.08),0.8*sin(2*PI*55*t)*exp(-30*mod(t,0.5)),0)':s=48000:d=60",
+                "-filter_complex", "[0:a][1:a]amix=inputs=2:normalize=0", "-ac", "2",
+                "-c:a", "libmp3lame", "-b:a", "192k", out], check=True)
+        assert mastering.measure(out)["i"] < qg.MIN_I - 2  # фикстура реально тихая
+        br.master_final(out, "anime lofi")
+        m = mastering.measure(out)
+        assert qg.MIN_I <= m["i"] <= qg.MAX_I, f"громкость {m} вне {qg.MIN_I}..{qg.MAX_I}"
+        assert abs(m["i"] - qg.LUFS_TARGET) <= br.LN_TOL + 0.2, m
+        assert m["tp"] <= qg.MAX_TP, m
+
+
 if __name__ == "__main__":  # t_110fa85f: CI запускает файл как скрипт — без блока def test_* не выполняются
     _fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for _f in _fns:

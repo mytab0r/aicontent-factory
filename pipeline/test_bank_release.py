@@ -420,7 +420,10 @@ def test_master_final_loudnorms_when_too_quiet():
             sys.modules.pop("mastering", None)
         else:
             sys.modules["mastering"] = saved_mastering
-    assert any("loudnorm" in " ".join(map(str, c)) for c in ran), ran[:2]
+    # t_2c32a785: нормализация = постоянный gain к LUFS_TARGET (loudnorm linear молча уходил в динамику).
+    import re as _re
+    gains = [float(g) for c in ran for g in _re.findall(r"volume=(-?[\d.]+)dB,", " ".join(map(str, c)))]
+    assert gains and max(gains) >= qg.LUFS_TARGET - fake_mastering.measure(track)["i"] - 0.05, (gains, ran[:2])
 
 
 def test_trim_fade_head_cuts_leading_fade():
