@@ -130,4 +130,4 @@ jobs:
         with:
           retention-days: 1  # t_9d452170: доставка вне артефактов (TG/git); квота storage 500MB
           name: mix-check
-          path: out/
+          path: out/*  # t_1011874c: только файлы, не каталог

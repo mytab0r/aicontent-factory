@@ -28,6 +28,17 @@ ARTIFACT_OK = re.compile(r"#\s*artifact-ok:\s*\S")
 # t_9d452170: каждый upload обязан иметь retention-days: 1 (квота storage 500MB/account; доставка вне артефактов)
 RETENTION_1 = re.compile(r"^\s*retention-days:\s*['\"]?1['\"]?\s*(#.*)?$")
 UPLOAD_CTX = 10  # между uses и retention бывают if:/continue-on-error: строки
+# t_1011874c: квота storage считается в GB-часах за месяц (500MB x 744h, общая с Packages), retention-days: 1
+# её не спасает: 53 загрузки loopgen-frames-full (path: каталог, до 0.8GB) съели ~1400 GB-h при бюджете 372.
+# Поэтому: (1) path каталогом = FAIL, (2) upload-artifact разрешён только в workflow из ARTIFACT_ALLOW —
+# новый upload = осознанное добавление сюда с причиной (кто скачивает артефакт).
+UPLOAD_DIR = re.compile(r"""^\s*(?:-\s*)?path:\s*['"]?[^'"#\s|*]+/['"]?\s*(#.*)?$""")
+ARTIFACT_ALLOW = {
+    "daily-video.yml",  # g1zm0_metrics.py качает video.mp4 для аудио-аудита
+    "oneoff-loop-generate.yml",  # oneoff-loop-final.yml качает artifact loopgen
+    "oneoff-loop-final.yml", "oneoff-generate-samples.yml", "oneoff-dd-samples.yml", "oneoff-ab-refpool.yml",
+    "oneoff-mix-check.yml", "oneoff-shorts-proof.yml",  # ручные разовые прогоны (workflow_dispatch)
+}
 
 
 def _rules(line, lines=None, i=0):
@@ -118,13 +129,27 @@ def _has_wf(git, ref):
         return False
 
 
+def lint_upload_budget(name, lines):
+    """t_1011874c: upload только в разрешённых workflow и без загрузки целого каталога."""
+    out = []
+    for i, line in enumerate(lines):
+        if not UPLOAD.search(line):
+            continue
+        if name not in ARTIFACT_ALLOW:
+            out.append((i + 1, "upload-not-allowed"))
+        for j in range(i + 1, min(i + 1 + UPLOAD_CTX, len(lines))):
+            if UPLOAD_DIR.match(lines[j]):
+                out.append((j + 1, "upload-dir"))
+    return out
+
+
 def main(root="."):
     root = pathlib.Path(root)
     files = sorted(p for ext in ("*.yml", "*.yaml") for p in (root / ".github/workflows").glob(ext))
     bad = 0
     for f in files:
         lines = f.read_text(encoding="utf-8").splitlines()
-        for n, rule in lint_text("\n".join(lines)) + lint_net_timeout(lines):
+        for n, rule in lint_text("\n".join(lines)) + lint_net_timeout(lines) + lint_upload_budget(f.name, lines):
             print(f"{f.relative_to(root).as_posix()}:{n}: {rule}: {lines[n - 1].strip()}")
             bad += 1
     if bad:

@@ -61,10 +61,5 @@ jobs:
           git diff --cached --quiet || git commit -m "chore: advance dd scene rotation [skip ci]"
           git push || true  # root-cause: t_f95a06da
 
-      - name: upload run artifact
-        uses: actions/upload-artifact@v4  # artifact-ok: логи прогона; доставка результата вне артефактов
-        timeout-minutes: 15  # t_6758c86f: сетевой шаг не висит до таймаута джобы
-        with:
-          name: dd-video-${{ github.run_id }}
-          path: runs/*/video.mp4
-          retention-days: 1  # t_9d452170: доставка вне артефактов (TG/git); квота storage 500MB
+      # t_1011874c: upload-artifact убран — артефакт никто не скачивал (результат в YouTube/TG/логе шага),
+      # а каждая загрузка копила GB-часы общей квоты storage аккаунта (500MB x часы месяца).
