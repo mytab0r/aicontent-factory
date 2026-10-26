@@ -23,6 +23,7 @@ import * as invoiceCreate from '../../functions/api/invoice/create.js';
 import * as invoiceApi from '../../functions/api/invoice/[[id]].js';
 import * as invoicePage from '../../functions/i/[[id]].js';
 import * as payPage from '../../functions/pay/index.js';
+import * as tarot from '../../functions/tarot/index.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PROVIDERS_FILE = [path.join(here, 'payment-providers.json'), path.join(here, '../../config/payment-providers.json')].find((f) => fs.existsSync(f));
@@ -149,6 +150,16 @@ export function makeServer({ dataDir, ownerEmail, apiToken, accessTeam, accessAu
 
     // публичное: адрес из реестра для агентов (t_705becfe)
     if (p === '/api/address' && m === 'GET') return addressApi.onRequestGet(ctx());
+
+    // публичное: таро-воронка IG/TikTok (t_6c820b8a); stats — только по PAY_API_TOKEN (дайджест)
+    if (p === '/tarot' && m === 'GET') return tarot.landing(ctx());
+    if (p === '/api/tarot/reading' && m === 'POST') return tarot.reading(ctx());
+    if (p === '/api/tarot/deep' && m === 'POST') return tarot.deep(ctx());
+    if ((mm = p.match(/^\/tarot\/r\/([A-Za-z0-9]{1,64})$/)) && m === 'GET') return tarot.paidReading(ctx({ id: mm[1] }));
+    if (p === '/api/tarot/stats' && m === 'GET') {
+      const tok = (request.headers.get('authorization') || '').replace(/^Bearer /, '');
+      return apiToken && safeEq(tok, apiToken) ? tarot.stats(ctx()) : json({ error: 'forbidden' }, 403);
+    }
 
     // Zoraxy SSO (логин/пароль) перед админкой: Zoraxy добавляет секретный заголовок только после входа
     const viaSso = !!proxySecret && safeEq(request.headers.get('x-pay-proxy-auth') || '', proxySecret);
