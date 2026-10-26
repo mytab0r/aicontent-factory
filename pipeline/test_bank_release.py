@@ -532,6 +532,26 @@ def test_lofi_energy_gate_excludes_fast_segments():
     assert len(bank_release.energy_ok(fast, "chill phonk")) == 25
 
 
+def test_flatten_blocks_passes_loudjump_gate():
+    """t_a771ef4f: A18 (скачок громкости между блоками) после master_final.flatten_blocks не возвращается.
+    Фикстуры: ступень 7.8 LU и чередование +2.4/-2.4 LU от медианы (каждый блок в старом допуске 2.5,
+    соседи 4.8 > JUMP_MAX: старый flatten пропускал их как есть, run 40171388541 = 4.1 LU)."""
+    import subprocess
+    import quality_gate as qg
+    alt = "+".join(f"{10 ** (x / 20):.4f}*between(t,{i * 60},{(i + 1) * 60}-0.001)"
+                   for i, x in enumerate([0, 2.4, -2.4, 2.4, -2.4, 0]))
+    with tempfile.TemporaryDirectory() as td:
+        for name, d, expr in [("step", 330, "if(lt(t,150),1,0.4)"), ("alt", 360, alt)]:
+            f = f"{td}/{name}.mp3"
+            subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
+                            f"anoisesrc=d={d}:c=pink:a=0.1:seed=7", "-af", f"volume='{expr}':eval=frame",
+                            "-ac", "2", "-c:a", "libmp3lame", "-b:a", "192k", f], check=True)
+            assert qg.loudjump_why(f), name  # фикстура воспроизводит сигнатуру
+            bank_release.flatten_blocks(f)
+            assert qg.loudjump_why(f) == [], (name, qg.loudjump_why(f))
+    assert qg.JUMP_MAX == 4.0 and qg.JUMP_BLOCK == 60.0  # порог гейта не трогали
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for f in fns:
