@@ -11,8 +11,19 @@ export async function onRequestPost({ env, request }) {
   const id = crypto.randomUUID().replace(/-/g, '').slice(0, 12);
   // Уникальная сумма: база в центах + случайный хвост 1..999 микроюнитов (6 знаков).
   // Клиент платит ровно её, проверка — точное совпадение (чужой перевод счёт не закроет).
-  const tail = 1 + (crypto.getRandomValues(new Uint16Array(1))[0] % 999);
-  const dueMicro = Math.round(amount * 100) * 10_000 + tail;
+  // Хвост резервируется ключом due:<dueMicro>: два pending-счёта с одной суммой
+  // закрывались бы одним переводом. get+put не атомарны (KV), гонка параллельных
+  // create в одну мс возможна, но не 1/999 на каждый счёт.
+  // ponytail: 999 хвостов на одну базовую сумму за INVOICE_TTL (30 дн); упрёмся — 503,
+  // тогда расширить хвост до 4-5 знаков или освобождать due: при оплате/истечении.
+  let dueMicro = 0;
+  for (let i = 0; i < 20 && !dueMicro; i++) {
+    const tail = 1 + (crypto.getRandomValues(new Uint16Array(1))[0] % 999);
+    const cand = Math.round(amount * 100) * 10_000 + tail;
+    if ((await env.KV.get('due:' + cand)) === null) dueMicro = cand;
+  }
+  if (!dueMicro) return json({ error: 'no free amount tail, retry later' }, 503);
+  await env.KV.put('due:' + dueMicro, id, { expirationTtl: INVOICE_TTL });
   const inv = {
     amount: (dueMicro / 1e6).toFixed(6),
     dueMicro: String(dueMicro),
