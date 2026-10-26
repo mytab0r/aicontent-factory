@@ -296,3 +296,18 @@ if __name__ == "__main__":
     test_put_verifies_checksum_and_skips_torn_copy()
     test_lofi_group_counts_ignore_fast_segments()
     print("ok test_bank")
+
+
+def test_put_uses_docker_cli(monkeypatch=None):
+    """26.10 run 40337950296: put_verified получал голый _sh -> локальный `cp src ace-step:...`
+    (No such file or directory), 4 принятых сегмента из 4 потеряны. docker_sh обязан звать docker."""
+    calls = []
+    orig = bank._sh
+    bank._sh = lambda *a: calls.append(a) or ""
+    try:
+        bank._docker("cp", "a", "ace-step:/b")
+    finally:
+        bank._sh = orig
+    assert calls == [("docker", "cp", "a", "ace-step:/b")], calls
+    src = Path(bank.__file__).read_text(encoding="utf-8")
+    assert not re.search(r"put_verified\([^)]*,\s*_sh\)", src), "put_verified получает голый _sh"

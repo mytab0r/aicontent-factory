@@ -75,6 +75,12 @@ def _sh(*a):
     return subprocess.run(list(a), check=True, capture_output=True, text=True).stdout
 
 
+def _docker(*a):
+    """docker_sh для put_verified/group_counts: 26.10 голый _sh отдавал `cp ... ace-step:...`
+    локальному cp (exit 1) — принятые гейтом сегменты не попадали в банк."""
+    return _sh("docker", *a)
+
+
 def release_busy(repo=None, token=None, sleep=time.sleep, tries=3) -> bool:
     """Идёт/ждёт ли daily-video. Сеть к GitHub API недоступна после повторов -> True (уступаем GPU,
     следующий прогон продолжит): падение банка из-за RemoteDisconnected — не ошибка генерации."""
@@ -328,7 +334,7 @@ def main():
     need = -(-int(os.environ.get("TRACK_DURATION_SEC", "3600")) // 180)
     if genre != "anime lofi":  # refpool = семейство ab_1/ab_3 + эталоны только для lofi; phonk одобрен noref
         try:
-            counts = group_counts(genre, lambda *a: _sh("docker", *a))
+            counts = group_counts(genre, _docker)
         except Exception as e:
             print(f"bank: группы не прочитаны ({type(e).__name__}: {e})")
             counts = {}
@@ -341,7 +347,7 @@ def main():
         import refpool
         pair = refpool.pick()
         try:
-            counts = group_counts(genre, lambda *a: _sh("docker", *a))
+            counts = group_counts(genre, _docker)
             prompt = choose_prompt(refpool.PROMPT_VARIANTS, counts, need + MARGIN, pair["prompt"],
                                    lambda v: (music.prompt_bpm(v), music.prompt_key(v)))
             target = effective_target(target, have(), counts, need)
@@ -369,7 +375,7 @@ def main():
         meta = {"genre": genre, "prompt": prompt, "ref": ref, "seed": seed,
                 "src": Path(p).name, "ts": int(time.time())}
         # sha256 после cp (put_verified): рваный docker cp не попадает в банк (23.10)
-        ok = put_verified(p, genre, name + ".mp3", meta, _sh)
+        ok = put_verified(p, genre, name + ".mp3", meta, _docker)
         Path(p).unlink(missing_ok=True)
         return ok
 
