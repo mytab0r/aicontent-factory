@@ -7,6 +7,9 @@ jobs:
     runs-on: [self-hosted, pc]
     timeout-minutes: 20
     steps:
+      - name: C disk inventory (read-only)
+        run: |
+          docker run --rm -v /run/desktop/mnt/host/c:/x:ro alpine:3.20 sh -c 'df -h /x | tail -1; du -xsh /x/dockerlocal/* 2>/dev/null | sort -h; du -xsh /x/dockerlocal/*/* 2>/dev/null | sort -h | tail -25; du -xsh /x/Users/*/AppData/Local/Temp 2>/dev/null; du -xsh /x/Users/*/Downloads 2>/dev/null' || true
       - name: bank audit (sha + ffprobe both sides)
         run: |
           set -e
