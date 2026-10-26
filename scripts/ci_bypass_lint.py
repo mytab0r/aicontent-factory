@@ -33,6 +33,9 @@ UPLOAD_CTX = 10  # между uses и retention бывают if:/continue-on-err
 # Поэтому: (1) path каталогом = FAIL, (2) upload-artifact разрешён только в workflow из ARTIFACT_ALLOW —
 # новый upload = осознанное добавление сюда с причиной (кто скачивает артефакт).
 UPLOAD_DIR = re.compile(r"""^\s*(?:-\s*)?path:\s*['"]?[^'"#\s|*]+/['"]?\s*(#.*)?$""")
+PATH_BLOCK = re.compile(r"^\s*(?:-\s*)?path:\s*[|>][-+]?\s*(#.*)?$")
+BLOCK_DIR = re.compile(r"""^\s+['"]?[^'"#\s*!]+/['"]?\s*(#.*)?$""")
+# ponytail: каталог без завершающего `/` (path: runs/loopgen) не ловится — закрывает ARTIFACT_ALLOW (upload-not-allowed)
 ARTIFACT_ALLOW = {
     "daily-video.yml",  # g1zm0_metrics.py качает video.mp4 для аудио-аудита
     "oneoff-loop-generate.yml",  # oneoff-loop-final.yml качает artifact loopgen
@@ -140,6 +143,15 @@ def lint_upload_budget(name, lines):
         for j in range(i + 1, min(i + 1 + UPLOAD_CTX, len(lines))):
             if UPLOAD_DIR.match(lines[j]):
                 out.append((j + 1, "upload-dir"))
+            elif PATH_BLOCK.match(lines[j]):
+                # `path: |` / `>`: каждый элемент блока — отдельный путь (ревью t_1011874c)
+                ind = len(lines[j]) - len(lines[j].lstrip())
+                for k in range(j + 1, len(lines)):
+                    item = lines[k]
+                    if item.strip() and len(item) - len(item.lstrip()) <= ind:
+                        break
+                    if BLOCK_DIR.match(item):
+                        out.append((k + 1, "upload-dir"))
     return out
 
 

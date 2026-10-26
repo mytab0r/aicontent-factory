@@ -44,5 +44,9 @@ assert lint.lint_upload_budget("daily-video.yml", up.splitlines()) == [(4, "uplo
 assert lint.lint_upload_budget("new-daily.yml", up.replace("runs/loopgen/", "runs/x.mp4").splitlines()) == [(1, "upload-not-allowed")]
 assert lint.lint_upload_budget("daily-video.yml", up.replace("runs/loopgen/", "runs/*/video.mp4").splitlines()) == []
 assert lint.lint_upload_budget("daily-video.yml", up.replace("runs/loopgen/", "out/*  # x").splitlines()) == []
+blk = "      - uses: actions/upload-artifact@v4\n        with:\n          retention-days: 1\n          path: |\n            runs/*/video.mp4\n            runs/loopgen/\n      - name: next\n        run: echo a/\n"
+assert lint.lint_upload_budget("oneoff-loop-generate.yml", blk.splitlines()) == [(6, "upload-dir")], lint.lint_upload_budget("oneoff-loop-generate.yml", blk.splitlines())
+assert lint.lint_upload_budget("oneoff-loop-generate.yml", blk.replace("path: |", "path: >-").splitlines()) == [(6, "upload-dir")]
+assert lint.lint_upload_budget("oneoff-loop-generate.yml", blk.replace("runs/loopgen/", "!runs/loopgen/").splitlines()) == []
 assert lint.main(str(ROOT)) == 0
 print("ok")
