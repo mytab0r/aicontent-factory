@@ -264,7 +264,7 @@ def put_verified(p, genre, name, meta, docker_sh, tries=2) -> bool:
                 docker_sh("exec", "ace-step", "mv", f"{d}/{remote}.part", f"{d}/{remote}")
             return True
         except Exception as e:
-            print(f"bank: put {type(e).__name__}: {e} - сегмент пропущен")
+            print(f"bank: put {type(e).__name__}: {e} stderr={getattr(e, 'stderr', '')!r} - сегмент пропущен")  # 26.10: phonk cp exit 1 без причины
             return False
     finally:
         local_json.unlink(missing_ok=True)
