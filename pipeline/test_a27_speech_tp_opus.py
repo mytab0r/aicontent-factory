@@ -7,10 +7,11 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import quality_gate as qg
 
 
-def _mk(out, gain_db):
+def _mk(out, peak_db):
+    # синус с точным пиком: loudnorm на шуме не попадает в TP (CI 26.10: цель -1.1 дала -1.8)
+    a = 10 ** (peak_db / 20)
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i",
-                    f"anoisesrc=d=6:c=pink:a=0.3,loudnorm=I=-14:TP={gain_db}", "-ar", "48000", "-c:a", "aac", "-b:a", "160k", str(out)],
-                   check=True)
+                    f"aevalsrc={a:.4f}*sin(2*PI*440*t):s=48000:d=6", "-c:a", "pcm_s16le", str(out)], check=True)
     return out
 
 
@@ -29,8 +30,8 @@ def test_speech_master_without_headroom_fails():
         return
     with tempfile.TemporaryDirectory() as td:
         d = pathlib.Path(td)
-        thin = _mk(d / "thin.m4a", -1.1)   # как мастер до A26: проходил MAX_TP -1.0, на YouTube -0.3..-0.8
-        ok = _mk(d / "ok.m4a", -2.0)       # мастер A26
+        thin = _mk(d / "thin.wav", -1.3)   # как мастер до A26: проходил MAX_TP -1.0, на YouTube -0.3..-0.8
+        ok = _mk(d / "ok.wav", -2.0)       # мастер A26
         assert -1.6 < _tp(thin) <= qg.MAX_TP, _tp(thin)  # фикстура: старый гейт её пропускал
         assert any("true peak" in w for w in qg.speech_why(thin)), qg.speech_why(thin)
         assert not any("true peak" in w for w in qg.speech_why(ok)), (_tp(ok), qg.speech_why(ok))
