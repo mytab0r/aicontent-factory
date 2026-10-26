@@ -505,6 +505,19 @@ def test_take_excludes_internal_dip_segment():
 
 
 
+
+def test_internal_swing_ignores_edge_fades():
+    """run 40243598650: все сегменты банка исключены (провал 52-69 дБ) из-за штатных fade-in/out к тишине."""
+    import subprocess as sp
+    with tempfile.TemporaryDirectory() as td:
+        f = Path(td) / "faded.mp3"
+        sp.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
+                "sine=frequency=440:sample_rate=44100:duration=180,volume=-20dB,"
+                "afade=t=in:d=6,afade=t=out:st=170:d=10", "-codec:a", "libmp3lame", "-b:a", "128k", str(f)],
+               check=True)
+        lo, hi = bank_release.internal_swing(f)
+        assert hi - lo <= bank_release.MAX_SWING_DB, (lo, hi)
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for f in fns:
