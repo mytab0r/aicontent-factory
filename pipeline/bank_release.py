@@ -305,16 +305,22 @@ TP_SAFE = -1.2   # после кодирования TP выше -> статич
 
 
 def loudnorm_2pass(src: str, dst: str) -> dict:
-    """Двухпроходный loudnorm linear=true: 1-й проход меряет (print_format=json), 2-й получает measured_*
+    """Двухпроходный loudnorm linear=true: 1-й проход меряет (ebur128: I/порог/LRA/TP), 2-й получает measured_*
     и даёт ОДИН постоянный gain (динамики нет, LRA не давится). Затем alimiter LIMIT_DB.
     03c FAIL 24.10 (TP -0.8): однопроходный loudnorm + mp3-перекодирование поднимали пики над -1."""
     import json
     import subprocess
     from quality_gate import LUFS_TARGET
     tgt = f"I={LUFS_TARGET:g}:TP={LIMIT_DB:g}:LRA=20"
-    err = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", src, "-af", f"loudnorm={tgt}:print_format=json",
+    # 1-й проход = ebur128 (I/порог/LRA/TP) вместо loudnorm-анализа: на часе 20 с против 127 с
+    # (run 40253826993: 03 music > 20 мин). Те же величины, что measured_* loudnorm (BS.1770).
+    import re as _re
+    err = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", src, "-map", "0:a", "-af", "ebur128=peak=true",
                           "-f", "null", "-"], capture_output=True, text=True, check=True).stderr
-    j = json.loads(err[err.rindex("{"):err.rindex("}") + 1])
+    tail = err[err.rindex("Summary:"):]
+    num = lambda k: _re.search(k + r":\s+(-?[\d.]+)", tail).group(1)
+    j = {"input_i": num("I"), "input_thresh": num("Threshold"), "input_lra": num("LRA"),
+         "input_tp": num("Peak"), "target_offset": "0.0"}
     # лимитер на 4x частоте: на 48 кГц он ловит сэмплы, не межсэмпловые пики (замер на банке: TP -0.7 vs -1.0)
     lim = f"aresample=192000,alimiter=limit={10 ** (LIMIT_DB / 20):.4f}:level=disabled:attack=1:release=50"
     af = (f"loudnorm={tgt}:linear=true:measured_I={j['input_i']}:measured_TP={j['input_tp']}:"
@@ -353,7 +359,7 @@ def _norm_segments(paths: list[Path], log=print) -> None:
     ponytail: однопроходный loudnorm не так точен, как two-pass; при возврате FAIL на
     LU-скачках — перейти на two-pass с кэшем измерений в meta сегмента."""
     from quality_gate import LUFS_TARGET
-    for p in paths:
+    def one(p):
         tmp = str(p) + ".ln.mp3"
         r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(p),
                             "-af", f"loudnorm=I={LUFS_TARGET:g}:TP=-2:LRA=11",
@@ -363,6 +369,7 @@ def _norm_segments(paths: list[Path], log=print) -> None:
             os.replace(tmp, p)
         else:
             log(f"::warning::loudnorm {p.name} не удался, сегмент как есть: {(r.stderr or '').strip()[:160]}")
+    _music_mod().pmap(one, paths)
 
 
 
