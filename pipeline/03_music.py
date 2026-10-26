@@ -254,7 +254,10 @@ def ace15_prepare(model: str | None, lora: str | None, api=None) -> dict:
             try:
                 generate_track_v15("warmup", 10, 0, Path(td) / "w.mp3", api=api, model=model)
             except (RuntimeError, urllib.error.URLError) as e:
-                print(f"on-demand swap не сработал ({type(e).__name__}: {e}); /v1/init 900 с", flush=True)
+                # t_418f9cdc: образ ghcr ace-step-1.5:latest = v0.1.8 (dce6214, 18.05), ACESTEP_ON_DEMAND_MODEL_LOAD
+                # появился позже (#1284, 28.08) -> env игнорируется, сервер молча берёт primary turbo.
+                print(f"on-demand swap не сработал ({type(e).__name__}: {e}; образ без ACESTEP_ON_DEMAND_MODEL_LOAD)"
+                      f"; /v1/init 900 с", flush=True)
                 r = api.post("/v1/init", {"model": model}, timeout=900)
                 if r.get("code") != 200 or (r.get("data") or {}).get("loaded_model") != model:
                     raise RuntimeError(f"/v1/init {model}: {str(r)[:300]}") from e
@@ -268,7 +271,7 @@ def ace15_prepare(model: str | None, lora: str | None, api=None) -> dict:
 
 def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=None,
                        poll_sec: float = 5, timeout_sec: int = 2400, ref_audio=None,
-                       model: str | None = None) -> dict:
+                       model: str | None = None, stall_sec: float | None = None) -> dict:
     import json
     import time
     api = api or _Http(os.environ["ACE15_ENDPOINT"])
@@ -290,14 +293,30 @@ def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=
     else:
         tid = api.post("/release_task", body)["data"]["task_id"]
     deadline = time.time() + timeout_sec
+    # t_418f9cdc: XL-sft на 12 ГБ висел 25 мин в status=0 (0 = и queued, и running) без ошибки.
+    # Сервер отдаёт stage/progress в result бегущей задачи: нет движения stall_sec -> честный
+    # быстрый отказ со стадией, а не таймаут. 0/None = выкл (прод turbo не трогаем).
+    stall = float(os.environ.get("ACE15_STALL_SEC") or 0) if stall_sec is None else stall_sec
+    mark, moved = None, time.time()
     n_poll = 0
     while True:
         d = api.post("/query_result", {"task_id_list": [tid]})["data"][0]
         n_poll += 1
+        try:
+            r0 = json.loads(d.get("result") or "[]")
+            r0 = r0[0] if isinstance(r0, list) and r0 and isinstance(r0[0], dict) else {}
+        except (TypeError, ValueError):
+            r0 = {}
+        if (r0.get("stage"), r0.get("progress")) != mark:
+            mark, moved = (r0.get("stage"), r0.get("progress")), time.time()
         if d.get("status") != 0 or n_poll % 24 == 0:  # 24×5 c = раз в 2 мин видно, что жив и стоит в очереди
-            print(f"  task {tid[:8]} poll#{n_poll}: status={d.get('status')} qpos={d.get('queue_position')}", flush=True)
+            print(f"  task {tid[:8]} poll#{n_poll}: status={d.get('status')} qpos={d.get('queue_position')}"
+                  f" stage={mark[0]} progress={mark[1]}", flush=True)
         if d["status"] != 0:
             break
+        if stall and time.time() - moved > stall:
+            raise RuntimeError(f"ACE-Step 1.5 task {tid} stall: {int(time.time() - moved)} с без движения "
+                               f"(stage={mark[0]} progress={mark[1]}) — воркер не ведёт задачу")
         if time.time() > deadline:
             raise RuntimeError(f"ACE-Step 1.5 task {tid} timeout")
         time.sleep(poll_sec)
