@@ -256,27 +256,6 @@ def test_put_verifies_checksum_and_skips_torn_copy():
         assert bank.put_verified(p, "lofi", "z_seed.mp3", {}, docker_exec_fails) is False
 
 
-if __name__ == "__main__":
-    test_every_release_genre_has_bank_generator()
-    test_genre_without_bpm_gets_pinned_group()
-    test_hung_ace_restarts_when_no_release()
-    test_release_check_network_error_yields_not_crash()
-    test_fill_stops_at_target_and_skips_rejects()
-    test_fill_yields_to_release()
-    test_failure_during_release_is_yield_not_error()
-    test_failure_without_release_raises()
-    test_workflow_never_restarts_gpu_and_no_artifacts()
-    test_ace_hang_without_release_stops_clean()
-    test_critic_on_release_start_is_clean_yield()
-    test_daily_state_commit_survives_parallel_matrix_conflict()
-    test_generator_completes_largest_open_group()
-    test_transient_failure_without_release_is_retried()
-    test_persistent_failure_without_release_raises()
-    test_target_grows_until_largest_group_has_margin()
-    test_put_verifies_checksum_and_skips_torn_copy()
-    print("ok test_bank")
-
-
 def test_lofi_group_counts_ignore_fast_segments():
     """26.10: energy-гейт выпуска (<=75 BPM) не берёт 89/92/82, но банк считал их «полными»
     (53 сегмента, цель 40) -> bank-fill выходил за минуту, медленные 68-70 BPM не генерировались,
@@ -295,3 +274,25 @@ def test_lofi_group_counts_ignore_fast_segments():
         return ""
     assert bank.group_counts("anime lofi", sh) == {(70, "F major"): 1}
     assert bank.group_counts("chill phonk", sh) == {(89, "F major"): 1, (92, "G major"): 1, (70, "F major"): 1}
+
+
+if __name__ == "__main__":
+    test_every_release_genre_has_bank_generator()
+    test_genre_without_bpm_gets_pinned_group()
+    test_hung_ace_restarts_when_no_release()
+    test_release_check_network_error_yields_not_crash()
+    test_fill_stops_at_target_and_skips_rejects()
+    test_fill_yields_to_release()
+    test_failure_during_release_is_yield_not_error()
+    test_failure_without_release_raises()
+    test_workflow_never_restarts_gpu_and_no_artifacts()
+    test_ace_hang_without_release_stops_clean()
+    test_critic_on_release_start_is_clean_yield()
+    test_daily_state_commit_survives_parallel_matrix_conflict()
+    test_generator_completes_largest_open_group()
+    test_transient_failure_without_release_is_retried()
+    test_persistent_failure_without_release_raises()
+    test_target_grows_until_largest_group_has_margin()
+    test_put_verifies_checksum_and_skips_torn_copy()
+    test_lofi_group_counts_ignore_fast_segments()
+    print("ok test_bank")
