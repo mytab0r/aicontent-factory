@@ -16,7 +16,7 @@ IMAGE = "myoung34/github-runner"
 def runner_runs(text):
     """-> склеенные (по `\\`) команды `docker run`, запускающие образ раннера."""
     cmds = re.findall(r"docker run\b(?:[^\n]*\\\n)*[^\n]*", text)
-    return [re.sub(r"\\\n\s*", " ", c) for c in cmds if IMAGE in c]
+    return [re.sub(r"\\\n\s*", " ", c) for c in cmds if IMAGE in c or '"$tag"' in c]  # $tag: janitor swap_runner
 
 
 def problems(cmd):
@@ -38,7 +38,7 @@ def test_selfcheck():
 
 def test_workflows():
     seen, bad = 0, []
-    for f in sorted(WF.glob("*.yml")):
+    for f in sorted(WF.glob("*.yml")) + [WF.parent.parent / "deploy/gpu-pc/janitor.sh"]:
         for c in runner_runs(f.read_text(encoding="utf-8")):
             seen += 1
             bad += [f"{f.name}: {p}" for p in problems(c)]
@@ -46,7 +46,15 @@ def test_workflows():
     assert not bad, "раннер создаётся без DNS-фолбэка/кеша (дрейф HostConfig.Dns, t_3c5e7da4):\n" + "\n".join(bad)
 
 
+def test_docker_top_has_pid():
+    """docker top без колонки pid -> ошибка API -> проверка «раннер занят» молча врёт (t_5cdbb967, 27.10)."""
+    src = (WF.parent.parent / "deploy/gpu-pc/janitor.sh").read_text(encoding="utf-8")
+    tops = re.findall(r"docker top \S+ -eo (\S+)", src)
+    assert tops and all("pid" in t.split(",") for t in tops), tops
+
+
 if __name__ == "__main__":
     test_selfcheck()
     test_workflows()
+    test_docker_top_has_pid()
     print("OK test_runner_dns_config")
