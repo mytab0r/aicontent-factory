@@ -35,38 +35,6 @@ jobs:
               python -c \"from huggingface_hub import snapshot_download; snapshot_download('ACE-Step/acestep-v15-xl-sft', local_dir='/ck/acestep-v15-xl-sft', max_workers=4)\""
           docker exec ace-step sh -c 'test -f /app/checkpoints/acestep-v15-xl-sft/config.json'
 
-      # on-demand swap требует env на контейнере (env нельзя добавить без recreate):
-      # recreate с теми же mounts + новыми env. EOF-скрипт: старые env читаем из inspect.
-      - name: recreate ace-step with on-demand load
-        run: |
-          docker inspect ace-step --format '{{json .Config.Env}}' | grep -q ACESTEP_ON_DEMAND_MODEL_LOAD && { echo already; exit 0; }
-          IMAGE=$(docker inspect ace-step --format '{{.Config.Image}}')
-          docker rm -f ace-step-new 2>/dev/null || true  # хвост прошлого неудачного прогона
-          docker run -d --name ace-step-new --restart unless-stopped \
-            --gpus all \
-            -e ACESTEP_MODE=api -e ACESTEP_LLM_BACKEND=pt \
-            -e ACESTEP_CONFIG_PATH=acestep-v15-turbo \
-            -e ACESTEP_CONFIG_PATH2=acestep-v15-base \
-            -e ACESTEP_LM_MODEL_PATH=acestep-5Hz-lm-1.7B \
-            -e ACESTEP_ON_DEMAND_MODEL_LOAD=true \
-            -e ACESTEP_QUEUE_WORKERS=1 -e ACESTEP_API_WORKERS=1 \
-            -e ACESTEP_API_HOST=0.0.0.0 -e ACESTEP_INIT_SERVICE=true -e UV_NO_SYNC=1 \
-            -v /run/desktop/mnt/host/c/dockerlocal/ace15/checkpoints:/app/checkpoints \
-            -v /run/desktop/mnt/host/c/dockerlocal/ace15/output:/app/output \
-            -v /run/desktop/mnt/host/c/dockerlocal/ace15/hf:/root/.cache/huggingface \
-            "$IMAGE"
-          # сеть comfynet, чтобы ace-step:8001 резолвился с раннеров, как раньше
-          docker network connect comfynet ace-step-new || true
-          # первый старт грузит turbo+base+LM в VRAM (заняло >6 мин на 12GB) — ждём до 18 мин
-          for i in $(seq 1 72); do
-            [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step-new 2>/dev/null)" = healthy ] && break
-            sleep 15
-          done
-          [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step-new)" = healthy ] || { docker logs --tail 80 ace-step-new 2>&1 | tail -60; exit 1; }
-          docker rm -f ace-step
-          docker rename ace-step-new ace-step
-          echo "ace-step пересоздан: turbo+base слоты, XL-sft по запросу (on-demand)"
-
       - name: install deps
         run: |
           set -e
@@ -151,6 +119,9 @@ jobs:
             # час-микса: KILL-вердикт, полные варианты не тратим.
             (docker exec ace-step nvidia-smi --query-gpu=name,memory.used,memory.total --format=csv || echo "nvidia-smi n/a") > /tmp/xlrun/gpu_before.txt
             gen turbo_1 ACE15_MODEL=acestep-v15-turbo
+            # root-cause: t_f3937fb8 — on-demand swap в образе нет, XL поверх turbo+base не влезает в 12 ГБ:
+            # XL-варианты идут на контейнере, где XL-sft единственный DiT (ace_mode.sh); turbo_2 — после prod.
+            sh deploy/gpu-pc/ace_mode.sh xl
             TO=1500 gen xl_solo $XL1
             WALL=$(cat /tmp/xlrun/xl_solo.wall 2>/dev/null || echo 99999)
             (docker exec ace-step nvidia-smi --query-gpu=name,memory.used,memory.total --format=csv || echo "nvidia-smi n/a") > /tmp/xlrun/gpu_after.txt
@@ -158,7 +129,7 @@ jobs:
               echo "CANARY_ONLY: только turbo_1 + xl_solo, полные варианты скипнуты"
             elif [ "$WALL" -le 600 ]; then
               gen xl_1 $XL8; gen xl_2 $XL8
-              curl -sf -m 300 -X POST "$ACE15_ENDPOINT/v1/lora/unload" -H 'Content-Type: application/json' -d '{}' || true
+              sh deploy/gpu-pc/ace_mode.sh prod
               gen turbo_2 ACE15_MODEL=acestep-v15-turbo
             else
               echo "KILL-VERDICT: 1 кандидат XL (90 с, best-of-1) занял ${WALL}с > 600 с — best-of-8 XL непригоден для час-микса (решение 00:30); A/B из turbo_1 + xl_solo"
@@ -189,12 +160,12 @@ jobs:
       # -m на каждый curl: без него шаг висит часами, когда API лёг (прогон 38999275258).
       - name: restore prod ace-step (turbo, no LoRA)
         if: ${{ always() }}
-        timeout-minutes: 15
+        timeout-minutes: 25  # ace_mode ждёт healthy до 18 мин
         run: |
-          curl -sf -m 120 -X POST http://ace-step:8001/v1/lora/unload -H 'Content-Type: application/json' -d '{}' || true
-          # не /v1/init (XL init висел 3x1 ч, 39017603255): рестарт сбрасывает очередь, primary = turbo
-          docker restart ace-step >/dev/null
-          for i in $(seq 1 60); do [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step)" = healthy ] && break; sleep 10; done
+          # t_f3937fb8: после XL-фазы primary = XL-sft, рестарт его сохранил бы -> ace_mode prod пересоздаёт
+          # (свежий контейнер = пустая очередь, без LoRA). Уже prod -> рестарт сбрасывает очередь-зомби.
+          docker inspect -f '{{json .Config.Env}}' ace-step | grep -q '"ACESTEP_CONFIG_PATH=acestep-v15-turbo"' && docker restart ace-step >/dev/null
+          sh deploy/gpu-pc/ace_mode.sh prod
           curl -sf -m 60 http://ace-step:8001/v1/lora/status | head -c 400; echo
           curl -sf -m 60 http://ace-step:8001/v1/models | head -c 400; echo
 

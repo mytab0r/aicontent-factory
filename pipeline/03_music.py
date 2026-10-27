@@ -238,7 +238,7 @@ class _Http:
 
 def ace15_prepare(model: str | None, lora: str | None, api=None) -> dict:
     """t_b4006a6e: LoRA через /v1/lora/load (в /release_task поля LoRA нет). Модель НЕ через /v1/init:
-    XL init на 12 ГБ висел 3x1 ч (run 39017603255) -> модель уходит в body запроса (on-demand, run 38971884880).
+    XL init на 12 ГБ висел 3x1 ч (run 39017603255; повтор 39106389601/40022391620, t_f3937fb8).
     Возврат /v1/lora/status — доказательство в лог; LoRA не встала = ошибка шага."""
     if not lora:
         return {}
@@ -246,21 +246,16 @@ def ace15_prepare(model: str | None, lora: str | None, api=None) -> dict:
     import tempfile
     api = api or _Http(os.environ["ACE15_ENDPOINT"])
     if model:
-        # on-demand swap пересоздаёт primary-хендлер (initialize_service) -> LoRA, загруженная ДО swap,
-        # теряется. Короткий прогрев моделью: swap в очереди, затем LoRA на уже XL-хендлер.
-        # Swap мог не включиться (env воркеров/прочее, прогон 39064436852: "сгенерировала turbo")
-        # -> единственный /v1/init с жёстким потолком 900 с (не час, как 39017603255).
+        # Прогрев моделью = проверка, что контейнер реально отдаёт model (dit_model в ответе), до LoRA.
+        # t_f3937fb8: НИКАКОГО /v1/init fallback. Образ ace-step (upstream dce6214) не умеет on-demand swap;
+        # /v1/init догружал XL (9 ГБ) поверх turbo+base+LM на 12 ГБ -> задачи status=0 навсегда, A/B не собран
+        # (39106389601, 40022391620). Модель задаёт конфигурация контейнера: deploy/gpu-pc/ace_mode.sh xl.
         with tempfile.TemporaryDirectory() as td:
             try:
                 generate_track_v15("warmup", 10, 0, Path(td) / "w.mp3", api=api, model=model)
-            except (RuntimeError, urllib.error.URLError) as e:
-                # t_418f9cdc: образ ghcr ace-step-1.5:latest = v0.1.8 (dce6214, 18.05), ACESTEP_ON_DEMAND_MODEL_LOAD
-                # появился позже (#1284, 28.08) -> env игнорируется, сервер молча берёт primary turbo.
-                print(f"on-demand swap не сработал ({type(e).__name__}: {e}; образ без ACESTEP_ON_DEMAND_MODEL_LOAD)"
-                      f"; /v1/init 900 с", flush=True)
-                r = api.post("/v1/init", {"model": model}, timeout=900)
-                if r.get("code") != 200 or (r.get("data") or {}).get("loaded_model") != model:
-                    raise RuntimeError(f"/v1/init {model}: {str(r)[:300]}") from e
+            except RuntimeError as e:
+                raise RuntimeError(f"ace-step не отдаёт {model} ({e}): нужен контейнер с ним в primary "
+                                   f"(deploy/gpu-pc/ace_mode.sh), /v1/init на 12 ГБ запрещён") from e
     r = api.post("/v1/lora/load", {"lora_path": lora})
     st = json.loads(api.get("/v1/lora/status"))["data"]
     if r.get("code") != 200 or not (st.get("lora_loaded") and st.get("use_lora")):
