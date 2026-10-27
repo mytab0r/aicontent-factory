@@ -1,7 +1,7 @@
 name: oneoff-loop-generate
 # Разовый рендер loop-клипа Wan2.2 FLF2V на ПК (self-hosted runner) + upscale
 # + encode + seam check + тайминги (бюджет E <= 900с, spec-seamless-loop.md §5).
-# Артефакты: runs/loopgen/ (loop.mp4, отчёты, тайминги, кадры).
+# Файлы -> C:\dockerlocal\acf-out\<run_id> (t_265d0147): runs/loopgen/ (loop.mp4, отчёты, тайминги, кадры).
 # Финальный concat 1ч делает сервер (loop_build.py final) — он дешёвый (-c copy).
 on:
   workflow_dispatch:
@@ -98,17 +98,6 @@ jobs:
           set -o pipefail
           .venv/bin/python pipeline/loop_build.py encode runs/loopgen/upscaled runs/loopgen/loop.mp4 --fps 24 \
             2>&1 | tee runs/loopgen/encode_seam.log
-      - name: upload loopgen artifact
+      - name: upload loopgen files -> C:\dockerlocal\acf-out\<run_id>\ (t_265d0147)
         if: always()
-        uses: actions/upload-artifact@v4  # artifact-ok: логи прогона; доставка результата вне артефактов
-        timeout-minutes: 15  # t_6758c86f: сетевой шаг не висит до таймаута джобы
-        with:
-          retention-days: 1  # t_9d452170: доставка вне артефактов (TG/git); квота storage 500MB
-          name: loopgen
-          path: |
-            runs/loopgen/loop.mp4
-            runs/loopgen/*.log
-            runs/loopgen/raw/generate_meta.json
-            runs/loopgen/raw/00000.png
-            runs/loopgen/raw/00080.png
-          if-no-files-found: warn
+        run: sh deploy/gpu-pc/acf_out.sh put ${{ github.run_id }} runs/loopgen/loop.mp4 runs/loopgen/*.log runs/loopgen/*.json runs/loopgen/raw/generate_meta.json runs/loopgen/raw/00000.png runs/loopgen/raw/00080.png

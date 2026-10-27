@@ -68,7 +68,7 @@ jobs:
           command -v ffmpeg || { sudo dpkg --configure -a || true; for i in 1 2 3; do sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg && break; sleep 20; done; }
           command -v ffmpeg
           ffmpeg -version | head -1
-          pip install pillow gradio_client numpy google-api-python-client google-auth-httplib2 librosa
+          pip install pillow gradio_client numpy google-api-python-client google-auth-httplib2 librosa pyyaml
       - name: run python tests
         run: |
           set -e
