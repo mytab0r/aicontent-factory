@@ -123,6 +123,12 @@ jobs:
           # Рестарт сбрасывает зависшие задачи и возвращает дефолтный turbo без LoRA (concurrency group исключает чужой прогон).
           # 19.10 (t_03efb867): спайк остановил ace-step, затем сторонний docker rm удалил его ->
           # класс «контейнер удалён, start невозможен» закрываем recreate'ом из эталонного описания (как в xl-probe).
+          # root-cause: t_860a1c4b — #239 ставил UV_NO_SYNC=1 только при recreate; существующий контейнер без него
+          # restart'ом не лечится (env фиксирован при create) -> run 40123150806 на фикс-коммите снова 18 мин starting.
+          # Контейнер без флага = устаревший: удаляем, ниже пересоздаётся из эталона.
+          if docker inspect ace-step >/dev/null 2>&1 && ! docker inspect -f '{{json .Config.Env}}' ace-step 2>/dev/null | grep -q '"UV_NO_SYNC=1"'; then
+            echo "ace-step без UV_NO_SYNC=1 — пересоздаю (t_860a1c4b)"; docker rm -f ace-step >/dev/null
+          fi
           if ! docker inspect ace-step >/dev/null 2>&1; then
             echo "ace-step отсутствует — пересоздаю (t_03efb867)"
             docker pull -q ghcr.io/ace-step/ace-step-1.5:latest >/dev/null 2>&1 || true

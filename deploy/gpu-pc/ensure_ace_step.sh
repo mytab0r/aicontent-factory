@@ -16,6 +16,8 @@ host() { docker run --rm --privileged --pid=host alpine:3.20 nsenter -t 1 -m -- 
 # R1 within this runner; lock wait bounded (t_0c540f50)
 exec 9>"${ACE_LOCK:-/tmp/ensure_ace_step.lock}"; flock -w "${ACE_LOCK_WAIT_S:-600}" 9 || { echo "::error::ensure_ace_step lock busy"; exit 1; }
 dfree start
+# root-cause: t_860a1c4b — контейнер без UV_NO_SYNC=1 restart не чинит (env фиксирован при create): пересоздать
+if docker inspect ace-step >/dev/null 2>&1 && ! docker inspect -f '{{json .Config.Env}}' ace-step 2>/dev/null | grep -q '"UV_NO_SYNC=1"'; then echo "ace-step without UV_NO_SYNC=1 -> recreate"; docker rm -f ace-step >/dev/null; fi
 if docker inspect ace-step >/dev/null 2>&1; then
   [ "${1:-}" = restart ] && docker restart ace-step >/dev/null || docker start ace-step >/dev/null 2>&1 || true
 else
