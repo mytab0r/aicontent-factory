@@ -170,7 +170,7 @@ jobs:
               # Measure BPM
               import librosa
               y, sr = librosa.load(str(out_path), sr=None)
-              tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+              tempo_arr, _ = librosa.beat.beat_track(y=y, sr=sr); tempo = float(tempo_arr.flatten()[0])
               bpm = float(tempo)
               
               # CE score (min of windows)
