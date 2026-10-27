@@ -1,0 +1,24 @@
+name: bank reserve
+# t_1f53095a R3: часовой отчёт запаса банка. Цель >= 2 выпуска (40 сегм.). < 1 выпуска (20):
+# TG-строка + bank-fill вне расписания (генератор в приоритет). Пусто = слот пропускает bank_release (exit 2).
+on:
+  schedule:
+    - cron: "7 * * * *"
+  workflow_dispatch: {}
+permissions:
+  contents: read
+  actions: write  # dispatch bank-fill
+jobs:
+  reserve:
+    runs-on: [self-hosted, release]  # pc-раннер часами занят bank-fill — отчёт не ждёт его
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+      TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+      TG_THREAD_ID: ${{ secrets.TG_THREAD_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: reserve check
+        working-directory: pipeline
+        run: python3 bank.py --reserve
