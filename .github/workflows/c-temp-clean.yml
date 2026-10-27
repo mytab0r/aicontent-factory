@@ -1,0 +1,26 @@
+name: c-temp-clean
+# t_3dfceb20: C: free ~30G (пол 30) блокирует bank-fill. Windows Temp = регенерируемое:
+# файлы старше 2 суток; wsl-crashes (дампы падений WSL) — оставляем 1 свежий для диагностики.
+# Разовая ручная чистка + замер df. Регулярная ротация — janitor.sh purge_crashes (каждые 10 мин).
+on:
+  workflow_dispatch:
+jobs:
+  clean:
+    runs-on: [self-hosted, ci]
+    timeout-minutes: 30
+    steps:
+      - name: clean C Temp
+        run: |
+          docker run --rm -v /run/desktop/mnt/host/c/Users:/u alpine:3.20 sh -c '
+            df -h /u | tail -1
+            for t in /u/*/AppData/Local/Temp; do
+              [ -d "$t" ] || continue
+              find "$t" -xdev -mindepth 1 -type f -mtime +2 -delete 2>/dev/null
+              find "$t" -xdev -mindepth 1 -type d -empty -delete 2>/dev/null
+              if [ -d "$t/wsl-crashes" ]; then
+                ls -la --full-time "$t/wsl-crashes" | tail -15
+                ls -t "$t/wsl-crashes" | tail -n +2 | while read -r f; do rm -f "$t/wsl-crashes/$f"; done
+              fi
+              echo "after $(du -xsh "$t" 2>/dev/null)"
+            done
+            df -h /u | tail -1' || true

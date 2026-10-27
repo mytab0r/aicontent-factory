@@ -21,7 +21,7 @@ jobs:
           # run 40132476922: $GITHUB_WORKSPACE живёт в томе раннера, не на хосте -> bind давал пустой /src.
           # Файл идёт через stdin (docker run -i), хостовый путь нужен только для /j.
           docker run --rm -i -v "$JANITOR_DIR:/j" alpine \
-            sh -c 'cat > /j/janitor.sh && chmod +x /j/janitor.sh && grep -c UV_NO_SYNC=1 /j/janitor.sh' < deploy/gpu-pc/janitor.sh
+            sh -c 'cat > /j/janitor.sh && chmod +x /j/janitor.sh && grep -c UV_NO_SYNC=1 /j/janitor.sh && grep -c purge_crashes /j/janitor.sh' < deploy/gpu-pc/janitor.sh
           # t_5cdbb967 (ротация /tmp и томов uv-cache/xlv): после ребута ПК docker-janitor пропадает
           # (создавался вручную вне репо) — поднимаем заново, иначе purge_tmp не крутится.
           if ! docker inspect docker-janitor >/dev/null 2>&1; then
