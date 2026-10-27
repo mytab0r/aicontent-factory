@@ -234,9 +234,17 @@ jobs:
         working-directory: pipeline
         run: ../.venv/bin/python quality_gate.py --final
 
+      # t_cbeefa4f: без GO гейта запуска G1zm0 — выход без upload (рендер/QA идут, токен не пишется).
+      - name: launch gate (NO-GO = без upload)
+        id: gate
+        if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1'
+        run: |
+          if python3 scripts/launch_gate.py g1zm0; then echo "go=1" >> "$GITHUB_OUTPUT"
+          else echo "::warning::launch gate NO-GO: upload G1zm0 пропущен (reports/products/g1zm0.launch.md)"; fi
+
       - name: 05 publish (skips if no YouTube token secret)
         id: publish
-        if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1'
+        if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1' && steps.gate.outputs.go == '1'
         timeout-minutes: 60  # P18: зависание шага = failure -> TG alert, не 240 мин
         working-directory: pipeline
         env:
@@ -277,7 +285,7 @@ jobs:
 
       - name: 05b anti-repeat record (отпечаток опубликованного трека в .state)
         id: arrecord
-        if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1'
+        if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1' && steps.gate.outputs.go == '1'
         timeout-minutes: 15  # P18: зависание шага = failure -> TG alert, не 240 мин
         continue-on-error: true  # видео уже на канале; потеря отпечатка не валит выпуск  # root-cause: t_f95a06da
         working-directory: pipeline
@@ -285,7 +293,7 @@ jobs:
 
       - name: 07 shorts (2 x 9:16 из long-form, ссылка на него)
         id: shorts
-        if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1'
+        if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1' && steps.gate.outputs.go == '1'
         timeout-minutes: 30  # P18: зависание шага = failure -> TG alert, не 240 мин
         working-directory: pipeline
         run: |
