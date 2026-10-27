@@ -1,6 +1,6 @@
 name: c-temp-clean
-# t_3dfceb20: C: 30G free (пол 30) блокирует bank-fill. Windows Temp 18G = регенерируемое.
-# Удаляем только файлы старше 2 суток в Users/*/AppData/Local/Temp; занятые Windows файлы пропускаются.
+# t_3dfceb20: C: free ~30G (пол 30) блокирует bank-fill. Windows Temp = регенерируемое:
+# файлы старше 2 суток; wsl-crashes (дампы падений WSL) — оставляем 1 свежий для диагностики.
 on:
   push:
     branches: [ops/c-temp-clean]
@@ -10,17 +10,18 @@ jobs:
     runs-on: [self-hosted, ci]
     timeout-minutes: 30
     steps:
-      - name: clean C Temp older than 2 days
+      - name: clean C Temp
         run: |
           docker run --rm -v /run/desktop/mnt/host/c/Users:/u alpine:3.20 sh -c '
             df -h /u | tail -1
             for t in /u/*/AppData/Local/Temp; do
               [ -d "$t" ] || continue
-              echo "before $(du -xsh "$t" 2>/dev/null)"
               find "$t" -xdev -mindepth 1 -type f -mtime +2 -delete 2>/dev/null
               find "$t" -xdev -mindepth 1 -type d -empty -delete 2>/dev/null
+              if [ -d "$t/wsl-crashes" ]; then
+                ls -la --full-time "$t/wsl-crashes" | tail -15
+                ls -t "$t/wsl-crashes" | tail -n +2 | while read -r f; do rm -f "$t/wsl-crashes/$f"; done
+              fi
               echo "after $(du -xsh "$t" 2>/dev/null)"
-              du -xsh "$t"/* 2>/dev/null | sort -h | tail -12
-              find "$t" -xdev -type f -size +200M -exec ls -la --full-time {} + 2>/dev/null | tail -10
             done
             df -h /u | tail -1' || true
