@@ -29,5 +29,23 @@ def test_release_and_bank_install_are_resilient():
         assert problems((WF / name).read_text(encoding="utf-8")) == [], name
 
 
+def uv_without_setup(text):
+    """t_1f53095a: bank-reserve run 40554433809 — `uv: command not found` на release-раннере (uv не в PATH
+    без setup-uv). Любой workflow, зовущий uv, обязан ставить его через setup-uv."""
+    calls = re.search(r"(?m)^[^#\n]*(?:^|[\s;&|(])uv (?:venv|pip|run|sync)\b", text)
+    return bool(calls) and "astral-sh/setup-uv@" not in text
+
+
+def test_uv_without_setup_is_red():
+    assert uv_without_setup("    steps:\n      - run: |\n          uv venv .venv\n")
+    assert not uv_without_setup("      - uses: astral-sh/setup-uv@v3\n      - run: uv venv .venv\n")
+
+
+def test_all_workflows_calling_uv_install_it():
+    bad = [p.name for p in sorted(WF.glob("*.yml")) if uv_without_setup(p.read_text(encoding="utf-8"))]
+    assert bad == [], bad
+
+
 if __name__ == "__main__":
-    test_old_install_step_is_red(); test_release_and_bank_install_are_resilient(); print("ok")
+    test_old_install_step_is_red(); test_release_and_bank_install_are_resilient()
+    test_uv_without_setup_is_red(); test_all_workflows_calling_uv_install_it(); print("ok")

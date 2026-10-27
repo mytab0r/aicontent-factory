@@ -19,6 +19,10 @@ jobs:
       TG_THREAD_ID: ${{ secrets.TG_THREAD_ID }}
     steps:
       - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3  # release-раннер без uv в PATH: run 40554433809 «uv: command not found»
+        timeout-minutes: 5
+        with:
+          cache-local-path: /tmp/acf-uv-cache
       - name: venv  # bank.py импортирует numpy — системный python его не имеет (test_workflow_python)
         run: |
           uv venv .venv
