@@ -355,5 +355,5 @@ jobs:
         run: sh deploy/gpu-pc/gpu_yield.sh restore || true
 
       - name: upload run files -> C:\dockerlocal\acf-out\<run_id>\ (t_265d0147)
-        if: steps.guard.outputs.published != '1'
+        if: always() && steps.guard.outputs.published != '1'  # и упавший прогон оставляет файлы на C:
         run: sh deploy/gpu-pc/acf_out.sh put ${{ github.run_id }} runs/*/video.mp4 runs/*/short_*.mp4

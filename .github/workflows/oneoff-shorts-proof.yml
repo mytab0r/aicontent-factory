@@ -37,4 +37,5 @@ jobs:
           rm -f tok.json
           cat shorts-proof.json
       - name: shorts-proof -> C:\dockerlocal\acf-out\<run_id>\ (t_265d0147)
+        if: always()  # и упавший прогон оставляет файлы на C:
         run: sh deploy/gpu-pc/acf_out.sh put ${{ github.run_id }} shorts-proof.json

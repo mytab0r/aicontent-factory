@@ -55,5 +55,9 @@ assert A(blk.replace("path: |", "path: >-").splitlines()) == [(6, "upload-media"
 assert A("      - uses: actions/download-artifact@v4\n".splitlines()) == [(1, "download-artifact")]
 assert A("      # actions/download-artifact@v4 убран\n".splitlines()) == []
 assert (1, "upload-artifact") in lint.lint_text("      - uses: actions/upload-artifact@v4\n        with:\n          retention-days: 1\n")
+put = "      - name: x\n{}        run: sh deploy/gpu-pc/acf_out.sh put 1 a.mp3\n"
+assert A(put.format("").splitlines()) == [(2, "acf-out-always")]
+assert A(put.format("        if: steps.g.outputs.p != '1'\n").splitlines()) == [(3, "acf-out-always")]
+assert A(put.format("        if: always() && x\n").splitlines()) == []
 assert lint.main(str(ROOT)) == 0
 print("ok")

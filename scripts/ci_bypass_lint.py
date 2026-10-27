@@ -153,6 +153,13 @@ def lint_artifacts(lines):
     """t_265d0147: download-artifact = FAIL; upload — только текст и объявленный размер < 10 МБ."""
     out = []
     for i, line in enumerate(lines):
+        # t_265d0147: put без always() пропускается при падении джобы -> упавший прогон не оставляет файлов на C:
+        if "acf_out.sh put" in line and not line.lstrip().startswith("#"):
+            s = i
+            while s > 0 and not lines[s].lstrip().startswith("- "):
+                s -= 1
+            if not any(re.match(r"^\s*if:.*\balways\(\)", x) for x in lines[s:i]):
+                out.append((i + 1, "acf-out-always"))
         if DOWNLOAD.search(line) and not line.lstrip().startswith("#"):
             out.append((i + 1, "download-artifact"))
         if not UPLOAD.search(line) or line.lstrip().startswith("#"):
