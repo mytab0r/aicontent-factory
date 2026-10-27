@@ -81,6 +81,31 @@ def test_main_wires_guard():
     assert "guard=" in src and "guard_reason(" in src
 
 
+def test_release_take_skips_slot_on_disk_gate(monkeypatch=None):
+    """R3: пол C: соблюдается и при выпуске (take): гейт закрыт = слот пропущен с причиной (exit 2), take не зовётся."""
+    import io, contextlib
+    import bank_release as br
+    called = []
+    orig_take, orig_rc = br.take, br.disk_gate_rc
+    br.take = lambda *a, **k: called.append(1) or None
+    br.disk_gate_rc = lambda need_gb=1: 1
+    try:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = br.main([])
+    finally:
+        br.take, br.disk_gate_rc = orig_take, orig_rc
+    assert rc == 2 and called == [], (rc, called)
+    assert "C:" in buf.getvalue() and "пропущен" in buf.getvalue(), buf.getvalue()
+
+
+def test_release_disk_gate_uses_single_script():
+    import inspect
+    import bank_release as br
+    src = inspect.getsource(br.disk_gate_rc)
+    assert "disk_gate.sh" in src and '"c"' in src, src
+
+
 if __name__ == "__main__":
     for k, f in list(globals().items()):
         if k.startswith("test_"):
