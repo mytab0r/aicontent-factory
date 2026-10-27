@@ -2,6 +2,7 @@
 """t_ba72c7aa follow-up: (1) mux в 04_assemble лимитирует аудио (04b клиппинг TP +0.2);
 (2) сегменты банка нормализуются loudnorm до склейки (03c LU-скачок 4.7 внутри сегмента)."""
 import importlib.util
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,25 +25,47 @@ def test_mux_uses_limiter():
     assert "limit=-1.5dB" in src
 
 
-def test_norm_segments_runs_loudnorm_per_segment(tmp_path=None):
+def test_norm_segments_static_gain_no_loudnorm(tmp_path=None):
+    """t_5dbfa67a: сегмент = статический volume к LUFS_TARGET + alimiter, без loudnorm (давит LRA)."""
     br = _load("br_norm", "bank_release.py")
-    import quality_gate
+    import mastering
     calls = []
 
     def fake_run(cmd, **kw):
         calls.append(cmd)
-        out = Path(cmd[-1])
-        out.write_bytes(b"x")
+        Path(cmd[-1]).write_bytes(b"x")
         return SimpleNamespace(returncode=0, stderr="")
 
     p1 = Path("/tmp/n1.mp3"); p2 = Path("/tmp/n2.mp3")
-    with patch.object(br.subprocess, "run", fake_run):
+    with patch.object(br.subprocess, "run", fake_run), \
+            patch.object(mastering, "measure", lambda f: {"i": -20.0, "lra": 9.0, "tp": -3.0}):
         br._norm_segments([p1, p2], log=lambda *a, **k: None)
     assert len(calls) == 2
+    import quality_gate
     for c in calls:
-        assert c[0] == "ffmpeg" and "loudnorm" in " ".join(c)
-        assert f"I={quality_gate.LUFS_TARGET:g}" in " ".join(c)
-        assert "TP=-2" in " ".join(c)
+        j = " ".join(c)
+        assert c[0] == "ffmpeg" and "loudnorm" not in j, "loudnorm вернулся в _norm_segments"
+        assert f"volume={quality_gate.LUFS_TARGET + 20.0:.2f}dB" in j and "alimiter" in j
+
+
+def test_norm_segments_keeps_lra_real_audio():
+    """RED на старом коде: динамичный сегмент (LRA 12.4) после loudnorm -> 6.9; статический gain держит LRA."""
+    import shutil, subprocess as sp
+    if not shutil.which("ffmpeg"):
+        print("skip: нет ffmpeg"); return
+    import tempfile, mastering, quality_gate as qg
+    br = _load("br_norm_real", "bank_release.py")
+    from test_master_lra import make_dyn
+    with tempfile.TemporaryDirectory() as td:
+        raw = Path(td) / "raw.mp3"; seg = Path(td) / "seg.mp3"
+        make_dyn(raw, dur=180)
+        mastering.master(str(raw), str(seg), genre="anime lofi")
+        before = mastering.measure(str(seg))
+        br._norm_segments([seg], log=print)
+        after = mastering.measure(str(seg))
+        assert after["lra"] >= before["lra"] - 1.0, f"LRA сегмента {before['lra']} -> {after['lra']} (каша)"
+        assert qg.MIN_I <= after["i"] <= qg.MAX_I, f"громкость сегмента {after['i']} вне гейта"
+        print(f"norm_segments: LRA {before['lra']} -> {after['lra']}, I {after['i']}")
 
 
 def test_norm_segments_keeps_original_on_failure():
@@ -52,7 +75,7 @@ def test_norm_segments_keeps_original_on_failure():
     def fake_run(cmd, **kw):
         return SimpleNamespace(returncode=1, stderr="boom")
 
-    p = Path("/tmp/n3.mp3"); p.write_bytes(b"orig")
+    p = Path("/tmp/n3_" + str(os.getpid()) + ".mp3"); p.write_bytes(b"orig")
     logs = []
     with patch.object(br.subprocess, "run", fake_run):
         br._norm_segments([p], log=logs.append)

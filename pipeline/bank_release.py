@@ -374,22 +374,29 @@ def master_final(track: str, genre: str) -> None:
 
 
 def _norm_segments(paths: list[Path], log=print) -> None:
-    """Сгладить внутренние LU-скачки сегмента ДО склейки (run 40155188504: 4.7 LU внутри
-    одного сегмента -> 03c FAIL). Single-pass loudnorm (динамический режим) на каждом
-    сегменте, тот же профиль, что master_final (I/TP/LRA); сегмент 180 с ~= секунды.
-    ponytail: однопроходный loudnorm не так точен, как two-pass; при возврате FAIL на
-    LU-скачках — перейти на two-pass с кэшем измерений в meta сегмента."""
+    """Привести сегменты к LUFS_TARGET ДО склейки статическим gain + alimiter -1.2 dBFS.
+    t_5dbfa67a: раньше single-pass loudnorm (динамический режим) давил LRA каждого сегмента
+    (фикстура 12.4 -> 6.9, run 40449097418: трек LRA 3.1 < 3.5 при CE 7.2) — тот же класс, что
+    t_522ca872 в mastering.master. Внутренние LU-скачки (run 40155188504) выравнивает flatten_blocks
+    по сетке гейта A18 на готовой склейке, сегментный компрессор для этого не нужен."""
+    import mastering
     from quality_gate import LUFS_TARGET
+    lim = "alimiter=limit=0.813:level=disabled:attack=0.1:release=20:asc=0"  # -1.2 dBFS, как mastering lofi
     def one(p):
         tmp = str(p) + ".ln.mp3"
+        try:
+            gain = LUFS_TARGET - mastering.measure(str(p))["i"]
+        except Exception as e:  # noqa: BLE001 — битый замер не портит сегмент
+            log(f"::warning::замер {p.name} не удался, сегмент как есть: {e}")
+            return
         r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(p),
-                            "-af", f"loudnorm=I={LUFS_TARGET:g}:TP=-2:LRA=11",
+                            "-af", f"volume={gain:.2f}dB,{lim}",
                             "-c:a", "libmp3lame", "-b:a", "192k", tmp],
                            capture_output=True, text=True)
         if r.returncode == 0 and os.path.getsize(tmp) > 0:
             os.replace(tmp, p)
         else:
-            log(f"::warning::loudnorm {p.name} не удался, сегмент как есть: {(r.stderr or '').strip()[:160]}")
+            log(f"::warning::нормализация {p.name} не удалась, сегмент как есть: {(r.stderr or '').strip()[:160]}")
     _music_mod().pmap(one, paths)
 
 
