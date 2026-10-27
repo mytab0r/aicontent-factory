@@ -101,6 +101,29 @@ def test_master_final_lufs_in_gate_on_peaky_audio():
         assert m["tp"] <= qg.MAX_TP, m
 
 
+def test_master_final_lufs_in_gate_on_noisy_wall_audio():
+    """t_32ee66e0 (run 40527578183): фикс t_2c32a785 закрыл единичную бочку раз в 0.5 с, но на
+    phonk-"стене" (почти непрерывный белый шум с частыми резкими пиками каждые 0.5 с) I(gain) под
+    лимитером немонотонна с ямой — фиксированный шаг gain += target-I застревал на -16.1..-16.5
+    LUFS за LN_PASSES рендеров. Доп. регрессия: TP-доворот раньше шёл ПОСЛЕ выбора лучшего
+    кандидата и мог утянуть I ниже гейта без повторной проверки — теперь доворот внутри кандидата,
+    _next_gain бисектит по вилке вместо фикс. шага."""
+    import quality_gate as qg
+    import mastering
+    br = _load("bank_release_lufs2", HERE / "bank_release.py")
+    br._music_mod = lambda: type("M", (), {"fade_end": staticmethod(lambda *a, **k: None)})
+    with tempfile.TemporaryDirectory() as td:
+        out = f"{td}/track.mp3"
+        src = "anoisesrc=c=white:a=0.95:d=60:r=48000,volume='if(lt(mod(t,0.5),0.01),1,0.01)':eval=frame"
+        sp.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", src, "-ac", "2",
+                "-c:a", "libmp3lame", "-b:a", "192k", out], check=True)
+        assert mastering.measure(out)["i"] < qg.MIN_I  # фикстура реально тихая
+        br.master_final(out, "chill phonk")
+        m = mastering.measure(out)
+        assert qg.MIN_I <= m["i"] <= qg.MAX_I, f"громкость {m} вне {qg.MIN_I}..{qg.MAX_I}"
+        assert m["tp"] <= qg.MAX_TP, m
+
+
 if __name__ == "__main__":  # t_110fa85f: CI запускает файл как скрипт — без блока def test_* не выполняются
     _fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for _f in _fns:

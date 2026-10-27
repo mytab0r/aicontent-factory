@@ -317,8 +317,31 @@ def _music_mod():
 
 LIMIT_DB = -1.5  # t_96de1cc6: потолок alimiter; гейт MAX_TP -1.0, 0.5 дБ запаса на mp3-овершут
 TP_SAFE = -1.2   # после кодирования TP выше -> статический доворот вниз (гейт -1.0 не трогаем)
-LN_PASSES = 4    # t_2c32a785: рендеров с доводкой остатка громкости после лимитера
+LN_PASSES = 8    # t_2c32a785/t_32ee66e0: рендеров с доводкой остатка громкости после лимитера
 LN_TOL = 0.5     # допуск к LUFS_TARGET (гейт MIN_I..MAX_I = цель -2/+1)
+
+
+def _next_gain(pts: list, target: float) -> float:
+    """t_32ee66e0 (run 40527578183: phonk -16.2 LUFS после фикса t_2c32a785): под лимитером I(gain)
+    немонотонна — громкость пикового трека сидит в пиках, лимитер их срезает всё агрессивнее с
+    ростом gain (замер: +12 дБ -> -15.9, +14 дБ -> -19.5 LUFS). Шаг gain += target - I в такой яме
+    уходит назад или топчется, фиксированного числа рендеров не хватает (выпуски -16.1..-16.5).
+    Бисекция по вилке (gain тише цели, gain громче цели); без вилки — шаг минимум 3 дБ в сторону
+    цели, чтобы выйти из плоского участка быстрее одного дБ за рендер."""
+    lo = [p for p in pts if p[1] < target]
+    hi = [p for p in pts if p[1] >= target]
+    if not hi:
+        g, i = max(lo, key=lambda p: p[0])
+        return g + max(target - i, 3.0)
+    if not lo:
+        g, i = min(hi, key=lambda p: p[0])
+        return g - max(i - target, 3.0)
+    g_hi, i_hi = min(hi, key=lambda p: p[0])
+    below = [p for p in lo if p[0] < g_hi]
+    if not below:
+        return g_hi - max(i_hi - target, 3.0)
+    g_lo = max(below, key=lambda p: p[0])[0]
+    return (g_lo + g_hi) / 2
 
 
 def loudnorm_2pass(src: str, dst: str) -> dict:
@@ -341,25 +364,39 @@ def loudnorm_2pass(src: str, dst: str) -> dict:
     # лимитер на 4x частоте: на 48 кГц он ловит сэмплы, не межсэмпловые пики (замер на банке: TP -0.7 vs -1.0)
     lim = f"aresample=192000,alimiter=limit={10 ** (LIMIT_DB / 20):.4f}:level=disabled:attack=1:release=50"
     tmp = dst + ".ln2.mp3"
+    best = dst + ".ln2best.mp3"
+    pts = []  # (gain, I) всех рендеров, I уже ПОСЛЕ TP-доворота (t_32ee66e0, см. ниже)
     gain = LUFS_TARGET - float(j["input_i"])
     for _ in range(LN_PASSES):
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", src, "-af",
                         f"volume={gain:.2f}dB,{lim},aresample=48000", "-ar", "48000",
                         "-c:a", "libmp3lame", "-b:a", "192k", tmp], check=True)
+        # t_32ee66e0 (run 40527578183): TP-доворот раньше шёл ПОСЛЕ выбора лучшего рендера и мог
+        # утянуть I ниже гейта без повторной проверки (лучший кандидат на границе MIN_I + overshoot
+        # TP -> trim вниз -> I вне гейта). mp3-кодер даёт овершут ~0.3-0.5 дБ: доворачиваем TP внутри
+        # кандидата, чтобы в pts попадало именно то I, которое уедет в dst.
+        for _ in range(2):
+            tp = mastering.measure(tmp)["tp"]
+            if tp <= TP_SAFE:
+                break
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", tmp, "-af",
+                            f"volume={TP_SAFE - tp - 0.1:.2f}dB", "-c:a", "libmp3lame", "-b:a", "192k", best],
+                            check=True)
+            os.replace(best, tmp)
         i = mastering.measure(tmp)["i"]
+        if not pts or abs(i - LUFS_TARGET) < abs(min(pts, key=lambda p: abs(p[1] - LUFS_TARGET))[1] - LUFS_TARGET):
+            os.replace(tmp, best)
+        pts.append((gain, i))
         if abs(i - LUFS_TARGET) <= LN_TOL:
             break
-        gain += LUFS_TARGET - i
-    j["gain"] = f"{gain:.2f}"
-    os.replace(tmp, dst)
-    # mp3-кодер добавляет овершут ~0.3-0.5 дБ: замер и статический доворот (I сдвигается на те же доли дБ)
-    for _ in range(2):
-        tp = mastering.measure(dst)["tp"]
-        if tp <= TP_SAFE:
-            break
-        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", dst, "-af", f"volume={TP_SAFE - tp - 0.1:.2f}dB",
-                        "-c:a", "libmp3lame", "-b:a", "192k", tmp], check=True)
-        os.replace(tmp, dst)
+        gain = _next_gain(pts, LUFS_TARGET)
+    g, i = min(pts, key=lambda p: abs(p[1] - LUFS_TARGET))  # лучший рендер, не последний
+    j["gain"], j["i"] = f"{g:.2f}", i
+    if abs(i - LUFS_TARGET) > LN_TOL:
+        print(f"::warning::loudnorm_2pass: не сошлось за {LN_PASSES} рендеров, лучший I {i} (цель {LUFS_TARGET:g}): {pts}")
+    os.replace(best, dst)
+    if os.path.exists(tmp):
+        os.remove(tmp)
     return j
 
 
