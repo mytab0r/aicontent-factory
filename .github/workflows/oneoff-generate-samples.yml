@@ -114,4 +114,5 @@ jobs:
               print(f"GAVE UP on: {list(remaining)}", flush=True)
           PY
       - name: candidate-samples -> C:\dockerlocal\acf-out\<run_id>\ (t_265d0147)
+        if: always()  # и упавший прогон оставляет файлы на C:
         run: sh deploy/gpu-pc/acf_out.sh put ${{ github.run_id }} samples_candidates/*.mp3

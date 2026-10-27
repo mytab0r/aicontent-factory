@@ -53,6 +53,7 @@ jobs:
           ../.venv/bin/python ab_samples.py --n "${{ inputs.n || 4 }}" --seg-sec "${{ inputs.seg_sec || 60 }}" --out ../runs/ab_$(date -u +%Y%m%d_%H%M%S)
 
       - name: upload A/B files -> C:\dockerlocal\acf-out\<run_id>\ (t_265d0147)
+        if: always()  # и упавший прогон оставляет файлы на C:
         run: sh deploy/gpu-pc/acf_out.sh put ${{ github.run_id }} runs/ab_*/ab_*.mp3 runs/ab_*/manifest.json runs/ab_*/ab_LOCK.json
 
       - name: deliver via git branch (durable fallback, мимо artifacts/tmpfiles)
