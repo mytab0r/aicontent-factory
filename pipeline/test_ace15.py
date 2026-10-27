@@ -82,6 +82,37 @@ def test_failed_task_raises():
     raise AssertionError("status=2 must raise")
 
 
+def test_stalled_task_fails_fast():
+    """t_418f9cdc: XL висел 25 мин status=0 без движения stage/progress -> быстрый отказ со стадией."""
+    class Stuck(FakeApi):
+        def post(self, path, body):
+            if path == "/release_task":
+                return {"data": {"task_id": "t1"}}
+            return {"data": [{"task_id": "t1", "status": 0,
+                              "result": json.dumps([{"status": 0, "progress": 0.01, "stage": "running"}])}]}
+    with tempfile.TemporaryDirectory() as d:
+        try:
+            music.generate_track_v15("x", 60, 1, Path(d) / "t.mp3", api=Stuck(), poll_sec=0.01,
+                                     timeout_sec=30, stall_sec=0.2)
+        except RuntimeError as e:
+            assert "stall" in str(e) and "stage=running" in str(e), e
+        else:
+            raise AssertionError("застрявшая задача должна падать по stall, не ждать timeout")
+    # движение progress сбрасывает stall: медленная, но живая задача доходит до конца
+    class Slow(FakeApi):
+        def post(self, path, body):
+            if path == "/release_task":
+                return {"data": {"task_id": "t1"}}
+            self.polls += 1
+            if self.polls < 30:
+                return {"data": [{"task_id": "t1", "status": 0,
+                                  "result": json.dumps([{"status": 0, "progress": self.polls / 100}])}]}
+            return {"data": [{"task_id": "t1", "status": 1, "result": json.dumps([{"file": "/a"}])}]}
+    with tempfile.TemporaryDirectory() as d:
+        music.generate_track_v15("x", 60, 1, Path(d) / "t.mp3", api=Slow(), poll_sec=0.01,
+                                 timeout_sec=30, stall_sec=0.2)
+
+
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"):

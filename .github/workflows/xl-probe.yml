@@ -131,6 +131,7 @@ jobs:
             else
               echo "VARIANT-FAIL $name (лог в $name.log)" >&2
               docker logs ace-step --since 50m 2>&1 | tail -60 || true
+              docker exec ace-step nvidia-smi --query-gpu=memory.used,memory.total,utilization.gpu --format=csv || true
               docker inspect ace-step --format "state={{.State.Status}} restarting={{.State.Restarting}} restarts={{.RestartCount}} health={{.State.Health.Status}}" || true
               # 39095339812: после XL /v1/init воркер-зомби, следующие варианты status=0 навсегда;
               # единственный известный сброс очереди — рестарт (restore так и делает).
@@ -141,7 +142,9 @@ jobs:
             sleep 1
           }
           XL8="ACE15_MODEL=acestep-v15-xl-sft ACE15_LORA=/app/output/lora/out/final ACE15_BESTOF=8"
-          XL1="ACE15_MODEL=acestep-v15-xl-sft ACE15_LORA=/app/output/lora/out/final ACE15_BESTOF=1"
+          # t_418f9cdc: STALL 300 — XL на 12 ГБ (v0.1.8 /v1/init без quantization, bf16 ~9 ГБ + LM 1.7B) висел
+          # 25 мин status=0; turbo целиком 117 с -> 5 мин без движения stage/progress = честный отказ
+          XL1="ACE15_MODEL=acestep-v15-xl-sft ACE15_LORA=/app/output/lora/out/final ACE15_BESTOF=1 ACE15_STALL_SEC=300"
           if [ "$SKIP_GEN" = 0 ]; then
             # решение 00:30 (t_b4006a6e): turbo-контроль ПЕРВЫМ, затем 1 XL-кандидат с замером
             # времени и nvidia-smi; 1 кандидат XL >600 с на 90 с -> best-of-8 непригоден для
