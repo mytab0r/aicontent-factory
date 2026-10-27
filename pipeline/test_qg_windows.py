@@ -27,7 +27,6 @@ _spec = importlib.util.spec_from_file_location('music_x', Path(__file__).parent 
 music = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(music)
 
-
 # ---------------------------------------------------------------- ffmpeg helpers
 
 def run(*args):
@@ -153,8 +152,10 @@ def test_seam_why_boundaries():
 
 
 def test_music_helpers():
-    assert music.chapters([100, 100], ['A', 'B'], xfade=8) == ['0:00 A', '1:32 B']
-    assert music.chapters([482.0, 482.0], ['A', 'B'])[1] == '8:02 B'
+    assert music.XFADE == 16.0  # t_ffa7ff01: шире кроссфейд — плавнее RMS-переход R3
+    assert music.seam_times([100, 100, 100]) == [92.0, 176.0]
+    assert music.chapters([100, 100], ['A', 'B'], xfade=16) == ['0:00 A', '1:24 B']
+    assert music.chapters([482.0, 482.0], ['A', 'B'])[1] == '7:46 B'
 
 
 def test_case_a(f, d):
@@ -191,16 +192,17 @@ def test_seams(d):
     run('-f', 'lavfi', '-i', 'sine=frequency=220:sample_rate=48000:duration=60',
         '-af', 'volume=-12dB', '-ac', '2', '-c:a', 'pcm_s16le', quiet)
     joined = d / 'seam_joined.wav'
-    starts, ts = music.concat_tracks([str(loud), str(quiet)], str(joined))  # t_96de1cc6: центры стыков от склейки
-    assert len(ts) == 1 and starts[0] == 0.0 and 0 < starts[1] < ts[0] < 60.0
-    assert -3.0 <= dur_of(joined) - (starts[1] + dur_of(quiet)) <= 0.3  # nxt входит с 1-й сильной доли (срез <= такта)
+    music.concat_tracks([str(loud), str(quiet)], str(joined))
+    assert abs(dur_of(joined) - (60 + 60 - music.XFADE)) <= 0.3
+    ts = music.seam_times([60.0, 60.0])
+    assert len(ts) == 1 and abs(ts[0] - (60.0 - music.XFADE / 2)) < 1e-9
     fake = zcr_critic(good=7.6, bad=4.0)
     why, rep = qg.full_ce_why(str(joined), seams=ts, critic=fake)
-    assert len(rep['seams']) == 1 and abs(rep['seams'][0]['t'] - ts[0]) < 1e-9
+    assert len(rep['seams']) == 1 and abs(rep['seams'][0]['t'] - (60.0 - music.XFADE / 2)) < 1e-9
     assert abs(rep['seams'][0]['rms_l'] - rep['seams'][0]['rms_r']) > qg.SEAM_RMS_MAX
     assert any('R3' in r for r in why)
     same = d / 'seam_same.wav'
-    _, ts = music.concat_tracks([str(loud), str(loud)], str(same))
+    music.concat_tracks([str(loud), str(loud)], str(same))
     why2, rep2 = qg.full_ce_why(str(same), seams=ts, critic=fake)
     assert len(rep2['seams']) == 1
     assert abs(rep2['seams'][0]['rms_l'] - rep2['seams'][0]['rms_r']) <= qg.SEAM_RMS_MAX
