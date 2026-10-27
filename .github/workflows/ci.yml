@@ -163,7 +163,7 @@ jobs:
         with:
           fetch-depth: 0  # t_de7348c1: нужны все ветки origin для --branches
       - name: ci-bypass-lint («Повтор = класс»)
-        run: python3 scripts/ci_bypass_lint.py . && python3 scripts/test_ci_lint_docker_login.py && python3 scripts/ci_bypass_lint.py --branches .
+        run: python3 scripts/ci_bypass_lint.py . && python3 scripts/test_ci_lint_docker_login.py && python3 scripts/ci_bypass_lint.py --branches . && python3 scripts/actions_policy.py .
 
   # t_b1429246: сам хостед-раннер во время окон деградации PC-egress не смог доставить вердикт
   # (CompleteJobAsync -> HttpIOException "The response ended prematurely") — job падает с
