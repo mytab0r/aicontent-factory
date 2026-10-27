@@ -473,6 +473,13 @@ def assemble(paths: list[Path], run_dir: Path, metas: list[dict], genre: str, ou
     return meta
 
 
+def disk_gate_rc(need_gb: int = 1) -> int:
+    """t_1f53095a R3: единый пол C: (deploy/gpu-pc/disk_gate.sh c) — и для fill, и для take.
+    ponytail: любой rc != 0 (в т.ч. сбой самого гейта) = пропуск слота; fail-closed, алерт nobank виден."""
+    gate = ROOT / "deploy/gpu-pc/disk_gate.sh"
+    return subprocess.run(["sh", str(gate), "c", str(need_gb)]).returncode
+
+
 def main(argv=None) -> int:
     argv = list(argv or [])
     genre = os.environ.get("GENRE", "anime lofi")
@@ -487,6 +494,9 @@ def main(argv=None) -> int:
             print(f"docker {' '.join(a[:2])}: rc={r.returncode}: {(r.stderr or r.stdout).strip()[:200]}")
         return r.stdout
 
+    if disk_gate_rc() != 0:
+        print(f"::warning::nobank: банк {genre}: на C: ниже пола disk_floors.env — слот пропущен, выпуск не собираем")
+        return 2
     paths = take(genre, n_seg, str(run_dir), docker_sh=sh)
     if paths is None:
         reason = (f"банк {genre}: нет {n_seg} совместимых свободных сегментов — слот пропущен, "
