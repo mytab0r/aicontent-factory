@@ -7,7 +7,8 @@ on:
 
 jobs:
   sync:
-    runs-on: [self-hosted, pc]
+    # t_5cdbb967: ci, не pc — pc занят часовыми bank fill, синк не должен ждать (оба видят docker.sock хоста)
+    runs-on: [self-hosted, ci]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4

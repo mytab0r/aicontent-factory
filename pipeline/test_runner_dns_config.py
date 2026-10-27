@@ -16,7 +16,7 @@ IMAGE = "myoung34/github-runner"
 def runner_runs(text):
     """-> склеенные (по `\\`) команды `docker run`, запускающие образ раннера."""
     cmds = re.findall(r"docker run\b(?:[^\n]*\\\n)*[^\n]*", text)
-    return [re.sub(r"\\\n\s*", " ", c) for c in cmds if IMAGE in c]
+    return [re.sub(r"\\\n\s*", " ", c) for c in cmds if IMAGE in c or '"$tag"' in c]  # $tag: janitor swap_runner
 
 
 def problems(cmd):
@@ -38,7 +38,7 @@ def test_selfcheck():
 
 def test_workflows():
     seen, bad = 0, []
-    for f in sorted(WF.glob("*.yml")):
+    for f in sorted(WF.glob("*.yml")) + [WF.parent.parent / "deploy/gpu-pc/janitor.sh"]:
         for c in runner_runs(f.read_text(encoding="utf-8")):
             seen += 1
             bad += [f"{f.name}: {p}" for p in problems(c)]

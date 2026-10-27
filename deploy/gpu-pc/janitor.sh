@@ -34,6 +34,50 @@ guard_ace() {
   fin=$(docker inspect -f '{{.State.FinishedAt}}' ace-step); fin=$(date -u -D '%Y-%m-%dT%H:%M:%S' -d "${fin%.*}" +%s 2>/dev/null) || return
   [ $(( $(date -u +%s) - fin )) -gt 600 ] && docker start ace-step >/dev/null 2>&1 && echo "ACE-STEP STARTED $(date -u +%FT%TZ)"
 }
+# t_5cdbb967: RW-слой gh-runner-acf-release / gh-runner-aicontent-factory рос до 6-14 ГБ: apt-чинилки ffmpeg
+# (~2 ГБ /usr), /tmp (uv-cache, xlv, workdir /tmp/runner/work из старой регистрации), /root/.cache.
+# Механизм: раннер с RW > 1 ГБ и без джобы пересоздаётся на образе acf-runner (myoung34 + ffmpeg), /tmp и
+# /root/.cache — именованные тома (вне слоя; ротация — purge_tmp выше). Конфиг (REPO/имя/метки/токен)
+# берётся из docker inspect старого контейнера, регистрация переиспользуется из тома $n-data.
+# ponytail: окно гонки — джоба, выданная между проверкой простоя и stop (паузы 2-4 с), будет прервана.
+RUNNER_DF='FROM myoung34/github-runner:ubuntu-noble
+RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*'
+runner_busy() { docker top "$1" -eo args 2>/dev/null | grep -q Runner.Worker; }
+swap_runner() {
+  n=$1
+  # прерванный прошлый свап: вернуть старый контейнер
+  docker inspect "$n" >/dev/null 2>&1 || { docker rename "$n-old" "$n" && docker start "$n"; return; } >/dev/null 2>&1
+  rw=$(docker inspect --size -f '{{.SizeRw}}' "$n" 2>/dev/null) || return
+  [ "${rw:-0}" -gt 1000000000 ] || return
+  runner_busy "$n" && return; sleep 5; runner_busy "$n" && return
+  tag=acf-runner:$(printf %s "$RUNNER_DF" | sha256sum | cut -c1-12)
+  docker image inspect "$tag" >/dev/null 2>&1 || printf %s "$RUNNER_DF" | docker build -q -t "$tag" - >/dev/null || return
+  envf=/tmp/swap-$n.env
+  docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$n" \
+    | grep -E '^(REPO_URL|RUNNER_SCOPE|RUNNER_NAME|LABELS|RUNNER_TOKEN|RUNNER_WORKDIR|DISABLE_AUTOMATIC_DEREGISTRATION)=' > "$envf"
+  work=$(sed -n 's/^RUNNER_WORKDIR=//p' "$envf")
+  docker volume create gh-runner-uv-cache >/dev/null; docker volume create gh-runner-xlv >/dev/null
+  docker rm -f "$n-old" >/dev/null 2>&1
+  docker stop -t 60 "$n" >/dev/null && docker rename "$n" "$n-old" || { rm -f "$envf"; docker start "$n" >/dev/null 2>&1; return; }
+  docker run -d --name "$n" --restart unless-stopped --dns 192.168.65.7 --dns 8.8.8.8 --dns 77.88.8.8 --cpus 4 --memory 4g \
+    --env-file "$envf" -e CONFIGURED_ACTIONS_RUNNER_FILES_DIR=/runner/data -e AGENT_TOOLSDIRECTORY=/opt/hostedtoolcache \
+    -e ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE=/opt/actions-archive-cache -v gh-actions-archive-cache:/opt/actions-archive-cache \
+    -v /var/run/docker.sock:/var/run/docker.sock -v "$n-data:/runner/data" \
+    -v gh-runner-aicontent-factory-tools:/opt/hostedtoolcache \
+    -v "$n-tmp:/tmp" -v "$n-cache:/root/.cache" \
+    -v gh-runner-uv-cache:/tmp/acf-uv-cache -v gh-runner-xlv:/tmp/xlv -v "$n-work:$work" \
+    "$tag" >/dev/null
+  rm -f "$envf"
+  ok=0; for i in $(seq 1 60); do docker logs "$n" 2>&1 | grep -q "Listening for Jobs" && { ok=1; break; }; sleep 5; done
+  if [ $ok = 1 ]; then
+    for net in comfynet gpu-net; do docker network connect $net "$n" >/dev/null 2>&1; done
+    docker rm -f "$n-old" >/dev/null 2>&1
+    echo "RUNNER SWAPPED $n rw=$rw -> $(docker inspect --size -f '{{.SizeRw}}' "$n") $(date -u +%FT%TZ)"
+  else
+    echo "RUNNER SWAP FAILED $n, rollback $(date -u +%FT%TZ)"; docker logs --tail 5 "$n" 2>&1
+    docker rm -f "$n" >/dev/null 2>&1; docker rename "$n-old" "$n"; docker start "$n" >/dev/null
+  fi
+}
 while true; do
   guard_ace
   for c in $(docker ps -a --format '{{.Names}}'); do [ "$c" = ace-step ] && continue; echo "$c" | grep -Eq "$BAD_CT" && docker rm -f "$c" >/dev/null 2>&1; done
@@ -41,5 +85,6 @@ while true; do
   # H-volprune 20.10: volume prune removed hermes-runner /opt/data (anon volume) during recreate -> kanban lost. NEVER prune volumes here.
   docker builder prune -f --filter until=24h >/dev/null 2>&1
   purge_tmp
+  for r in gh-runner-acf-release gh-runner-aicontent-factory; do swap_runner $r; done
   sleep 600
 done
