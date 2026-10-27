@@ -65,6 +65,23 @@ def test_seam_on_beat_and_bass_swap():
         assert qg.seam_why(rows) == [], rows
 
 
+def test_quiet_intro_bank_seam_r3():
+    """t_2be41a12: daily-video 40527578183 FAIL R3 'стык: RMS -16.5 -> -20.4'. Реальная пара банка:
+    nxt (mix_01_2) с тихим интро ~10 дБ ниже тела. До #315 разрыв 3.91 дБ, после 0.98."""
+    br = _load("bank_release_r3", "bank_release.py")
+    with tempfile.TemporaryDirectory() as d:
+        ps = [shutil.copy(HERE / f"fixtures/bankR3_{n}.mp3", d) for n in ("prev", "quiet_intro")]
+        br._norm_segments([Path(p) for p in ps], log=lambda *a: None)
+        music.prep_segments(ps, log=lambda *a: None)
+        out = f"{d}/track.mp3"
+        _, seams = music.concat_tracks(ps, out)
+        br.master_final(out, "anime lofi")
+        rows = [{"t": t, "ce": 9.0, "rms_l": qg.rms_db(out, t - qg.SEAM_HALF, qg.SEAM_HALF),
+                 "rms_r": qg.rms_db(out, t, qg.SEAM_HALF)} for t in seams]
+        assert qg.seam_why(rows) == [], rows
+        assert all(abs(r["rms_l"] - r["rms_r"]) <= qg.SEAM_RMS_MAX - 1 for r in rows), rows  # запас 1 дБ
+
+
 def test_master_final_tp():
     br = _load("bank_release_dj", "bank_release.py")
     with tempfile.TemporaryDirectory() as d:
