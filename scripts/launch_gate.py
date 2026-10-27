@@ -11,7 +11,8 @@ from pathlib import Path
 
 REQUIRED = ["Счётчик открытий", "Премортем", "Симуляция", "Сухой прогон", "Критик"]
 MAX_AGE_H = 72  # ponytail: re-gate every 3 days (owner rule: day-3 repeat goes through the gate too)
-LIVE = Path("/opt/data/cache/delegation/live")
+# CI (release-раннер без /opt/data): workflow копирует транскрипты из тома hermes-data в LAUNCH_GATE_LIVE (t_acc4ee1c)
+LIVE = Path(os.environ.get("LAUNCH_GATE_LIVE", "/opt/data/cache/delegation/live"))
 
 def gate(path):
     if not os.path.isfile(path):

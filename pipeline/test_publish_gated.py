@@ -91,6 +91,13 @@ def test_daily_video_launch_gated():
         if PUB.search(st):
             assert "steps.gate.outputs.go == '1'" in st, st.splitlines()[0]
 
+def test_daily_owning_launch_gated():
+    """t_acc4ee1c: ch1 Owning льёт публично только при GO launch_gate.py us-youtube-grid; транскрипты критика
+    копируются из тома hermes-data (на release-раннере /opt/data нет — без копии гейт вечный NO-GO)."""
+    y = (pathlib.Path(__file__).parent.parent / ".github/workflows/daily-owning.yml").read_text(encoding="utf-8")
+    assert "python3 scripts/launch_gate.py us-youtube-grid" in y
+    assert "steps.gate.outputs.go == '1' && env.PUBLISH == '1'" in y
+    assert "LAUNCH_GATE_LIVE" in y and "hermes-data:/opt/data:ro" in y
 
 if __name__ == "__main__":
     for k, f in list(globals().items()):
