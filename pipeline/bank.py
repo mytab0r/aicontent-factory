@@ -21,6 +21,9 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 BANK_ROOT = "/app/output/bank"
 CAP_FILES = 400  # ~4 МБ/сегмент -> ~1.6 ГБ, ниже лимита 15 ГБ спецификации
+RELEASE_SEG = 20  # t_1f53095a R3: 1 выпуск = час = 20 x 180 с
+TARGET_RELEASES = 2  # цель банка: >= 2 выпуска вперёд (40 сегментов)
+BANK_LIMIT_KB = 15 * 1048576  # лимит банка 15 ГБ (все жанры, du -sk BANK_ROOT)
 MARGIN = 4  # запас сегментов в группе сверх need: рваный cp бьёт пачкой — всплеск из 3 битых (39924822702) не должен обнулять выпуск
 
 
@@ -32,7 +35,8 @@ def slug(genre: str) -> str:
     return genre.replace(" ", "-")
 
 
-def fill(target, have, make, put, busy, log=print, max_iter=40, max_consecutive_fail=3, deadline=None):
+def fill(target, have, make, put, busy, log=print, max_iter=40, max_consecutive_fail=3, deadline=None,
+         guard=None):
     """Наполнить банк до target. make(i) -> путь прошедшего гейт сегмента или None (брак).
     busy() = выпуск идёт/в очереди -> выход. Сбой генерации при занятом GPU = уступили, без ошибки.
     Сбой без выпуска (run 39884870081: oneMKL transient 0/21 на 39/40) = повтор, прогон роняем
@@ -48,6 +52,10 @@ def fill(target, have, make, put, busy, log=print, max_iter=40, max_consecutive_
             break
         if busy():
             log(f"банк: выпуск в работе — уступаю GPU (в банке {n})")
+            break
+        why = guard() if guard else None  # t_1f53095a R3: лимит 15 ГБ / пол C: — до генерации, не после
+        if why:
+            log(f"банк: стоп — {why} (в банке {n})")
             break
         try:
             p = make(i)
@@ -69,6 +77,101 @@ def fill(target, have, make, put, busy, log=print, max_iter=40, max_consecutive_
             n += 1
             log(f"банк: +1 сегмент, всего {n}/{target}")
     return n
+
+
+def reserve_level(n: int) -> str:
+    """t_1f53095a R3: n = свободные совместимые сегменты. empty = выпуск пропустит слот (< MIN_SEG)."""
+    from bank_release import MIN_SEG
+    if n < MIN_SEG:
+        return "empty"
+    if n < RELEASE_SEG:
+        return "low"
+    if n < RELEASE_SEG * TARGET_RELEASES:
+        return "below_target"
+    return "ok"
+
+
+def status_line(genre: str, n: int) -> str:
+    lvl = reserve_level(n)
+    s = f"банк {genre}: {n} сегм. = {n / RELEASE_SEG:.1f} выпуска (цель {TARGET_RELEASES})"
+    if lvl in ("low", "empty"):
+        s += " — меньше 1 выпуска, генератор в приоритет"
+        if lvl == "empty":
+            s += "; слот выпуска будет пропущен"
+    return s
+
+
+def guard_reason(bank_kb: int, disk_rc: int):
+    """None = писать можно. bank_kb = du банка, disk_rc = код disk_gate.sh c (единый пол C:)."""
+    if bank_kb >= BANK_LIMIT_KB:
+        return f"банк {bank_kb / 1048576:.1f} ГБ >= лимита {BANK_LIMIT_KB // 1048576} ГБ"
+    if disk_rc != 0:
+        return "на C: ниже пола disk_floors.env (disk_gate.sh c)"
+    return None
+
+
+def disk_gate_rc(need_gb: int = 1) -> int:
+    gate = HERE.parent / "deploy/gpu-pc/disk_gate.sh"
+    return subprocess.run(["sh", str(gate), "c", str(need_gb)]).returncode
+
+
+def bank_kb(docker_sh=None) -> int:
+    out = (docker_sh or _docker)("exec", "ace-step", "sh", "-c", f"du -sk {BANK_ROOT} 2>/dev/null || echo 0")
+    return int((out.split() or ["0"])[0])
+
+
+def reserve_count(counts: dict) -> int:
+    """Сколько сегментов выпуск реально наберёт: крупнейшая группа + совместимые с ней (как pick).
+    ponytail: сумма по совместимым соседям, без учёта битых при take; точнее = прогнать pick()."""
+    from bank_release import _keys_related
+    return max((sum(c for k2, c in counts.items() if _keys_related(k, k2)) for k in counts), default=0)
+
+
+def reserve_check(counts_by_genre: dict, send, dispatch) -> list:
+    """Часовой отчёт: строка на жанр. < 1 выпуска = TG-алерт + dispatch bank-fill (генератор в приоритет)."""
+    lines = [status_line(g, n) for g, n in counts_by_genre.items()]
+    low = [status_line(g, n) for g, n in counts_by_genre.items() if reserve_level(n) in ("low", "empty")]
+    for line in lines:
+        print(line)
+    if low:
+        send("⚠️ " + "\n".join(low))
+        dispatch()
+    return lines
+
+
+def dispatch_fill(repo=None, token=None) -> None:
+    """Поднять генератор: bank-fill сейчас, если он не идёт и не ждёт (concurrency затёр бы pending)."""
+    repo = repo or os.environ["GITHUB_REPOSITORY"]
+    token = token or os.environ["GH_TOKEN"]
+    h = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
+    base = f"https://api.github.com/repos/{repo}/actions/workflows/bank-fill.yml"
+    for st in ("in_progress", "queued", "pending", "waiting"):
+        with urllib.request.urlopen(urllib.request.Request(f"{base}/runs?status={st}&per_page=1", headers=h),
+                                    timeout=30) as r:
+            if json.load(r).get("total_count", 0):
+                print(f"bank-fill уже {st} — новый не ставлю")
+                return
+    req = urllib.request.Request(f"{base}/dispatches", method="POST", headers=h,
+                                 data=json.dumps({"ref": os.environ.get("GITHUB_REF_NAME", "master")}).encode())
+    urllib.request.urlopen(req, timeout=30).close()
+    print("bank-fill запущен вне расписания (запас < 1 выпуска)")
+
+
+def reserve_main() -> int:
+    from common import tg_send
+    counts = {}
+    for g in ("anime lofi", "chill phonk"):
+        try:
+            counts[g] = reserve_count(group_counts(g, _docker))
+        except Exception as e:
+            print(f"bank {g}: не прочитан ({type(e).__name__}: {e})")
+            counts[g] = 0
+    reserve_check(counts, tg_send, dispatch_fill)
+    try:
+        print(f"банк на диске: {bank_kb() / 1048576:.2f} ГБ из {BANK_LIMIT_KB // 1048576}")
+    except Exception as e:
+        print(f"du банка: {type(e).__name__}")
+    return 0
 
 
 def _sh(*a):
@@ -381,9 +484,18 @@ def main():
 
     dmin = float(os.environ.get("BANK_DEADLINE_MIN", "0") or 0)
     deadline = time.monotonic() + dmin * 60 if dmin else None
-    n = fill(target, have, gen, put, release_busy, deadline=deadline)
+    def guard():
+        try:
+            kb = bank_kb()
+        except Exception:
+            kb = 0  # du недоступен: лимит не проверить, пол C: проверяется всё равно
+        return guard_reason(kb, disk_gate_rc())
+
+    n = fill(target, have, gen, put, release_busy, deadline=deadline, guard=guard)
     print(f"банк {genre}: {n} сегментов (цель {target})")
 
 
 if __name__ == "__main__":
+    if "--reserve" in sys.argv:
+        sys.exit(reserve_main())
     main()
