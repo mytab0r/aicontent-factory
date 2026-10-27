@@ -35,11 +35,12 @@ jobs:
           docker volume create gh-runner-uv-cache >/dev/null 2>&1 || true
           docker volume create gh-runner-xlv >/dev/null 2>&1 || true
           TMP="unbreak-$$"
-          docker run -d --name "$TMP" --restart unless-stopped --cpus 4 --memory 4g \
+          docker run -d --name "$TMP" --restart unless-stopped --dns 192.168.65.7 --dns 8.8.8.8 --dns 77.88.8.8 --cpus 4 --memory 4g \
             -e REPO_URL=https://github.com/mytab0r/aicontent-factory -e RUNNER_SCOPE=repo \
             -e RUNNER_NAME="$RUNNER_NAME" -e LABELS="$LBL" -e RUNNER_TOKEN="$REG" \
             -e RUNNER_WORKDIR="$WORK" -e CONFIGURED_ACTIONS_RUNNER_FILES_DIR=/runner/data \
             -e DISABLE_AUTOMATIC_DEREGISTRATION=true \
+            -e ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE=/opt/actions-archive-cache -v gh-actions-archive-cache:/opt/actions-archive-cache \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v "$NAME-data:/runner/data" \
             -v gh-runner-aicontent-factory-tools:/opt/hostedtoolcache \
