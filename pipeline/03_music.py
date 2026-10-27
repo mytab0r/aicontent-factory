@@ -522,13 +522,15 @@ BASS_HZ = 200.0  # bass swap: ниже — бас, его в переходе д
 
 @__import__("functools").lru_cache(maxsize=256)
 def _downbeats(path, start, dur):
-    """(bpm, абс. времена сильных долей) окна [start, start+dur]; None = нет librosa/сетки (синус, тишина).
-    librosa даёт биты, не такты: сильная доля = фаза 4-дольной сетки с наибольшей onset-энергией."""
-    try:
-        import librosa
-        import numpy as np
-    except ImportError:
-        return None
+    """(bpm, абс. времена сильных долей) окна [start, start+dur]; None = сетка не нашлась (короткий файл,
+    нет ритма в окне). t_2be41a12: ImportError librosa раньше тоже давал None -> dj_plan молча откатывался
+    на xfade (acrossfade qsin без среза/bass swap). edge_match на таком стыке не сходится ниже порога R3
+    гейта (проверено: двусторонняя gain-коррекция застревает на разрыве >3 дБ, когда у края сегмента есть
+    переходный участок типа брейкдауна/удара — ramp не может убрать локальный провал без искажения тела).
+    librosa — обязательная зависимость пайплайна (pyproject.toml); отсутствие — дефект окружения, падаем
+    громко, как уже делает bank_release.assemble (t_96de1cc6), а не тихо ломаем качество склейки."""
+    import librosa
+    import numpy as np
     y, sr = librosa.load(str(path), sr=22050, mono=True, offset=max(0.0, start), duration=dur)
     if len(y) < sr * 8:
         return None

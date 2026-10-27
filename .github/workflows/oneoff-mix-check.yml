@@ -61,7 +61,7 @@ jobs:
           command -v ffmpeg || { sudo dpkg --configure -a || true; for i in 1 2 3; do sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg && break; sleep 20; done; }
           command -v ffmpeg
           uv venv .venv
-          uv pip install --python .venv/bin/python pillow gradio_client
+          uv pip install --python .venv/bin/python pillow gradio_client numpy librosa
 
       - name: 01 idea
         if: steps.guard.outputs.published != '1'
