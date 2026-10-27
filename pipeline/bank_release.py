@@ -317,36 +317,42 @@ def _music_mod():
 
 LIMIT_DB = -1.5  # t_96de1cc6: потолок alimiter; гейт MAX_TP -1.0, 0.5 дБ запаса на mp3-овершут
 TP_SAFE = -1.2   # после кодирования TP выше -> статический доворот вниз (гейт -1.0 не трогаем)
+LN_PASSES = 4    # t_2c32a785: рендеров с доводкой остатка громкости после лимитера
+LN_TOL = 0.5     # допуск к LUFS_TARGET (гейт MIN_I..MAX_I = цель -2/+1)
 
 
 def loudnorm_2pass(src: str, dst: str) -> dict:
-    """Двухпроходный loudnorm linear=true: 1-й проход меряет (ebur128: I/порог/LRA/TP), 2-й получает measured_*
-    и даёт ОДИН постоянный gain (динамики нет, LRA не давится). Затем alimiter LIMIT_DB.
-    03c FAIL 24.10 (TP -0.8): однопроходный loudnorm + mp3-перекодирование поднимали пики над -1."""
-    import json
-    import subprocess
-    from quality_gate import LUFS_TARGET
-    tgt = f"I={LUFS_TARGET:g}:TP={LIMIT_DB:g}:LRA=20"
-    # 1-й проход = ebur128 (I/порог/LRA/TP) вместо loudnorm-анализа: на часе 20 с против 127 с
-    # (run 40253826993: 03 music > 20 мин). Те же величины, что measured_* loudnorm (BS.1770).
+    """Двухпроходная нормализация: 1-й проход меряет I (ebur128), 2-й = постоянный gain к LUFS_TARGET
+    (динамики нет, LRA не давится) + alimiter LIMIT_DB на 4x частоте.
+    t_2c32a785: раньше 2-й проход = loudnorm linear=true. ffmpeg держит linear только если
+    measured_TP + gain <= TP цели; на пиковом lofi/phonk (бочка) это не так, и loudnorm молча уходит
+    в динамический режим, который недотягивает: выпуски -16.1..-16.5 LUFS при гейте -16..-13.
+    Лимитер срезает пики вместе с частью громкости, поэтому остаток до цели меряем и довешиваем к gain."""
     import re as _re
+    import subprocess
+    import mastering
+    from quality_gate import LUFS_TARGET
+    # 1-й проход = ebur128 вместо loudnorm-анализа: на часе 20 с против 127 с (run 40253826993).
     err = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", src, "-map", "0:a", "-af", "ebur128=peak=true",
                           "-f", "null", "-"], capture_output=True, text=True, check=True).stderr
     tail = err[err.rindex("Summary:"):]
     num = lambda k: _re.search(k + r":\s+(-?[\d.]+)", tail).group(1)
-    j = {"input_i": num("I"), "input_thresh": num("Threshold"), "input_lra": num("LRA"),
-         "input_tp": num("Peak"), "target_offset": "0.0"}
+    j = {"input_i": num("I"), "input_thresh": num("Threshold"), "input_lra": num("LRA"), "input_tp": num("Peak")}
     # лимитер на 4x частоте: на 48 кГц он ловит сэмплы, не межсэмпловые пики (замер на банке: TP -0.7 vs -1.0)
     lim = f"aresample=192000,alimiter=limit={10 ** (LIMIT_DB / 20):.4f}:level=disabled:attack=1:release=50"
-    af = (f"loudnorm={tgt}:linear=true:measured_I={j['input_i']}:measured_TP={j['input_tp']}:"
-          f"measured_LRA={j['input_lra']}:measured_thresh={j['input_thresh']}:offset={j['target_offset']},"
-          f"{lim},aresample=48000")
     tmp = dst + ".ln2.mp3"
-    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", src, "-af", af, "-ar", "48000",
-                    "-c:a", "libmp3lame", "-b:a", "192k", tmp], check=True)
+    gain = LUFS_TARGET - float(j["input_i"])
+    for _ in range(LN_PASSES):
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", src, "-af",
+                        f"volume={gain:.2f}dB,{lim},aresample=48000", "-ar", "48000",
+                        "-c:a", "libmp3lame", "-b:a", "192k", tmp], check=True)
+        i = mastering.measure(tmp)["i"]
+        if abs(i - LUFS_TARGET) <= LN_TOL:
+            break
+        gain += LUFS_TARGET - i
+    j["gain"] = f"{gain:.2f}"
     os.replace(tmp, dst)
     # mp3-кодер добавляет овершут ~0.3-0.5 дБ: замер и статический доворот (I сдвигается на те же доли дБ)
-    import mastering
     for _ in range(2):
         tp = mastering.measure(dst)["tp"]
         if tp <= TP_SAFE:
