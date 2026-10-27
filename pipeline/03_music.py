@@ -502,7 +502,8 @@ def edge_rms(path, side, sec=5.0) -> float:
 
 
 EDGE_RAMP_SEC = 30.0  # gain только на начале сегмента, к телу спадает до 0: без накопления по цепочке
-EDGE_MAX_GAIN = 18.0  # 3 прохода x клэмп 6 дБ
+EDGE_PASSES = 3
+EDGE_MAX_GAIN = 18.0  # EDGE_PASSES прохода x клэмп 6 дБ
 
 
 def pmap(fn, items):
@@ -629,13 +630,24 @@ def edge_match(paths, max_gain=6.0, ramp=EDGE_RAMP_SEC, log=print):
     for i in range(1, len(paths)):
         tot = 0.0
         r = max(6.0, min(ramp, _probe_sec(paths[i]) * 0.4))
-        for _ in range(3):
+        # t_44f5c3b3 (runs 40477529845 R3 595 с -17.0 -> -21.0, 40508302240 R3 1312 с -16.3 -> -20.2; edge gain
+        # +16.3/+14.7 дБ): рампа спадала с t=0, внутри окна гейта (центр стыка ns+L/2 ± SEAM_HALF) доходило
+        # 50-70% gain, 3 прохода по клэмпу 6 дБ не сходились на тихом вступлении. Полный gain держим до конца
+        # окна гейта (hold), спад — после: каждый проход доходит до окна целиком.
+        from quality_gate import SEAM_HALF
+        _pe, ns, L, _sw = dj_plan(paths[i - 1], paths[i])
+        hold = ns + L / 2 + SEAM_HALF + 1.0
+        # короткий сегмент: hold+рампа не доходят до окна следующего стыка (иначе дрейф по цепочке)
+        dur = _probe_sec(paths[i])
+        hold = min(hold, dur * 0.3)
+        r = max(3.0, min(r, dur * 0.4 - hold))
+        for _ in range(EDGE_PASSES):
             lv, rv = seam_rms(paths[i - 1], paths[i])
             g = max(-max_gain, min(max_gain, lv - rv))
             if abs(g) <= 0.5:
                 break
             tmp = f"{paths[i]}.g.mp3"
-            af = f"volume='pow(10,{g:.3f}*max(0,1-t/{r:.1f})/20)':eval=frame"
+            af = f"volume='pow(10,{g:.3f}*min(1,max(0,1-(t-{hold:.2f})/{r:.1f}))/20)':eval=frame"
             subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", paths[i], "-af", af,
                             "-c:a", "libmp3lame", "-b:a", "192k", tmp], check=True)
             os.replace(tmp, paths[i])
