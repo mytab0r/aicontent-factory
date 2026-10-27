@@ -50,7 +50,9 @@ jobs:
     # pc-acf-release: setup-uv падает EACCES (spawn uv, 16.10) — выпуск на проверенном pc-acf
     runs-on: [self-hosted, release]
     # 16.10 run 38886770624: аплоад часа >34 мин -> 75 обрезал 05 publish; music теперь = сборка из банка (<15 мин).
-    timeout-minutes: 240
+    # t_79ec2527: лимит джобы = страховка, не бюджет. Сумма timeout-minutes шагов (270) обязана быть меньше,
+    # иначе зависание убивает ДЖОБУ без имени шага ("exceeded the maximum execution time"). Линт job-budget.
+    timeout-minutes: 300
     env:
       ROUTER_BASE_URL: https://9router.pxbt.app/v1
       ROUTER_API_KEY: ${{ secrets.ROUTER_API_KEY }}
@@ -104,7 +106,7 @@ jobs:
       - name: 02 cover
         id: cover
         if: steps.guard.outputs.published != '1'
-        timeout-minutes: 30  # P18: зависание шага = failure -> TG alert, не 240 мин
+        timeout-minutes: 10  # t_79ec2527: бюджет по факту (макс 3.8 мин за 40 прогонов) + запас; сумма шагов < лимита джобы
         working-directory: pipeline
         run: ../.venv/bin/python 02_cover.py
 
@@ -112,7 +114,7 @@ jobs:
         id: animate
         if: steps.guard.outputs.published != '1'
         continue-on-error: true  # root-cause: t_f95a06da
-        timeout-minutes: 15
+        timeout-minutes: 10  # t_79ec2527: бюджет по факту (макс 2.6 мин за 40 прогонов) + запас; сумма шагов < лимита джобы
         working-directory: pipeline
         run: ../.venv/bin/python 03b_animate.py
 
@@ -201,7 +203,7 @@ jobs:
       - name: 03c quality gate (критик, FAIL = не публиковать)
         id: qg
         if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1'
-        timeout-minutes: 60  # P18: зависание шага = failure -> TG alert, не 240 мин
+        timeout-minutes: 40  # t_79ec2527: бюджет по факту (макс 31.7 мин за 40 прогонов) + запас; сумма шагов < лимита джобы
         working-directory: pipeline
         run: ../.venv/bin/python quality_gate.py
 
@@ -210,7 +212,7 @@ jobs:
       - name: 03d anti-repeat (chroma vs 14 дней, FAIL = другая выборка банка)
         id: antirepeat
         if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1'
-        timeout-minutes: 30  # P18: зависание шага = failure -> TG alert, не 240 мин
+        timeout-minutes: 5  # t_79ec2527: бюджет по факту (макс 0.4 мин за 40 прогонов) + запас; сумма шагов < лимита джобы
         working-directory: pipeline
         env:
           ACF_BANK: "1"  # t_ba72c7aa: повтор = другая выборка из банка, не генерация
@@ -219,7 +221,7 @@ jobs:
       - name: 04 assemble (ffmpeg)
         id: assemble
         if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1'
-        timeout-minutes: 30  # P18: зависание шага = failure -> TG alert, не 240 мин
+        timeout-minutes: 10  # t_79ec2527: бюджет по факту (макс 3.9 мин за 40 прогонов) + запас; сумма шагов < лимита джобы
         working-directory: pipeline
         run: ../.venv/bin/python 04_assemble.py
 
@@ -228,7 +230,7 @@ jobs:
       - name: 04b quality gate final (звук video.mp4, FAIL = не публиковать)
         id: qgfinal
         if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1'
-        timeout-minutes: 60  # P18: зависание шага = failure -> TG alert, не 240 мин
+        timeout-minutes: 40  # t_79ec2527: бюджет по факту (макс 29.4 мин за 40 прогонов) + запас; сумма шагов < лимита джобы
         working-directory: pipeline
         run: ../.venv/bin/python quality_gate.py --final
 
@@ -276,7 +278,7 @@ jobs:
       - name: 05b anti-repeat record (отпечаток опубликованного трека в .state)
         id: arrecord
         if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1'
-        timeout-minutes: 15  # P18: зависание шага = failure -> TG alert, не 240 мин
+        timeout-minutes: 5  # t_79ec2527: бюджет по факту (макс 0.4 мин за 40 прогонов) + запас; сумма шагов < лимита джобы
         continue-on-error: true  # видео уже на канале; потеря отпечатка не валит выпуск  # root-cause: t_f95a06da
         working-directory: pipeline
         run: ../.venv/bin/python antirepeat.py --record
@@ -284,7 +286,7 @@ jobs:
       - name: 07 shorts (2 x 9:16 из long-form, ссылка на него)
         id: shorts
         if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1'
-        timeout-minutes: 30  # P18: зависание шага = failure -> TG alert, не 240 мин
+        timeout-minutes: 15  # t_79ec2527: бюджет по факту (макс 6.2 мин за 40 прогонов) + запас; сумма шагов < лимита джобы
         working-directory: pipeline
         run: |
           if [ -f ../.state/youtube_token.json ]; then
@@ -363,7 +365,7 @@ jobs:
         # ponytail: artifact is debug-only (video is on YouTube); storage quota must never fail the release
         continue-on-error: true  # root-cause: t_f95a06da
         uses: actions/upload-artifact@v4  # artifact-ok: логи прогона; доставка результата вне артефактов
-        timeout-minutes: 15  # t_6758c86f: сетевой шаг не висит до таймаута джобы
+        timeout-minutes: 5  # t_79ec2527: бюджет по факту (макс 0.0 мин за 40 прогонов) + запас; сумма шагов < лимита джобы
         with:
           name: video-${{ github.run_id }}-${{ strategy.job-index }}
           path: |

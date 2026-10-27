@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """CI-линт обходов гейтов («Повтор = класс», ai-dev-engineering #25).
-FAIL на: setup-buildx-action без `driver: docker` (t_a41372f5) | continue-on-error: true | `|| true`/`|| :` после теста/гейта/upload/push | actions/upload-artifact | docker login / docker/login-action (t_831d9fd6).
+FAIL на: setup-buildx-action без `driver: docker` (t_a41372f5) | continue-on-error: true | `|| true`/`|| :` после теста/гейта/upload/push | actions/upload-artifact | docker login / docker/login-action (t_831d9fd6) | сумма timeout шагов >= timeout джобы (t_79ec2527).
 Разрешение: `# root-cause: t_<id>` (первые два) или `# artifact-ok: <причина>` (upload) в той же строке
 или в непрерывном блоке комментариев прямо над строкой.
 Usage: python3 ci_bypass_lint.py [ROOT]"""
@@ -79,6 +79,29 @@ def lint_net_timeout(lines):
             e += 1
         if not any(re.match(r"^\s*timeout-minutes:", x) for x in lines[s:e]):
             out.append((i + 1, "net-step-timeout"))
+    return out
+
+
+# t_79ec2527: "The job has exceeded the maximum execution time" (38886770624: 05 publish, 39132157308: measure)
+# = шаг без своего бюджета доедал лимит джобы; GitHub убивал джобу без имени виновника. Механизм: сумма
+# timeout-minutes шагов обязана быть МЕНЬШЕ timeout-minutes джобы — зависший шаг падает своим таймаутом
+# (явная ошибка с именем шага, TG alert) раньше, чем джоба упрётся в общий лимит.
+# ponytail: шаги без timeout-minutes в сумму не входят (их остаток покрывает запас); ужесточить — 5 мин на каждый.
+JOB_TO = re.compile(r"^    timeout-minutes:\s*(\d+)")
+STEP_TO = re.compile(r"^\s{6,}(?:-\s*)?timeout-minutes:\s*(\d+)")
+
+
+def lint_job_budget(lines):
+    out, jobs = [], [i for i, x in enumerate(lines) if re.match(r"^  [\w-]+:\s*(#.*)?$", x)]
+    if "jobs:" not in lines:
+        return out
+    top = lines.index("jobs:")
+    jobs = [i for i in jobs if i > top] + [len(lines)]
+    for a, b in zip(jobs, jobs[1:]):
+        job = next(((i, int(m.group(1))) for i in range(a, b) if (m := JOB_TO.match(lines[i]))), None)
+        steps = sum(int(m.group(1)) for x in lines[a:b] if (m := STEP_TO.match(x)))
+        if job and steps >= job[1]:
+            out.append((job[0] + 1, f"job-budget(steps={steps}>={job[1]})"))
     return out
 
 
@@ -161,7 +184,7 @@ def main(root="."):
     bad = 0
     for f in files:
         lines = f.read_text(encoding="utf-8").splitlines()
-        for n, rule in lint_text("\n".join(lines)) + lint_net_timeout(lines) + lint_upload_budget(f.name, lines):
+        for n, rule in lint_text("\n".join(lines)) + lint_net_timeout(lines) + lint_job_budget(lines) + lint_upload_budget(f.name, lines):
             print(f"{f.relative_to(root).as_posix()}:{n}: {rule}: {lines[n - 1].strip()}")
             bad += 1
     if bad:
