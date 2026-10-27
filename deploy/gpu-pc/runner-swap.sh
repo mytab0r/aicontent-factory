@@ -5,8 +5,8 @@
 # Что держит слой < 1 ГБ:
 #   - образ acf-runner:<hash> = myoung34 + ffmpeg (apt-чинилки ci.yml/daily-* больше не пишут ~2 ГБ в слой);
 #   - /tmp и /root/.cache — именованные тома (uv-cache/xlv/venv/pip вне слоя), ротация — janitor purge_tmp.
-# Запускать С ДРУГОГО раннера (target=release -> джоба на pc и наоборот): rm старого контейнера убивает
-# свою же джобу; rename/сети до rm, rm последним.
+# Запускать с раннера ci (не цель свапа): stop/rm целевого контейнера убил бы свою же джобу.
+# У pc-acf метки pc+release — runs-on release может попасть на него же.
 set -euo pipefail
 TARGET=${1:?release|pc}; MODE=${2:-force}
 LIMIT=$((1000*1000*1000))
@@ -33,6 +33,10 @@ docker run --rm --entrypoint ffmpeg "$TAG" -version | head -1
 
 docker volume create gh-runner-uv-cache >/dev/null; docker volume create gh-runner-xlv >/dev/null
 TMP="unbreak-$$"
+# Регистрация общая ($NAME-data, reusage): пока старый контейнер держит сессию, новый получает
+# "A session for this runner already exists" и не выходит в Listening (run 40423983175). Старый — стоп
+# до старта нового; при неудаче — старый поднимается обратно.
+docker stop -t 60 "$NAME" >/dev/null
 docker run -d --name "$TMP" --restart unless-stopped --cpus 4 --memory 4g \
   -e REPO_URL=https://github.com/mytab0r/aicontent-factory -e RUNNER_SCOPE=repo \
   -e RUNNER_NAME="$RUNNER_NAME" -e LABELS="$LBL" -e RUNNER_TOKEN="${REG:?REG secret}" \
@@ -48,7 +52,7 @@ docker run -d --name "$TMP" --restart unless-stopped --cpus 4 --memory 4g \
   -v "$VOL:$WORK" \
   "$TAG"
 ok=0; for i in $(seq 1 60); do docker logs "$TMP" 2>&1 | grep -q "Listening for Jobs" && { ok=1; break; }; sleep 5; done
-[ "$ok" = 1 ] || { echo "::error::new runner not listening"; docker logs --tail 30 "$TMP"; docker rm -f "$TMP"; exit 1; }
+[ "$ok" = 1 ] || { echo "::error::new runner not listening, rollback"; docker logs --tail 30 "$TMP"; docker rm -f "$TMP"; docker start "$NAME"; exit 1; }
 docker rm -f "$NAME-old" 2>/dev/null || true
 docker rename "$NAME" "$NAME-old"
 docker rename "$TMP" "$NAME"
@@ -56,4 +60,4 @@ for n in comfynet gpu-net; do docker network connect $n "$NAME" || true; done
 for z in $(docker ps -aq --filter "name=recreate-" --filter "name=unbreak-"); do docker rm -f "$z" || true; done
 docker images acf-runner --format '{{.Repository}}:{{.Tag}}' | grep -vx "$TAG" | xargs -r docker rmi 2>/dev/null || true
 echo "after: $NAME RW=$(docker inspect --size -f '{{.SizeRw}}' "$NAME") bytes image=$TAG"
-docker rm -f "$NAME-old" || true   # последним: при self-swap убивает эту джобу
+docker rm -f "$NAME-old" || true
