@@ -56,6 +56,11 @@ jobs:
       # Варианты независимы: падение одного не убивает остальные (частичный A/B > никакого);
       # stderr+stdout пишутся и в консоль (лог задания), и в /tmp/xlrun/<name>.log на случай
       # повторного BlobNotFound при аплоаде логов раннером.
+      # t_c2228046: wait for ace-step before any docker exec/inspect to avoid race with janitor/ace_mode
+      - name: wait for ace-step (race guard)
+        run: |
+          sh deploy/gpu-pc/wait_ace_step.sh 30 -- docker exec ace-step ls -la /app/output/lora/out/final
+
       - name: blind A/B — XL-sft+LoRA best-of-8 (prod path) vs turbo prod
         timeout-minutes: 150
         env:
@@ -73,7 +78,6 @@ jobs:
           else
             rm -rf /tmp/xlrun runs && mkdir -p /tmp/xlrun; SKIP_GEN=0
           fi
-          docker exec ace-step ls -la /app/output/lora/out/final
           # root-cause: t_849a846a — сумма таймаутов вариантов (2700+1500+3x2700 + рестарты по 18 мин)
           # превышала timeout-minutes шага (150): при воркере-зомби каждый вариант жёг таймаут целиком,
           # и шаг убивал GitHub (39071696001, 39084115119, 39095339812). Теперь таймаут варианта

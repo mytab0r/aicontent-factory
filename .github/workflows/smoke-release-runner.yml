@@ -19,3 +19,8 @@ jobs:
         run: |
           getent hosts ace-step && curl -s -m 10 -o /dev/null -w "ace-step http=%{http_code}\n" "http://ace-step:8001/health" || { echo "::error::ace-step не резолвится с раннера"; exit 1; }
           docker info --format 'docker ok {{.ServerVersion}}'; nproc; free -m | head -2
+
+      # t_c2228046: wait for ace-step before any docker exec/inspect to avoid race with janitor/ace_mode
+      - name: wait for ace-step (race guard)
+        run: |
+          sh deploy/gpu-pc/wait_ace_step.sh 10 -- getent hosts ace-step && curl -s -m 5 -o /dev/null -w "ace-step http=%{http_code}\n" "http://ace-step:8001/health"

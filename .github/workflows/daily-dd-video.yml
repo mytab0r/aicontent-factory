@@ -45,6 +45,11 @@ jobs:
         working-directory: pipeline
         run: ../.venv/bin/python 03_music.py
 
+      # t_c2228046: wait for ace-step before any docker exec/inspect to avoid race with janitor/ace_mode
+      - name: wait for ace-step (race guard)
+        run: |
+          sh deploy/gpu-pc/wait_ace_step.sh 30 -- curl -s -m 5 -o /dev/null -w "ace-step http=%{http_code}\n" "http://ace-step:8001/health"
+
       - name: 04 assemble (ffmpeg)
         working-directory: pipeline
         run: ../.venv/bin/python 04_assemble.py

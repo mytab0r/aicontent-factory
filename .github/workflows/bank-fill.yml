@@ -65,6 +65,12 @@ jobs:
             sleep 6
           done
           echo "::error::ace-step не healthy за 10 мин: $(docker inspect -f '{{.State.Status}}' ace-step 2>&1)"; docker logs --tail 80 ace-step 2>&1 || true; exit 1
+
+      # t_c2228046: wait for ace-step before any docker exec/inspect to avoid race with janitor/ace_mode
+      - name: wait for ace-step (race guard)
+        run: |
+          sh deploy/gpu-pc/wait_ace_step.sh 30 -- docker exec ace-step echo ready
+
       - name: reference audio (cache)
         run: |
           [ -z "$ACE15_REF_AUDIO" ] && exit 0  # noref-жанр

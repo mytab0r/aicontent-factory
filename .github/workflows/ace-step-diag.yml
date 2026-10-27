@@ -27,3 +27,8 @@ jobs:
               echo "$st $n csize=$csize rsize=$rsize cdur=$cdur rdur=$rdur"
             done
           done
+
+      # t_c2228046: wait for ace-step before any docker exec/inspect to avoid race with janitor/ace_mode
+      - name: wait for ace-step (race guard)
+        run: |
+          sh deploy/gpu-pc/wait_ace_step.sh 30 -- docker exec ace-step echo ready

@@ -91,6 +91,12 @@ jobs:
           done
           echo "::error::ace-step не healthy за 4 мин"; docker inspect -f 'status={{.State.Status}} health={{.State.Health.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}} restarts={{.RestartCount}} image={{.Config.Image}}' ace-step 2>&1 || echo "ace-step: контейнер отсутствует (t_50f1fc9b)"; docker logs --tail 40 ace-step 2>&1 || echo "ace-step: логов нет"; exit 1
 
+      # t_c2228046: wait for ace-step before any docker exec/inspect to avoid race with janitor/ace_mode
+      - name: wait for ace-step (race guard)
+        if: steps.guard.outputs.published != '1'
+        run: |
+          sh deploy/gpu-pc/wait_ace_step.sh 30 -- docker inspect -f '{{.State.Health.Status}}' ace-step
+
       - name: reference audio (cache)
         if: steps.guard.outputs.published != '1'
         continue-on-error: true  # root-cause: t_f95a06da

@@ -52,6 +52,11 @@ jobs:
         run: |
           ../.venv/bin/python ab_samples.py --n "${{ inputs.n || 4 }}" --seg-sec "${{ inputs.seg_sec || 60 }}" --out ../runs/ab_$(date -u +%Y%m%d_%H%M%S)
 
+      # t_c2228046: wait for ace-step before any docker exec/inspect to avoid race with janitor/ace_mode
+      - name: wait for ace-step (race guard)
+        run: |
+          sh deploy/gpu-pc/wait_ace_step.sh 30 -- curl -s -m 5 -o /dev/null -w "ace-step http=%{http_code}\n" "http://ace-step:8001/health"
+
       - name: upload A/B files -> C:\dockerlocal\acf-out\<run_id>\ (t_265d0147)
         if: always()  # и упавший прогон оставляет файлы на C:
         run: sh deploy/gpu-pc/acf_out.sh put ${{ github.run_id }} runs/ab_*/ab_*.mp3 runs/ab_*/manifest.json runs/ab_*/ab_LOCK.json
