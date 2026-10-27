@@ -325,7 +325,7 @@ def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=
     return item
 
 
-def gated_gen(raw, scores, objective, attempts=3, log=print, extra=0):
+def gated_gen(raw, scores, objective, attempts=3, log=print, extra=0, record=None):
     """Гейт сегмента час-микса (t_187762da): качество меряется по КАЖДОМУ сегменту,
     а не только по склейке (17.10: целый час упал на одной полосе 20-60 Гц одного трека).
     best-of-K как PR #59: attempts кандидатов с разными seed, ОДИН батчевый прогон
@@ -347,6 +347,8 @@ def gated_gen(raw, scores, objective, attempts=3, log=print, extra=0):
             why = list(objective(p)) + ([f"CE {min(ce):.2f} < {MIN_CE}"] if min(ce) < MIN_CE else [])
             log(f"сегмент {i} кандидат {k + 1}/{total}: CE(min)={min(ce):.2f}, "
                 + ("FAIL: " + "; ".join(why) if why else "OK"))
+            if record:  # t_fed47d5f R4: статистика брака по промпту (bank.stats_flush)
+                record(p, not why, "; ".join(why))
             if why:
                 fails.append(why)
                 Path(p).unlink(missing_ok=True)

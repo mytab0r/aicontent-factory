@@ -124,68 +124,81 @@ def guarded_scores(paths, busy, batch):
     return batch(paths)
 
 
-def stats_record(genre: str, prompt: str, seed: int, ok: bool, why: str = "", docker_sh=None) -> None:
-    """t_ba72c7aa R4: статистика отказов по промптам/сидам в stats.jsonl рядом с банком."""
-    import json as _json
-    import time as _time
-    row = _json.dumps({"prompt": prompt, "seed": seed, "ok": bool(ok), "why": why,
-                       "ts": int(_time.time())}, ensure_ascii=False).replace("'", "'\''")
-    d = f"{BANK_ROOT}/{slug(genre)}"
-    cmd = f"echo '{row}' >> {d}/stats.jsonl"
-    if docker_sh is not None:
-        docker_sh("exec", "ace-step", "sh", "-c", cmd)
-    else:
-        _sh("docker", "exec", "ace-step", "sh", "-c", cmd)
+STATS_DAYS = 30  # t_fed47d5f R4: окно статистики брака
+STATS_MAX_FAIL = 0.5  # брак > 50% кандидатов промпта за окно = промпт выключен
+STATS_MIN_N = 6  # меньше кандидатов в окне = данных мало, промпт включён
 
 
-def _stats_rows(lines):
-    for x in lines:
-        try:
-            r = json.loads(x)
-            if isinstance(r, dict):
-                yield r
-        except Exception:
-            continue
+def stats_path(genre: str) -> str:
+    """stats.json рядом с сегментами: выпуск берёт только *.mp3 (bank_release.entries), файл ему невидим."""
+    return f"{BANK_ROOT}/{slug(genre)}/stats.json"
 
 
-def fail_rate(stats_lines: list, prompt: str, window: int = 20):
-    """Доля брака среди последних window записей промпта; None = данных нет."""
-    rows = [r for r in _stats_rows(stats_lines) if r.get("prompt") == prompt][-window:]
-    if not rows:
-        return None
-    return sum(1 for r in rows if not r.get("ok")) / len(rows)
-
-
-def prompt_enabled(stats_lines: list, prompt: str, window: int = 20, max_fail: float = 0.5,
-                   min_n: int = 6) -> bool:
-    """R4: доля брака > max_fail на окне = промпт выключен; мало данных = включен."""
-    rows = [r for r in _stats_rows(stats_lines) if r.get("prompt") == prompt][-window:]
-    if len(rows) < min_n:
-        return True
-    return fail_rate(stats_lines, prompt, window) <= max_fail
-
-
-def pick_prompt(enabled=lambda lines, p: True) -> str:
-    """R4: выбор промпта генерации: первый включённый из вариантов дня; все выключены ->
-    fallback на pick() без фильтра (генерация не останавливается)."""
-    import refpool
-    pair = refpool.pick()
-    lines = []
-    d = f"{BANK_ROOT}/{slug(os.environ.get('GENRE', 'anime lofi'))}"
+def _ts(r) -> float:
     try:
-        lines = _sh("docker", "exec", "ace-step", "sh", "-c",
-                    f"cat {d}/stats.jsonl 2>/dev/null || true").splitlines()
-    except Exception:
-        pass
-    if not enabled(lines, pair["prompt"]):
-        start = refpool.PROMPT_VARIANTS.index(pair["prompt"]) if pair["prompt"] in refpool.PROMPT_VARIANTS else 0
-        for k in range(1, len(refpool.PROMPT_VARIANTS)):
-            cand = refpool.PROMPT_VARIANTS[(start + k) % len(refpool.PROMPT_VARIANTS)]
-            if enabled(lines, cand):
-                print(f"bank: промпт дня выключен статистикой брака, беру вариант {k}")
-                return cand
-        print("bank: все варианты выключены статистикой — fallback промпт дня без фильтра")
-    return pair["prompt"]
+        return float(r.get("ts", 0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def stats_load(genre, docker_sh):
+    """Строки статистики [{prompt, seed, src, ok, why, ts}]. exec недоступен = None (не перезаписывать
+    файл вслепую: потеря истории); битый/пустой JSON = [] (начинаем заново)."""
+    try:
+        raw = docker_sh("exec", "ace-step", "sh", "-c", f"cat {stats_path(genre)} 2>/dev/null || true")
+    except Exception as e:
+        print(f"bank: stats.json не прочитан ({type(e).__name__}: {e})")
+        return None
+    try:
+        rows = json.loads(raw or "[]")
+    except ValueError:
+        print("bank: stats.json битый — статистика начата заново")
+        return []
+    return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+
+
+def stats_flush(genre, rows, docker_sh, now=None) -> bool:
+    """Дописать строки сегмента в stats.json (после КАЖДОГО сегмента), старше STATS_DAYS выкинуть.
+    Запись атомарная: локальный tmp -> docker cp .part -> mv. Писатель один (bank-fill concurrency)."""
+    now = now or time.time()
+    old = stats_load(genre, docker_sh)
+    if old is None:
+        return False
+    keep = [r for r in old + list(rows) if now - _ts(r) < STATS_DAYS * 86400]
+    fd, tmp = tempfile.mkstemp(suffix=".json")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(keep, f, ensure_ascii=False)
+        dst = stats_path(genre)
+        docker_sh("cp", tmp, f"ace-step:{dst}.part")
+        docker_sh("exec", "ace-step", "mv", f"{dst}.part", dst)
+        return True
+    finally:
+        os.unlink(tmp)
+
+
+def fail_rate(rows, prompt, now=None, days=STATS_DAYS):
+    """(доля брака, n) кандидатов промпта за последние days дней; n == 0 -> (None, 0)."""
+    now = now or time.time()
+    win = [r for r in rows if r.get("prompt") == prompt and now - _ts(r) < days * 86400]
+    if not win:
+        return None, 0
+    return sum(1 for r in win if not r.get("ok")) / len(win), len(win)
+
+
+def prompt_enabled(rows, prompt, now=None, max_fail=STATS_MAX_FAIL, min_n=STATS_MIN_N) -> bool:
+    """R4: брак > max_fail за 30 дней = промпт выключен; меньше min_n кандидатов = включён."""
+    rate, n = fail_rate(rows, prompt, now)
+    return n < min_n or rate <= max_fail
+
+
+def enabled_variants(variants, rows, now=None):
+    """Варианты без выключенных статистикой; выключены все -> все (генерация не останавливается)."""
+    on = [v for v in variants if prompt_enabled(rows, v, now)]
+    if len(on) < len(variants):
+        print(f"bank: статистика брака выключила {len(variants) - len(on)} из {len(variants)} промптов"
+              + ("" if on else " — выключены все, беру без фильтра"))
+    return on or list(variants)
 
 
 def choose_prompt(variants, counts, need, day_prompt, key):
@@ -332,13 +345,19 @@ def main():
     prompt, ref = music.GENRE_PROMPTS[genre], os.environ.get("ACE15_REF_AUDIO") or None
     seed = random.randrange(2**31)
     need = -(-int(os.environ.get("TRACK_DURATION_SEC", "3600")) // 180)
+    stats = stats_load(genre, _docker) or []  # R4: читаем ДО выбора промпта сегмента
     if genre != "anime lofi":  # refpool = семейство ab_1/ab_3 + эталоны только для lofi; phonk одобрен noref
         try:
             counts = group_counts(genre, _docker)
         except Exception as e:
             print(f"bank: группы не прочитаны ({type(e).__name__}: {e})")
             counts = {}
-        prompt = pin_prompt(prompt, counts, need + MARGIN, seed)
+        base = prompt
+        prompt = pin_prompt(base, counts, need + MARGIN, seed)
+        if not prompt_enabled(stats, prompt):  # R4: группа выключена браком -> пара из seed
+            alt = pin_prompt(base, {}, need + MARGIN, seed)
+            print(f"bank: промпт ...{prompt[-24:]} выключен статистикой брака -> ...{alt[-24:]}")
+            prompt = alt
         target = effective_target(target, have(), counts, need)
         print(f"bank {genre}: группы {counts} -> промпт ...{prompt[-24:]}, цель {target}")
     try:
@@ -346,15 +365,17 @@ def main():
             raise LookupError("refpool только для anime lofi")
         import refpool
         pair = refpool.pick()
+        variants = enabled_variants(refpool.PROMPT_VARIANTS, stats)  # R4: выключенные браком не берём
+        day = pair["prompt"] if pair["prompt"] in variants else variants[0]
         try:
             counts = group_counts(genre, _docker)
-            prompt = choose_prompt(refpool.PROMPT_VARIANTS, counts, need + MARGIN, pair["prompt"],
+            prompt = choose_prompt(variants, counts, need + MARGIN, day,
                                    lambda v: (music.prompt_bpm(v), music.prompt_key(v)))
             target = effective_target(target, have(), counts, need)
             print(f"bank: группы {counts}, нужно {need}+{MARGIN} -> промпт {prompt[-30:]}, цель {target}")
         except Exception as e:  # листинг банка недоступен -> промпт дня
             print(f"bank: группы не прочитаны ({type(e).__name__}: {e}); промпт дня")
-            prompt = pair["prompt"]
+            prompt = day
         refpool.ensure_ref(pair)
         ref = pair["ref_path"]
     except LookupError:
@@ -367,8 +388,27 @@ def main():
     def scores(paths):
         return guarded_scores(paths, release_busy, ce_windows_batch)
 
-    gen = music.gated_gen(music.mix_raw(run_dir, prompt, seed, ref, genre),
-                          scores, lambda p: objective(p, genre)[0], attempts=3, extra=2)
+    pending = []  # R4: исходы кандидатов текущего сегмента
+
+    def record(p, ok, why):
+        pending.append({"prompt": prompt, "seed": seed, "src": Path(p).name, "ok": bool(ok),
+                        "why": why, "ts": int(time.time())})
+
+    gated = music.gated_gen(music.mix_raw(run_dir, prompt, seed, ref, genre),
+                            scores, lambda p: objective(p, genre)[0], attempts=3, extra=2, record=record)
+
+    def gen(i):
+        """Сегмент + stats.json после него. Сбой записи статистики банк не роняет.
+        ponytail: промпт фиксирован на прогон (<=150 мин), выключение подхватит следующий прогон."""
+        try:
+            return gated(i)
+        finally:
+            if pending:
+                try:
+                    stats_flush(genre, pending, _docker)
+                except Exception as e:
+                    print(f"::warning::bank: stats.json не записан ({type(e).__name__}: {e})")
+                pending.clear()
 
     def put(p):
         name = f"{int(time.time())}_{seed}_{Path(p).stem}"
