@@ -20,5 +20,7 @@ jobs:
               find "$t" -xdev -mindepth 1 -type f -mtime +2 -delete 2>/dev/null
               find "$t" -xdev -mindepth 1 -type d -empty -delete 2>/dev/null
               echo "after $(du -xsh "$t" 2>/dev/null)"
+              du -xsh "$t"/* 2>/dev/null | sort -h | tail -12
+              find "$t" -xdev -type f -size +200M -exec ls -la --full-time {} + 2>/dev/null | tail -10
             done
             df -h /u | tail -1' || true
