@@ -14,5 +14,16 @@ def test_recreate_sets_uv_no_sync():
         assert runs, f
         assert s.count("UV_NO_SYNC=1") >= runs, f
 
+
+def test_stale_container_without_flag_is_recreated():
+    """t_860a1c4b: run 40123150806 шёл на коммите с UV_NO_SYNC=1, но старый контейнер без флага только рестартовал.
+    Каждое место, которое поднимает/рестартует ace-step и умеет его пересоздать, обязано проверять env существующего."""
+    for f in FILES:
+        s = (ROOT / f).read_text()
+        if f.endswith("janitor.sh"):
+            continue  # janitor только пересоздаёт отсутствующий и стартует остановленный; рестарт выпуска идёт через daily-video/ensure
+        assert '"UV_NO_SYNC=1"' in s and "Config.Env" in s, f
+
+
 if __name__ == "__main__":
-    test_recreate_sets_uv_no_sync(); print("ok")
+    test_recreate_sets_uv_no_sync(); test_stale_container_without_flag_is_recreated(); print("ok")

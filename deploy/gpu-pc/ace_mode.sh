@@ -15,7 +15,8 @@ esac
 A=/run/desktop/mnt/host/c/dockerlocal/ace15
 IMG=$(docker inspect -f '{{.Config.Image}}' ace-step 2>/dev/null || echo ghcr.io/ace-step/ace-step-1.5:latest)
 envs=$(docker inspect -f '{{json .Config.Env}}' ace-step 2>/dev/null || echo none)
-if echo "$envs" | grep -q "\"ACESTEP_CONFIG_PATH=$P\"" && { [ -n "$S" ] || ! echo "$envs" | grep -q ACESTEP_CONFIG_PATH2; }; then
+# root-cause: t_860a1c4b — «уже нужный режим» только если есть UV_NO_SYNC=1, иначе пересоздать
+if echo "$envs" | grep -q "\"ACESTEP_CONFIG_PATH=$P\"" && echo "$envs" | grep -q '"UV_NO_SYNC=1"' && { [ -n "$S" ] || ! echo "$envs" | grep -q ACESTEP_CONFIG_PATH2; }; then
   echo "ace_mode: уже $1"; docker start ace-step >/dev/null 2>&1 || :
 else
   echo "ace_mode: пересоздаю ace-step -> $1 (primary=$P)"
