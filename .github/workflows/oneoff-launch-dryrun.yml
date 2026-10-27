@@ -1,0 +1,68 @@
+name: oneoff-launch-dryrun
+# t_cbeefa4f: сухой прогон launch-гейта G1zm0 — реальная загрузка PRIVATE (не public) тестового ролика
+# тем же OAuth-токеном (YOUTUBE_TOKEN_JSON), проверка ссылки/длительности/глав/обложки через videos.list.
+on:
+  push:
+    branches: ["exp/g1zm0-launch-dryrun"]
+    paths: [".github/workflows/oneoff-launch-dryrun.yml"]
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  dryrun:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 30
+    steps:
+      - uses: astral-sh/setup-uv@v3
+        timeout-minutes: 5
+      - name: build + upload private + verify
+        env:
+          YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$YOUTUBE_TOKEN_JSON" > tok.json
+          trap 'rm -f tok.json' EXIT
+          uv venv -q .dv && uv pip install -q --python .dv/bin/python google-api-python-client google-auth google-auth-httplib2 imageio-ffmpeg
+          .dv/bin/python - <<'PY'
+          import json, subprocess, time, imageio_ffmpeg
+          from google.oauth2.credentials import Credentials
+          from googleapiclient.discovery import build
+          from googleapiclient.http import MediaFileUpload
+          ff = imageio_ffmpeg.get_ffmpeg_exe()
+          # 180 c: 1280x720 картинка + тон 220 Гц; обложка 1280x720 png
+          subprocess.run([ff, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=0x223355:s=1280x720:r=1",
+                          "-f", "lavfi", "-i", "sine=frequency=220:sample_rate=44100", "-t", "180",
+                          "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", "dry.mp4"], check=True)
+          subprocess.run([ff, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=0xaa3366:s=1280x720",
+                          "-frames:v", "1", "thumb.png"], check=True)
+          yt = build("youtube", "v3", credentials=Credentials.from_authorized_user_file("tok.json"))
+          ch = yt.channels().list(part="snippet", mine=True).execute()
+          print("CHANNEL", json.dumps([(i["id"], i["snippet"]["title"]) for i in ch.get("items", [])], ensure_ascii=False))
+          body = {"snippet": {"title": "G1zm0 launch dry-run (private test, t_cbeefa4f)", "categoryId": "10",
+                              "description": "Private technical dry run.\n\nTracklist:\n00:00 Part one\n01:00 Part two\n02:00 Part three"},
+                  "status": {"privacyStatus": "private", "selfDeclaredMadeForKids": False, "containsSyntheticMedia": True}}
+          req = yt.videos().insert(part="snippet,status", body=body,
+                                   media_body=MediaFileUpload("dry.mp4", mimetype="video/mp4", resumable=True))
+          resp = None
+          while resp is None:
+              _, resp = req.next_chunk()
+          vid = resp["id"]
+          print("UPLOADED", vid, resp["status"]["privacyStatus"])
+          try:
+              t = yt.thumbnails().set(videoId=vid, media_body=MediaFileUpload("thumb.png", mimetype="image/png")).execute()
+              print("THUMB_SET", json.dumps(t.get("items", []))[:400])
+          except Exception as e:
+              print("THUMB_FAIL", type(e).__name__, str(e)[:300])
+          for _ in range(20):  # ждём processing, чтобы получить duration
+              r = yt.videos().list(part="snippet,contentDetails,status,processingDetails", id=vid).execute()
+              it = r["items"][0]
+              if it["status"].get("uploadStatus") == "processed":
+                  break
+              time.sleep(30)
+          print("PROOF", json.dumps(r, ensure_ascii=False))
+          print("URL https://youtu.be/" + vid)
+          assert it["status"]["privacyStatus"] == "private", "не private!"
+          PY
