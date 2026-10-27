@@ -20,9 +20,10 @@ VOL=$NAME-work
 rw=$(docker inspect --size -f '{{.SizeRw}}' "$NAME" 2>/dev/null || echo 0)
 echo "before: $NAME RW=$rw bytes"
 if [ "$MODE" = auto ]; then [ "$rw" -gt "$LIMIT" ] || { echo "RW < 1 GB, skip"; exit 0; }; fi
-# не рвать чужую джобу: ждём простоя целевого раннера (до 20 мин), иначе пропуск до следующего запуска
+# не рвать чужую джобу: ждём простоя целевого раннера, иначе пропуск до следующего запуска
 busy() { docker top "$NAME" -eo args 2>/dev/null | grep -q Runner.Worker; }
-for i in $(seq 1 40); do busy || break; sleep 30; done
+# паузы между джобами 2-4 с (логи 27.10) — опрос каждые 2 с, до 35 мин
+for i in $(seq 1 1050); do busy || break; sleep 2; done
 if busy; then echo "job still running on $NAME, skip"; exit 0; fi
 
 DOCKERFILE='FROM myoung34/github-runner:ubuntu-noble
