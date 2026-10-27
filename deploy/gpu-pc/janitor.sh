@@ -42,7 +42,9 @@ guard_ace() {
 # ponytail: окно гонки — джоба, выданная между проверкой простоя и stop (паузы 2-4 с), будет прервана.
 RUNNER_DF='FROM myoung34/github-runner:ubuntu-noble
 RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*'
-runner_busy() { docker top "$1" -eo args 2>/dev/null | grep -q Runner.Worker; }
+# ps без колонки pid -> docker top падает ("Couldn't find PID field") -> раньше «простой» = свап
+# посреди bank fill (27.10 03:41). Ошибка top = занят (fail-closed).
+runner_busy() { out=$(docker top "$1" -eo pid,args 2>/dev/null) || return 0; echo "$out" | grep -q Runner.Worker; }
 swap_runner() {
   n=$1
   # прерванный прошлый свап: вернуть старый контейнер

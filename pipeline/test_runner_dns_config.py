@@ -46,7 +46,15 @@ def test_workflows():
     assert not bad, "раннер создаётся без DNS-фолбэка/кеша (дрейф HostConfig.Dns, t_3c5e7da4):\n" + "\n".join(bad)
 
 
+def test_docker_top_has_pid():
+    """docker top без колонки pid -> ошибка API -> проверка «раннер занят» молча врёт (t_5cdbb967, 27.10)."""
+    src = (WF.parent.parent / "deploy/gpu-pc/janitor.sh").read_text(encoding="utf-8")
+    tops = re.findall(r"docker top \S+ -eo (\S+)", src)
+    assert tops and all("pid" in t.split(",") for t in tops), tops
+
+
 if __name__ == "__main__":
     test_selfcheck()
     test_workflows()
+    test_docker_top_has_pid()
     print("OK test_runner_dns_config")
