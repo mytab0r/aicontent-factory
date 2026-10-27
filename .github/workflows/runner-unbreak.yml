@@ -2,7 +2,8 @@ name: runner-unbreak
 # Пересоздание контейнера раннера aicontent-factory (deploy/gpu-pc/runner-swap.sh).
 # t_5cdbb967: по расписанию раз в 6 ч — авто-свап, если RW-слой > 1 ГБ и раннер простаивает.
 # Ручной запуск — принудительный свап (класс «зависший lease» 25.10 и т.п.).
-# Свап идёт с раннера ci (не цель): у pc-acf метки pc+release, runs-on release мог попасть на цель.
+# Свап идёт не с целевого раннера: release свапается с pc (метка pc только у pc-acf), pc — с ci
+# (у pc-acf метки pc+release, runs-on release мог попасть на саму цель).
 on:
   schedule:
     - cron: "17 */6 * * *"
@@ -21,7 +22,7 @@ concurrency:
 jobs:
   swap-release:
     if: github.event_name == 'schedule' || inputs.target != 'pc'
-    runs-on: [self-hosted, ci]
+    runs-on: [self-hosted, pc]
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
