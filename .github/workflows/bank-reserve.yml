@@ -19,6 +19,10 @@ jobs:
       TG_THREAD_ID: ${{ secrets.TG_THREAD_ID }}
     steps:
       - uses: actions/checkout@v4
+      - name: venv  # bank.py импортирует numpy — системный python его не имеет (test_workflow_python)
+        run: |
+          uv venv .venv
+          for i in 1 2 3; do UV_HTTP_TIMEOUT=120 uv pip install --python .venv/bin/python numpy gradio_client && break; [ $i = 3 ] && exit 1; sleep 30; done
       - name: reserve check
         working-directory: pipeline
-        run: python3 bank.py --reserve
+        run: ../.venv/bin/python bank.py --reserve
