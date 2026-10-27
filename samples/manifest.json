@@ -1,0 +1,125 @@
+[
+  {
+    "i": 0,
+    "yt_id": "t6vWDz5NzOY",
+    "author": "Gareth Coker",
+    "title": "Light of Nibel (Ori OST)",
+    "prompt": "dreamy lofi chillout instrumental, glassy synth pads with celesta melody, light fingerstyle guitar accents, mellow laid back drums, round bass, polished airy mix, wide stereo, heartwarming, 68 BPM, D major, no vocals",
+    "seed": 9000,
+    "ce_min": 7.61,
+    "gate_ok": true,
+    "why": [],
+    "metrics": {
+      "lra": 8.0,
+      "tp": -1.3,
+      "i": -14.4,
+      "gaps": [],
+      "bands": [
+        -25.0,
+        -22.3,
+        -27.7,
+        -27.7,
+        -32.7,
+        -38.8,
+        -39.2,
+        -43.7
+      ],
+      "balance": -8.1
+    },
+    "file": "ab_0_t6vWDz5NzOY.mp3"
+  },
+  {
+    "i": 1,
+    "yt_id": "1rwAvUvvQzQ",
+    "author": "Lena Raine",
+    "title": "Resurrections (Celeste OST)",
+    "prompt": "dreamy lofi chillout instrumental, mellow electric piano chords, glockenspiel highlights, soft brushed drums, warm bassline, gentle swing, polished clean mix, wide stereo, serene and bright, 70 BPM, F major, no vocals",
+    "seed": 9007,
+    "ce_min": 7.37,
+    "gate_ok": true,
+    "why": [],
+    "metrics": {
+      "lra": 8.1,
+      "tp": -1.3,
+      "i": -14.5,
+      "gaps": [],
+      "bands": [
+        -24.4,
+        -22.4,
+        -28.5,
+        -27.3,
+        -32.1,
+        -41.1,
+        -41.3,
+        -46.4
+      ],
+      "balance": -8.1
+    },
+    "file": "ab_1_1rwAvUvvQzQ.mp3"
+  },
+  {
+    "i": 2,
+    "yt_id": "pEg_d2f6myw",
+    "author": "Mitsukiyo",
+    "title": "Unwelcome School (Blue Archive OST)",
+    "prompt": "dreamy lofi chillout instrumental, glassy synth pads with celesta melody, light fingerstyle guitar accents, mellow laid back drums, round bass, polished airy mix, wide stereo, heartwarming, 68 BPM, D major, no vocals",
+    "seed": 9014,
+    "ce_min": 7.76,
+    "gate_ok": false,
+    "why": [
+      "LRA 3.1 < 3.5: динамика раздавлена (каша)"
+    ],
+    "metrics": {
+      "lra": 3.1,
+      "tp": -1.3,
+      "i": -14.5,
+      "gaps": [],
+      "bands": [
+        -25.1,
+        -21.9,
+        -28.4,
+        -27.3,
+        -33.3,
+        -38.7,
+        -39.5,
+        -43.0
+      ],
+      "balance": -7.6
+    },
+    "file": "ab_2_pEg_d2f6myw.mp3"
+  },
+  {
+    "i": 3,
+    "yt_id": "EHGB9mZC4VI",
+    "author": "gacha guild",
+    "title": "An Evening in Liyue (Genshin Impact OST)",
+    "prompt": "dreamy lofi chillout instrumental, mellow electric piano chords, glockenspiel highlights, soft brushed drums, warm bassline, gentle swing, polished clean mix, wide stereo, serene and bright, 70 BPM, F major, no vocals",
+    "seed": 9021,
+    "ce_min": 7.27,
+    "gate_ok": false,
+    "why": [
+      "полоса 2500-5000 Гц -3.5 дБ к эталону",
+      "полоса 5000-10000 Гц -5.0 дБ к эталону",
+      "полоса 10000-16000 Гц -10.7 дБ к эталону",
+      "баланс мелодия(1-5 кГц) - муть(150-400 Гц) -4.3 дБ к эталону: лид утоплен"
+    ],
+    "metrics": {
+      "lra": 4.9,
+      "tp": -1.6,
+      "i": -14.7,
+      "gaps": [],
+      "bands": [
+        -26.7,
+        -22.9,
+        -27.4,
+        -26.2,
+        -33.9,
+        -43.3,
+        -45.1,
+        -54.7
+      ],
+      "balance": -11.3
+    },
+    "file": "ab_3_EHGB9mZC4VI.mp3"
+  }
+]
