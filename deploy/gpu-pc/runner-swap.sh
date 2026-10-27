@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # t_5cdbb967: пересоздание контейнера раннера aicontent-factory без роста RW-слоя.
 # Usage: runner-swap.sh <release|pc> <force|auto>
-#   auto  = свап только если RW-слой > 1 ГБ и на целевом раннере нет активной джобы.
+#   auto  = свап только если RW-слой > 1 ГБ. Оба режима ждут простоя целевого раннера (джобу не рвут).
 # Что держит слой < 1 ГБ:
 #   - образ acf-runner:<hash> = myoung34 + ffmpeg (apt-чинилки ci.yml/daily-* больше не пишут ~2 ГБ в слой);
 #   - /tmp и /root/.cache — именованные тома (uv-cache/xlv/venv/pip вне слоя), ротация — janitor purge_tmp.
@@ -19,10 +19,11 @@ VOL=$NAME-work
 
 rw=$(docker inspect --size -f '{{.SizeRw}}' "$NAME" 2>/dev/null || echo 0)
 echo "before: $NAME RW=$rw bytes"
-if [ "$MODE" = auto ]; then
-  [ "$rw" -gt "$LIMIT" ] || { echo "RW < 1 GB, skip"; exit 0; }
-  if docker top "$NAME" -eo args 2>/dev/null | grep -q Runner.Worker; then echo "job running on $NAME, skip"; exit 0; fi
-fi
+if [ "$MODE" = auto ]; then [ "$rw" -gt "$LIMIT" ] || { echo "RW < 1 GB, skip"; exit 0; }; fi
+# не рвать чужую джобу: ждём простоя целевого раннера (до 20 мин), иначе пропуск до следующего запуска
+busy() { docker top "$NAME" -eo args 2>/dev/null | grep -q Runner.Worker; }
+for i in $(seq 1 40); do busy || break; sleep 30; done
+if busy; then echo "job still running on $NAME, skip"; exit 0; fi
 
 DOCKERFILE='FROM myoung34/github-runner:ubuntu-noble
 RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*'

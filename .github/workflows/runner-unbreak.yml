@@ -22,7 +22,7 @@ jobs:
   swap-release:
     if: github.event_name == 'schedule' || inputs.target != 'pc'
     runs-on: [self-hosted, pc]
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: swap gh-runner-acf-release
@@ -33,7 +33,7 @@ jobs:
     needs: swap-release
     if: always() && (github.event_name == 'schedule' || inputs.target != 'release')
     runs-on: [self-hosted, release]
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: swap gh-runner-aicontent-factory
