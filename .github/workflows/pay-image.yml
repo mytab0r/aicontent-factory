@@ -5,22 +5,47 @@ on:
     workflows: [ci]
     types: [completed]
     branches: [master, main]
+  # ручной ребилд :latest из выбранной ветки (github.sha), без stale-guard
+  workflow_dispatch:
 jobs:
   build-push:
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: [self-hosted, release]
     permissions:
       contents: read
       packages: write
+    env:
+      SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
     steps:
+      # root-cause t_88af3bec: ci-очередь на self-hosted держит push-ci часами; поздно завершившийся ci старого
+      # push (25.10, 88bfdd7 до фикса #257) перезаписал :latest устаревшим кодом. Собираем только если head_sha
+      # всё ещё HEAD ветки; иначе skip (success) — образ соберёт ci более свежего коммита.
+      # ls-remote не ответил за 3 попытки -> fail (лучше без образа, чем устаревший).
+      - name: stale guard (head_sha == HEAD ветки)
+        id: fresh
+        env:
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then echo "ok=true" >> "$GITHUB_OUTPUT"; echo "workflow_dispatch: guard пропущен, собираю $SHA"; exit 0; fi
+          for n in 1 2 3; do
+            head=$(git ls-remote "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY" "refs/heads/$BRANCH" | cut -f1) && [ -n "$head" ] && break
+            [ $n = 3 ] && { echo "ls-remote $BRANCH не ответил"; exit 1; }; sleep $((n*10))
+          done
+          if [ "$head" = "$SHA" ]; then echo "ok=true" >> "$GITHUB_OUTPUT"; echo "fresh: $SHA = HEAD $BRANCH"
+          else echo "ok=false" >> "$GITHUB_OUTPUT"; echo "::notice::stale: head_sha $SHA != HEAD $BRANCH $head — skip build/push"; fi
       - uses: actions/checkout@v4
+        if: steps.fresh.outputs.ok == 'true'
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ env.SHA }}
       # root-cause: t_831d9fd6 -- docker/login-action runs `docker login`, i.e. one daemon-side ping of
       # https://ghcr.io/v2/ through Docker Desktop's http.docker.internal:3128 with a hard ~15s timeout and no
       # retry; PC egress stalls fail the job ("Client.Timeout exceeded while awaiting headers", 11 runs 16-21.10).
       # Creds are client-side anyway: write them to a per-job DOCKER_CONFIG, buildx sends them per request.
       - name: ghcr auth (client-side config, no daemon ping)
+        if: steps.fresh.outputs.ok == 'true'
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -30,6 +55,7 @@ jobs:
       # каждый раз заново с CloudFront Docker Hub (обрывы -> httpReadSeeker unexpected EOF). docker-драйвер
       # берёт слои из store демона ПК, где ci/pay-image-smoke уже собрал этот Dockerfile.
       - uses: docker/setup-buildx-action@v3
+        if: steps.fresh.outputs.ok == 'true'
         with:
           driver: docker
       # root-cause t_0a4cae59: transport-обрывы egress ПК (WSL NAT / Docker Desktop proxy) роняли сборку на
@@ -39,17 +65,19 @@ jobs:
       # (слои докачиваются, не дублируются), как в ci/e2e-admin; 2) build-push повторяем целиком до 4 раз
       # только на transport-ошибках registry (EOF / timeout / connection reset), не маскируя другие отказы.
       - name: pre-pull base (4 attempts, resumable layers)
+        if: steps.fresh.outputs.ok == 'true'
         run: |
           B=$(sed -n 's/^FROM //p' deploy/pay-page/Dockerfile | head -1)
           for n in 1 2 3 4; do docker pull -q "$B" && break; [ $n = 4 ] && exit 1; echo "pull $B: попытка $n не удалась, повтор через $((n*20)) с"; sleep $((n*20)); done
       - name: build + push (retry on registry transport errors only)
+        if: steps.fresh.outputs.ok == 'true'
         run: |
           set -e
           for n in 1 2 3 4; do
             if docker buildx build --push \
                  -f deploy/pay-page/Dockerfile \
                  -t ghcr.io/${{ github.repository_owner }}/pay-pxbt:latest \
-                 -t ghcr.io/${{ github.repository_owner }}/pay-pxbt:sha-${{ github.event.workflow_run.head_sha }} \
+                 -t ghcr.io/${{ github.repository_owner }}/pay-pxbt:sha-${{ env.SHA }} \
                  .; then exit 0; fi
             [ $n = 4 ] && exit 1
             echo "build-push: попытка $n не удалась, повтор через $((n*20)) с"; sleep $((n*20))
