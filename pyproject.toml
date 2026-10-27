@@ -7,4 +7,6 @@ dependencies = [
     "gradio_client",
     "google-auth-oauthlib",
     "google-api-python-client",
+    "librosa",  # t_2be41a12: _downbeats (dj_plan стыки) требует жёстко, ImportError не маскируется
+    "numpy",
 ]

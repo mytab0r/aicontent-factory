@@ -41,7 +41,7 @@ jobs:
           command -v ffmpeg >/dev/null || sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
           python3 -m venv /tmp/xlv
           for i in 1 2 3 4; do  # pypi read-timeout на ПК — ретраи
-            /tmp/xlv/bin/pip -q --retries 5 --timeout 60 install gradio_client numpy yt-dlp && break
+            /tmp/xlv/bin/pip -q --retries 5 --timeout 60 install gradio_client numpy yt-dlp librosa && break
             sleep 20
           done
           /tmp/xlv/bin/python -c "import gradio_client, numpy, yt_dlp"
