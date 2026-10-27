@@ -69,25 +69,35 @@ def playlist_title(genre: str) -> str:
     return f"{genre.title()} Beats"
 
 
-def genre_playlist_id(youtube, genre: str) -> str:
-    """One playlist per genre: reuse by title, create on first use (public)."""
-    title = playlist_title(genre)
+OWNING_PLAYLIST = "The Economics of Owning"  # t_acc4ee1c: плейлист ch1 Owning (условие GO критика)
+
+
+def find_or_create_playlist(youtube, title: str, desc: str) -> str:
+    """Плейлист по title: переиспользовать, создать при первом использовании (public)."""
     # ponytail: first page (50) only; paginate when channel has >50 playlists
     items = youtube.playlists().list(part="snippet", mine=True, maxResults=50).execute().get("items", [])
     pid = next((i["id"] for i in items if i["snippet"]["title"] == title), None)
     if pid is None:
         pid = youtube.playlists().insert(part="snippet,status", body={
-            "snippet": {"title": title, "description": f"{genre} - instrumental, AI-generated"},
+            "snippet": {"title": title, "description": desc},
             "status": {"privacyStatus": "public"},
         }).execute()["id"]
     return pid
 
 
-def add_to_genre_playlist(youtube, video_id: str, genre: str) -> str:
-    pid = genre_playlist_id(youtube, genre)
+def genre_playlist_id(youtube, genre: str) -> str:
+    """One playlist per genre."""
+    return find_or_create_playlist(youtube, playlist_title(genre), f"{genre} - instrumental, AI-generated")
+
+
+def add_to_playlist(youtube, video_id: str, pid: str) -> str:
     youtube.playlistItems().insert(part="snippet", body={"snippet": {
         "playlistId": pid, "resourceId": {"kind": "youtube#video", "videoId": video_id}}}).execute()
     return pid
+
+
+def add_to_genre_playlist(youtube, video_id: str, genre: str) -> str:
+    return add_to_playlist(youtube, video_id, genre_playlist_id(youtube, genre))
 
 
 HASHTAGS = "#lofi #animelofi #studymusic"
@@ -215,6 +225,10 @@ def publish(run_dir: Path) -> str:
     if meta.exists():
         genre = json.loads(meta.read_text(encoding="utf-8"))["genre"]
         print(f"playlist -> {add_to_genre_playlist(youtube, video_id, genre)} ({genre})")
+    elif idea.get("channel") == "owning":
+        pid = find_or_create_playlist(youtube, OWNING_PLAYLIST,
+                                      "What it really costs and earns to own a small US business, in 60 seconds.")
+        print(f"playlist -> {add_to_playlist(youtube, video_id, pid)} ({OWNING_PLAYLIST})")
     print(f"OK: опубликовано {url}")
     return url
 

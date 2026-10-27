@@ -38,6 +38,29 @@ STRUCTURES = [
     "myth vs reality, beat by beat",
 ]  # 3
 MAX_PER_DAY = 2
+
+# t_acc4ee1c (условие GO критика №5): фактчек цифр скрипта по US-диапазону темы.
+# capex = (min, max) $ стоимости открытия/покупки (метка beat'а со словами build/buy/startup/price/invest...);
+# margin = (min, max) % у метки margin/net/keep; max_usd = потолок любой $-суммы в скрипте.
+# Источники (2026): terrapincg.com (car wash $150K-8M, self-storage $42-165/SF), costofstarting.com/mobilefoodmath.com
+# (food truck $28-250K), atmbrokerage.com (ATM $2.3-7.8K/машина), vendingscout.net/calcaholic.com (vending $1.8-8K/машина),
+# agsgolfandsports.com (mini golf от $150K), winsparking.com/currentcost.org (парковка $150K-1M, $3-8K/место).
+# ponytail: числа словами в озвучке («four million») не парсятся — проверяются big-цифры и $-суммы цифрами.
+US_RANGES = {
+    "car wash": {"capex": (150e3, 8e6), "margin": (10, 50), "max_usd": 10e6},
+    "laundromat": {"capex": (100e3, 1.5e6), "margin": (10, 35), "max_usd": 2e6},
+    "vending route": {"capex": (1e3, 400e3), "margin": (5, 60), "max_usd": 500e3},
+    "self-storage facility": {"capex": (300e3, 15e6), "margin": (25, 70), "max_usd": 20e6},
+    "small-town diner": {"capex": (100e3, 1.5e6), "margin": (2, 20), "max_usd": 2e6},
+    "food truck": {"capex": (28e3, 250e3), "margin": (3, 25), "max_usd": 400e3},
+    "ATM route": {"capex": (2e3, 150e3), "margin": (10, 70), "max_usd": 300e3},
+    "mini golf course": {"capex": (50e3, 2e6), "margin": (10, 50), "max_usd": 3e6},
+    "small-town gas station": {"capex": (250e3, 5e6), "margin": (1, 35), "max_usd": 8e6},
+    "parking lot": {"capex": (50e3, 5e6), "margin": (20, 70), "max_usd": 10e6},
+}
+CAPEX_WORDS = re.compile(r"build|buy|startup|start-up|purchase|price|invest|upfront|to open|setup", re.I)
+MARGIN_WORDS = re.compile(r"margin|\bnet\b|\bkeep", re.I)  # «store profit 70%» = доля прибыли, не маржа (run 40140800078)
+_MULT = {"k": 1e3, "thousand": 1e3, "m": 1e6, "million": 1e6, "b": 1e9, "billion": 1e9}
 VOICE = "en-US-AndrewNeural"  # ponytail: один голос = узнаваемость канала; смена только через sample gate
 FALLBACK_VOICE = "en-US-GuyNeural"  # запасной, только если edge-tts недоступен на основном; прод = Andrew
 MAX_SPEECH_WORDS = 150  # ~55 с при 165 wpm: Short <= 60 с
@@ -95,6 +118,41 @@ def speech_words(s: dict) -> int:
     return len(" ".join([s.get("hook", "")] + [b["say"] for b in s["beats"]]).split())
 
 
+def topic_of(s: dict):
+    """Тема: поле topic (01_idea подставляет план) либо распознанная в заголовке."""
+    if s.get("topic") in US_RANGES:
+        return s["topic"]
+    title = s.get("title", "").lower()
+    return next((t for t in US_RANGES if t.lower().replace("small-town ", "") in title), None)
+
+
+def _usd(text: str) -> list[float]:
+    return [float(n.replace(",", "")) * _MULT.get((m or "").lower(), 1)
+            for n, m in re.findall(r"\$\s?(\d[\d,]*(?:\.\d+)?)\s?(thousand|million|billion|[KkMmBb]\b)?", text)]
+
+
+def factcheck(s: dict) -> None:
+    """ValueError, если цифра скрипта вне US-диапазона темы (US_RANGES)."""
+    topic = topic_of(s)
+    if topic is None:
+        raise ValueError(f"фактчек: тема не распознана ({s.get('title')!r}) — диапазона нет")
+    r = US_RANGES[topic]
+    for b in s["beats"]:
+        big, label = str(b.get("big", "")), str(b.get("label", ""))
+        usd = _usd(big)
+        if usd and CAPEX_WORDS.search(label) and not r["capex"][0] <= usd[0] <= r["capex"][1]:
+            raise ValueError(f"фактчек {topic}: {label} {big} вне US {r['capex']}")
+        pct = re.findall(r"(\d+(?:\.\d+)?)\s?%", big)
+        if pct and MARGIN_WORDS.search(label) and not r["margin"][0] <= float(pct[0]) <= r["margin"][1]:
+            raise ValueError(f"фактчек {topic}: {label} {big} вне US {r['margin']}%")
+        if pct and not 0 <= float(pct[0]) <= 100:
+            raise ValueError(f"фактчек: процент {big} вне 0-100")
+    texts = [s.get("hook", "")] + [f"{b.get('big', '')} {b['say']}" for b in s["beats"]]
+    over = [v for t in texts for v in _usd(t) if v > r["max_usd"]]
+    if over:
+        raise ValueError(f"фактчек {topic}: сумма ${max(over):,.0f} выше потолка US ${r['max_usd']:,.0f}")
+
+
 def validate_script(s: dict) -> dict:
     if not re.match(r"^The Economics of Owning an? ", s.get("title", "")):
         raise ValueError(f"title вне формата: {s.get('title')!r}")
@@ -103,6 +161,7 @@ def validate_script(s: dict) -> dict:
         raise ValueError(f"beats: нужно 5-9 с say/big, есть {len(beats)}")
     if speech_words(s) > MAX_SPEECH_WORDS:
         raise ValueError(f"слишком длинно для Short: {speech_words(s)} слов")
+    factcheck(s)
     s["title"] = s["title"][:100]
     return s
 
