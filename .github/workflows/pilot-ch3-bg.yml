@@ -1,6 +1,4 @@
 name: pilot-ch3-bg
-# t_ce03cf96: ambient-фон для пилота ch3 (sleep history). Только ветка pilot/ch3-bg, в main не мержится.
-# ponytail: 3 трека x 600 с, склейка петлёй на стороне сборки; нужен 1 час+ своей музыки — увеличить N.
 on:
   push:
     branches: [pilot/ch3-bg]
@@ -14,10 +12,15 @@ jobs:
       ACE15_ENDPOINT: http://ace-step:8001
     steps:
       - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
       - name: ACE-Step healthy
         run: |
           docker start ace-step >/dev/null 2>&1 || true
           for i in $(seq 1 40); do [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step)" = healthy ] && exit 0; sleep 6; done; exit 1
+      - name: install deps
+        run: |
+          uv venv .venv
+          uv pip install --python .venv/bin/python pillow gradio_client numpy librosa
       - name: generate
         working-directory: pipeline
         run: |
@@ -34,7 +37,6 @@ jobs:
               print(log[-1], flush=True)
           json.dump(log, open("/tmp/ch3bg/gen.json", "w"), indent=1)
           PY
-      # upload-artifact запрещён allowlist'ом репо -> mp3 коммитом в эту же ветку (ветка не мержится)
       - name: publish to branch
         run: |
           git config user.name hermes; git config user.email factory@pxbt.app
