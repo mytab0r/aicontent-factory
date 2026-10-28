@@ -19,10 +19,54 @@ def _load(name, path):
     return m
 
 
-def test_mux_uses_limiter():
+def test_mux_copies_tp_checked_audio():
+    """t_fef617d9: алимитер ДО AAC-кодера не видит овершут кодера (run 40408005493: 03c TP -1.4, 04b +6.5).
+    Оба mux-пути копируют звук (-c:a copy), закодированный encode_audio с замером TP на выходе кодера."""
     src = (HERE / "04_assemble.py").read_text(encoding="utf-8")
-    assert src.count("alimiter") == 2, "оба mux-пути (loop и static) должны лимитировать аудио"
-    assert "limit=-1.5dB" in src
+    assert src.count('"-c:a", "copy"') == 2, "оба mux-пути (loop и static) должны копировать готовый AAC"
+    assert '"-b:a", "192k"' not in src, "перекодирование звука в mux вернулось"
+    assert "encode_audio(track_norm" in src
+
+
+PHONK_HOT = ("aevalsrc=0.9*clip(3*sin(2*PI*45*t)*exp(-2*mod(t\\,0.5))\\,-1\\,1)+0.3*sgn(sin(2*PI*800*t))*exp(-20*mod(t\\,0.25))"
+             "|0.9*clip(3*sin(2*PI*45*t+0.3)*exp(-2*mod(t\\,0.5))\\,-1\\,1)+0.3*sgn(sin(2*PI*540*t))*exp(-20*mod(t\\,0.25))"
+             ":s=48000:d=8")
+
+
+def test_encode_audio_tp_after_codec():
+    """RED на старом пути: 808 + квадратный cowbell, WAV TP -3.7 -> alimiter -1.5 + AAC 192k = +1.1 dBTP (клиппинг 04b)."""
+    import re, subprocess, tempfile
+    import quality_gate as qg
+    asm = _load("asm_enc", "04_assemble.py")
+    with tempfile.TemporaryDirectory() as td:
+        w, o = f"{td}/h.wav", f"{td}/o.m4a"
+        subprocess.run(["ffmpeg", "-nostdin", "-y", "-loglevel", "error", "-f", "lavfi", "-i", PHONK_HOT,
+                        "-af", "volume=-6dB,alimiter=limit=-2.5dB:level=false", "-c:a", "pcm_s16le", w], check=True)
+        subprocess.run(["ffmpeg", "-nostdin", "-y", "-loglevel", "error", "-i", w,
+                        "-af", "alimiter=limit=-1.5dB:level=false", "-c:a", "aac", "-b:a", "192k", o], check=True)
+        old = asm.tp_of(o)
+        assert old > qg.MAX_TP, f"фикстура больше не воспроизводит овершут AAC: {old}"
+        new = asm.encode_audio(w, o)
+        print(f"AAC TP: старый путь {old:+.1f}, encode_audio {new:+.1f}")
+        assert new <= qg.MAX_TP and asm.tp_of(o) == new, new
+
+
+def test_signature_absent_in_final_gate():
+    """Сигнатура карточки: quality_gate.objective на video.mp4 после 04_assemble не даёт «true peak ... клиппинг»."""
+    import os, subprocess, tempfile
+    import quality_gate as qg
+    from PIL import Image
+    with tempfile.TemporaryDirectory() as td:
+        d = Path(td)
+        Image.new("RGB", (640, 360), (40, 40, 80)).save(d / "cover.png")
+        subprocess.run(["ffmpeg", "-nostdin", "-y", "-loglevel", "error", "-f", "lavfi", "-i", PHONK_HOT,
+                        "-c:a", "libmp3lame", "-b:a", "192k", str(d / "track.mp3")], check=True)
+        asm = _load("asm_sig", "04_assemble.py")
+        with patch.dict(os.environ, {"ACF_RUN_DIR": td}):
+            asm.main()
+        why, m = qg.objective(str(d / "video.mp4"), "chill phonk")
+        print(f"video.mp4 phonk-фикстура: TP={m['tp']} I={m['i']}")
+        assert not [w for w in why if "true peak" in w], why
 
 
 def test_norm_segments_static_gain_no_loudnorm(tmp_path=None):
