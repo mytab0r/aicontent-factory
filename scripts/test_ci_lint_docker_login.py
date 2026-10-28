@@ -38,16 +38,27 @@ with tempfile.TemporaryDirectory() as d:
     pathlib.Path(d, ".github/workflows/img.yml").write_text("      - run: echo ok\n")
     g("commit", "-qam", "fix"); g("update-ref", "refs/remotes/origin/main", "HEAD")
     assert lint.lint_branches(d) == []
-# t_1011874c: квота storage в GB-часах — upload каталогом и upload вне ARTIFACT_ALLOW обязаны ронять линт
-up = "      - uses: actions/upload-artifact@v4\n        with:\n          retention-days: 1\n          path: runs/loopgen/\n"
-assert lint.lint_upload_budget("daily-video.yml", up.splitlines()) == [(4, "upload-dir")]
-assert lint.lint_upload_budget("new-daily.yml", up.replace("runs/loopgen/", "runs/x.mp4").splitlines()) == [(1, "upload-not-allowed")]
-assert lint.lint_upload_budget("daily-video.yml", up.replace("runs/loopgen/", "runs/*/video.mp4").splitlines()) == []
-assert lint.lint_upload_budget("daily-video.yml", up.replace("runs/loopgen/", "out/*  # x").splitlines()) == []
-blk = "      - uses: actions/upload-artifact@v4\n        with:\n          retention-days: 1\n          path: |\n            runs/*/video.mp4\n            runs/loopgen/\n      - name: next\n        run: echo a/\n"
-assert lint.lint_upload_budget("oneoff-loop-generate.yml", blk.splitlines()) == [(6, "upload-dir")], lint.lint_upload_budget("oneoff-loop-generate.yml", blk.splitlines())
-assert lint.lint_upload_budget("oneoff-loop-generate.yml", blk.replace("path: |", "path: >-").splitlines()) == [(6, "upload-dir")]
-assert lint.lint_upload_budget("oneoff-loop-generate.yml", blk.replace("runs/loopgen/", "!runs/loopgen/").splitlines()) == []
+# t_265d0147: квота storage в ГБ-часах — медиа/каталог/без размера/>=10 МБ/download-artifact обязаны ронять линт
+A = lint.lint_artifacts
+up = "      - uses: actions/upload-artifact@v4  # artifact-ok: {}\n        with:\n          retention-days: 1\n          path: {}\n"
+assert A(up.format("отчёт, 40 KB", "out/report.json").splitlines()) == []
+assert A(up.format("лог, 2 МБ", "out/run.log").splitlines()) == []
+assert A(up.format("отчёт", "out/report.json").splitlines()) == [(1, "upload-size")]
+assert A(up.format("отчёт, 10 MB", "out/report.json").splitlines()) == [(1, "upload-size")]
+assert A(up.format("отчёт, 12000 KB", "out/report.json").splitlines()) == [(1, "upload-size")]
+assert A(up.format("видео, 5 MB", "runs/*/video.mp4").splitlines()) == [(4, "upload-media")]
+assert A(up.format("каталог, 5 MB", "runs/loopgen/").splitlines()) == [(4, "upload-media")]
+assert A(up.format("всё, 5 MB", "out/*  # x").splitlines()) == [(4, "upload-media")]
+blk = "      # artifact-ok: логи, 1 MB\n      - uses: actions/upload-artifact@v4\n        with:\n          path: |\n            a.json\n            runs/x.mp3\n            !b.mp3\n      - name: next\n        run: echo a.mp4\n"
+assert A(blk.splitlines()) == [(6, "upload-media")], A(blk.splitlines())
+assert A(blk.replace("path: |", "path: >-").splitlines()) == [(6, "upload-media")]
+assert A("      - uses: actions/download-artifact@v4\n".splitlines()) == [(1, "download-artifact")]
+assert A("      # actions/download-artifact@v4 убран\n".splitlines()) == []
+assert (1, "upload-artifact") in lint.lint_text("      - uses: actions/upload-artifact@v4\n        with:\n          retention-days: 1\n")
+put = "      - name: x\n{}        run: sh deploy/gpu-pc/acf_out.sh put 1 a.mp3\n"
+assert A(put.format("").splitlines()) == [(2, "acf-out-always")]
+assert A(put.format("        if: steps.g.outputs.p != '1'\n").splitlines()) == [(3, "acf-out-always")]
+assert A(put.format("        if: always() && x\n").splitlines()) == []
 assert lint.main(str(ROOT)) == 0
 print("ok")
 # t_79ec2527: сумма бюджетов шагов >= лимита джобы = FAIL (джоба убивается без имени шага)

@@ -238,7 +238,7 @@ class _Http:
 
 def ace15_prepare(model: str | None, lora: str | None, api=None) -> dict:
     """t_b4006a6e: LoRA через /v1/lora/load (в /release_task поля LoRA нет). Модель НЕ через /v1/init:
-    XL init на 12 ГБ висел 3x1 ч (run 39017603255) -> модель уходит в body запроса (on-demand, run 38971884880).
+    XL init на 12 ГБ висел 3x1 ч (run 39017603255; повтор 39106389601/40022391620, t_f3937fb8).
     Возврат /v1/lora/status — доказательство в лог; LoRA не встала = ошибка шага."""
     if not lora:
         return {}
@@ -246,21 +246,16 @@ def ace15_prepare(model: str | None, lora: str | None, api=None) -> dict:
     import tempfile
     api = api or _Http(os.environ["ACE15_ENDPOINT"])
     if model:
-        # on-demand swap пересоздаёт primary-хендлер (initialize_service) -> LoRA, загруженная ДО swap,
-        # теряется. Короткий прогрев моделью: swap в очереди, затем LoRA на уже XL-хендлер.
-        # Swap мог не включиться (env воркеров/прочее, прогон 39064436852: "сгенерировала turbo")
-        # -> единственный /v1/init с жёстким потолком 900 с (не час, как 39017603255).
+        # Прогрев моделью = проверка, что контейнер реально отдаёт model (dit_model в ответе), до LoRA.
+        # t_f3937fb8: НИКАКОГО /v1/init fallback. Образ ace-step (upstream dce6214) не умеет on-demand swap;
+        # /v1/init догружал XL (9 ГБ) поверх turbo+base+LM на 12 ГБ -> задачи status=0 навсегда, A/B не собран
+        # (39106389601, 40022391620). Модель задаёт конфигурация контейнера: deploy/gpu-pc/ace_mode.sh xl.
         with tempfile.TemporaryDirectory() as td:
             try:
                 generate_track_v15("warmup", 10, 0, Path(td) / "w.mp3", api=api, model=model)
-            except (RuntimeError, urllib.error.URLError) as e:
-                # t_418f9cdc: образ ghcr ace-step-1.5:latest = v0.1.8 (dce6214, 18.05), ACESTEP_ON_DEMAND_MODEL_LOAD
-                # появился позже (#1284, 28.08) -> env игнорируется, сервер молча берёт primary turbo.
-                print(f"on-demand swap не сработал ({type(e).__name__}: {e}; образ без ACESTEP_ON_DEMAND_MODEL_LOAD)"
-                      f"; /v1/init 900 с", flush=True)
-                r = api.post("/v1/init", {"model": model}, timeout=900)
-                if r.get("code") != 200 or (r.get("data") or {}).get("loaded_model") != model:
-                    raise RuntimeError(f"/v1/init {model}: {str(r)[:300]}") from e
+            except RuntimeError as e:
+                raise RuntimeError(f"ace-step не отдаёт {model} ({e}): нужен контейнер с ним в primary "
+                                   f"(deploy/gpu-pc/ace_mode.sh), /v1/init на 12 ГБ запрещён") from e
     r = api.post("/v1/lora/load", {"lora_path": lora})
     st = json.loads(api.get("/v1/lora/status"))["data"]
     if r.get("code") != 200 or not (st.get("lora_loaded") and st.get("use_lora")):
@@ -330,7 +325,7 @@ def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=
     return item
 
 
-def gated_gen(raw, scores, objective, attempts=3, log=print, extra=0):
+def gated_gen(raw, scores, objective, attempts=3, log=print, extra=0, record=None):
     """Гейт сегмента час-микса (t_187762da): качество меряется по КАЖДОМУ сегменту,
     а не только по склейке (17.10: целый час упал на одной полосе 20-60 Гц одного трека).
     best-of-K как PR #59: attempts кандидатов с разными seed, ОДИН батчевый прогон
@@ -352,6 +347,8 @@ def gated_gen(raw, scores, objective, attempts=3, log=print, extra=0):
             why = list(objective(p)) + ([f"CE {min(ce):.2f} < {MIN_CE}"] if min(ce) < MIN_CE else [])
             log(f"сегмент {i} кандидат {k + 1}/{total}: CE(min)={min(ce):.2f}, "
                 + ("FAIL: " + "; ".join(why) if why else "OK"))
+            if record:  # t_fed47d5f R4: статистика брака по промпту (bank.stats_flush)
+                record(p, not why, "; ".join(why))
             if why:
                 fails.append(why)
                 Path(p).unlink(missing_ok=True)
@@ -505,7 +502,8 @@ def edge_rms(path, side, sec=5.0) -> float:
 
 
 EDGE_RAMP_SEC = 30.0  # gain только на начале сегмента, к телу спадает до 0: без накопления по цепочке
-EDGE_MAX_GAIN = 18.0  # 3 прохода x клэмп 6 дБ
+EDGE_PASSES = 3
+EDGE_MAX_GAIN = 18.0  # EDGE_PASSES прохода x клэмп 6 дБ
 
 
 def pmap(fn, items):
@@ -525,13 +523,15 @@ BASS_HZ = 200.0  # bass swap: ниже — бас, его в переходе д
 
 @__import__("functools").lru_cache(maxsize=256)
 def _downbeats(path, start, dur):
-    """(bpm, абс. времена сильных долей) окна [start, start+dur]; None = нет librosa/сетки (синус, тишина).
-    librosa даёт биты, не такты: сильная доля = фаза 4-дольной сетки с наибольшей onset-энергией."""
-    try:
-        import librosa
-        import numpy as np
-    except ImportError:
-        return None
+    """(bpm, абс. времена сильных долей) окна [start, start+dur]; None = сетка не нашлась (короткий файл,
+    нет ритма в окне). t_2be41a12: ImportError librosa раньше тоже давал None -> dj_plan молча откатывался
+    на xfade (acrossfade qsin без среза/bass swap). edge_match на таком стыке не сходится ниже порога R3
+    гейта (проверено: двусторонняя gain-коррекция застревает на разрыве >3 дБ, когда у края сегмента есть
+    переходный участок типа брейкдауна/удара — ramp не может убрать локальный провал без искажения тела).
+    librosa — обязательная зависимость пайплайна (pyproject.toml); отсутствие — дефект окружения, падаем
+    громко, как уже делает bank_release.assemble (t_96de1cc6), а не тихо ломаем качество склейки."""
+    import librosa
+    import numpy as np
     y, sr = librosa.load(str(path), sr=22050, mono=True, offset=max(0.0, start), duration=dur)
     if len(y) < sr * 8:
         return None
@@ -632,13 +632,24 @@ def edge_match(paths, max_gain=6.0, ramp=EDGE_RAMP_SEC, log=print):
     for i in range(1, len(paths)):
         tot = 0.0
         r = max(6.0, min(ramp, _probe_sec(paths[i]) * 0.4))
-        for _ in range(3):
+        # t_44f5c3b3 (runs 40477529845 R3 595 с -17.0 -> -21.0, 40508302240 R3 1312 с -16.3 -> -20.2; edge gain
+        # +16.3/+14.7 дБ): рампа спадала с t=0, внутри окна гейта (центр стыка ns+L/2 ± SEAM_HALF) доходило
+        # 50-70% gain, 3 прохода по клэмпу 6 дБ не сходились на тихом вступлении. Полный gain держим до конца
+        # окна гейта (hold), спад — после: каждый проход доходит до окна целиком.
+        from quality_gate import SEAM_HALF
+        _pe, ns, L, _sw = dj_plan(paths[i - 1], paths[i])
+        hold = ns + L / 2 + SEAM_HALF + 1.0
+        # короткий сегмент: hold+рампа не доходят до окна следующего стыка (иначе дрейф по цепочке)
+        dur = _probe_sec(paths[i])
+        hold = min(hold, dur * 0.3)
+        r = max(3.0, min(r, dur * 0.4 - hold))
+        for _ in range(EDGE_PASSES):
             lv, rv = seam_rms(paths[i - 1], paths[i])
             g = max(-max_gain, min(max_gain, lv - rv))
             if abs(g) <= 0.5:
                 break
             tmp = f"{paths[i]}.g.mp3"
-            af = f"volume='pow(10,{g:.3f}*max(0,1-t/{r:.1f})/20)':eval=frame"
+            af = f"volume='pow(10,{g:.3f}*min(1,max(0,1-(t-{hold:.2f})/{r:.1f}))/20)':eval=frame"
             subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", paths[i], "-af", af,
                             "-c:a", "libmp3lame", "-b:a", "192k", tmp], check=True)
             os.replace(tmp, paths[i])

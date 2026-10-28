@@ -68,7 +68,7 @@ jobs:
           command -v ffmpeg || { sudo dpkg --configure -a || true; for i in 1 2 3; do sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg && break; sleep 20; done; }
           command -v ffmpeg
           ffmpeg -version | head -1
-          pip install pillow gradio_client numpy google-api-python-client google-auth-httplib2 librosa
+          pip install pillow gradio_client numpy google-api-python-client google-auth-httplib2 librosa pyyaml
       - name: run python tests
         run: |
           set -e
@@ -163,7 +163,7 @@ jobs:
         with:
           fetch-depth: 0  # t_de7348c1: нужны все ветки origin для --branches
       - name: ci-bypass-lint («Повтор = класс»)
-        run: python3 scripts/ci_bypass_lint.py . && python3 scripts/test_ci_lint_docker_login.py && python3 scripts/ci_bypass_lint.py --branches .
+        run: python3 scripts/ci_bypass_lint.py . && python3 scripts/test_ci_lint_docker_login.py && python3 scripts/ci_bypass_lint.py --branches . && python3 scripts/actions_policy.py .
 
   # t_b1429246: сам хостед-раннер во время окон деградации PC-egress не смог доставить вердикт
   # (CompleteJobAsync -> HttpIOException "The response ended prematurely") — job падает с

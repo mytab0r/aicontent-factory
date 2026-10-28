@@ -52,17 +52,9 @@ jobs:
         run: |
           ../.venv/bin/python ab_samples.py --n "${{ inputs.n || 4 }}" --seg-sec "${{ inputs.seg_sec || 60 }}" --out ../runs/ab_$(date -u +%Y%m%d_%H%M%S)
 
-      - name: upload A/B artifact
-        continue-on-error: true  # квота storage может быть исчерпана — доставка идёт через TG  # root-cause: t_f95a06da
-        uses: actions/upload-artifact@v4  # artifact-ok: логи прогона; доставка результата вне артефактов
-        timeout-minutes: 15  # t_6758c86f: сетевой шаг не висит до таймаута джобы
-        with:
-          name: ab-refpool-${{ github.run_id }}
-          path: |
-            runs/ab_*/ab_*.mp3
-            runs/ab_*/manifest.json
-            runs/ab_*/ab_LOCK.json
-          retention-days: 1  # t_9d452170: доставка вне артефактов (TG/git); квота storage 500MB
+      - name: upload A/B files -> C:\dockerlocal\acf-out\<run_id>\ (t_265d0147)
+        if: always()  # и упавший прогон оставляет файлы на C:
+        run: sh deploy/gpu-pc/acf_out.sh put ${{ github.run_id }} runs/ab_*/ab_*.mp3 runs/ab_*/manifest.json runs/ab_*/ab_LOCK.json
 
       - name: deliver via git branch (durable fallback, мимо artifacts/tmpfiles)
         if: ${{ always() }}

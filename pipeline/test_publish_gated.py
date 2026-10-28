@@ -80,6 +80,18 @@ def test_video_gate_speech_audio():
         assert any("громкость" in w for w in qg.video_why(d)), qg.video_why(d)
 
 
+def test_daily_video_launch_gated():
+    """t_cbeefa4f: G1zm0 (daily-video) льёт на YouTube только при GO launch_gate.py g1zm0."""
+    y = (ROOT / ".github/workflows/daily-video.yml").read_text(encoding="utf-8")
+    assert "python3 scripts/launch_gate.py g1zm0" in y
+    steps = re.split(r"\n      - name: ", y)[1:]
+    assert [i for i, st in enumerate(steps) if st.startswith("launch gate")][0] < \
+        [i for i, st in enumerate(steps) if PUB.search(st)][0], "гейт после заливки"
+    for st in steps:
+        if PUB.search(st):
+            assert "steps.gate.outputs.go == '1'" in st, st.splitlines()[0]
+
+
 if __name__ == "__main__":
     for k, f in list(globals().items()):
         if k.startswith("test_"):

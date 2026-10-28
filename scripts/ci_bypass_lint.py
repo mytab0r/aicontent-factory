@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """CI-линт обходов гейтов («Повтор = класс», ai-dev-engineering #25).
-FAIL на: setup-buildx-action без `driver: docker` (t_a41372f5) | continue-on-error: true | `|| true`/`|| :` после теста/гейта/upload/push | actions/upload-artifact | docker login / docker/login-action (t_831d9fd6) | сумма timeout шагов >= timeout джобы (t_79ec2527).
+FAIL на: setup-buildx-action без `driver: docker` (t_a41372f5) | continue-on-error: true | `|| true`/`|| :` после теста/гейта/upload/push | actions/upload-artifact (только текст, `# artifact-ok: <причина>, <N> KB|MB` < 10 МБ) | download-artifact (t_265d0147) | docker login / docker/login-action (t_831d9fd6) | сумма timeout шагов >= timeout джобы (t_79ec2527).
 Разрешение: `# root-cause: t_<id>` (первые два) или `# artifact-ok: <причина>` (upload) в той же строке
 или в непрерывном блоке комментариев прямо над строкой.
 Usage: python3 ci_bypass_lint.py [ROOT]"""
@@ -28,20 +28,16 @@ ARTIFACT_OK = re.compile(r"#\s*artifact-ok:\s*\S")
 # t_9d452170: каждый upload обязан иметь retention-days: 1 (квота storage 500MB/account; доставка вне артефактов)
 RETENTION_1 = re.compile(r"^\s*retention-days:\s*['\"]?1['\"]?\s*(#.*)?$")
 UPLOAD_CTX = 10  # между uses и retention бывают if:/continue-on-error: строки
-# t_1011874c: квота storage считается в GB-часах за месяц (500MB x 744h, общая с Packages), retention-days: 1
-# её не спасает: 53 загрузки loopgen-frames-full (path: каталог, до 0.8GB) съели ~1400 GB-h при бюджете 372.
-# Поэтому: (1) path каталогом = FAIL, (2) upload-artifact разрешён только в workflow из ARTIFACT_ALLOW —
-# новый upload = осознанное добавление сюда с причиной (кто скачивает артефакт).
-UPLOAD_DIR = re.compile(r"""^\s*(?:-\s*)?path:\s*['"]?[^'"#\s|*]+/['"]?\s*(#.*)?$""")
-PATH_BLOCK = re.compile(r"^\s*(?:-\s*)?path:\s*[|>][-+]?\s*(#.*)?$")
-BLOCK_DIR = re.compile(r"""^\s+['"]?[^'"#\s*!]+/['"]?\s*(#.*)?$""")
-# ponytail: каталог без завершающего `/` (path: runs/loopgen) не ловится — закрывает ARTIFACT_ALLOW (upload-not-allowed)
-ARTIFACT_ALLOW = {
-    "daily-video.yml",  # g1zm0_metrics.py качает video.mp4 для аудио-аудита
-    "oneoff-loop-generate.yml",  # oneoff-loop-final.yml качает artifact loopgen
-    "oneoff-loop-final.yml", "oneoff-generate-samples.yml", "oneoff-dd-samples.yml", "oneoff-ab-refpool.yml",
-    "oneoff-mix-check.yml", "oneoff-shorts-proof.yml",  # ручные разовые прогоны (workflow_dispatch)
-}
+# t_1011874c/t_265d0147: квота storage Free считается в ГБ-часах за месяц на весь аккаунт (500MB x 744h,
+# общая с Packages); удаление/retention потраченное не возвращают (run 39395217149, 39363597218 упали на
+# 'Artifact storage quota has been hit'). Медиа и передача между job — только C:\dockerlocal\acf-out\<run_id>\
+# (deploy/gpu-pc/acf_out.sh). upload-artifact разрешён только с `# artifact-ok: <причина>, <N> KB|MB` (N < 10 МБ)
+# и только текстовыми файлами (TEXT_EXT); download-artifact запрещён всегда.
+DOWNLOAD = re.compile(r"uses:\s*actions/download-artifact@")
+ARTIFACT_SIZE = re.compile(r"#\s*artifact-ok:.*?(\d+(?:[.,]\d+)?)\s*(KB|MB|КБ|МБ)\b", re.I)
+SIZE_MAX_MB = 10
+TEXT_EXT = re.compile(r"\.(?:json|jsonl|log|txt|md|csv)$")
+PATH_KEY = re.compile(r"""^\s*(?:-\s*)?path:\s*(.*?)\s*(?:#.*)?$""")
 
 
 def _rules(line, lines=None, i=0):
@@ -117,7 +113,8 @@ def lint_text(text):
         if BUILDX.search(line) and not any(DRIVER_DOCKER.match(x) for x in lines[i + 1:i + 6]):
             ctx, j = [line], i - 1
             while j >= 0 and lines[j].strip().startswith("#"):
-                ctx.append(lines[j]); j -= 1
+                ctx.append(lines[j])
+                j -= 1
             if not any(ROOT_CAUSE.search(c) for c in ctx):
                 out.append((i + 1, "buildx-driver"))
         for rule, waiver in _rules(line, lines, i):
@@ -155,26 +152,50 @@ def _has_wf(git, ref):
         return False
 
 
-def lint_upload_budget(name, lines):
-    """t_1011874c: upload только в разрешённых workflow и без загрузки целого каталога."""
+def _upload_paths(lines, i):
+    """Пути upload-шага (inline или блок `path: |`/`>`) в пределах UPLOAD_CTX."""
+    for j in range(i + 1, min(i + 1 + UPLOAD_CTX, len(lines))):
+        m = PATH_KEY.match(lines[j])
+        if not m:
+            continue
+        v = m.group(1).strip("'\"")
+        if v and v[0] not in "|>":
+            return [(j + 1, v)]
+        ind, out = len(lines[j]) - len(lines[j].lstrip()), []
+        for k in range(j + 1, len(lines)):
+            if lines[k].strip() and len(lines[k]) - len(lines[k].lstrip()) <= ind:
+                break
+            item = lines[k].split("#")[0].strip().strip("'\"")
+            if item and not item.startswith("!"):
+                out.append((k + 1, item))
+        return out
+    return [(i + 1, "")]
+
+
+def lint_artifacts(lines):
+    """t_265d0147: download-artifact = FAIL; upload — только текст и объявленный размер < 10 МБ."""
     out = []
     for i, line in enumerate(lines):
-        if not UPLOAD.search(line):
+        # t_265d0147: put без always() пропускается при падении джобы -> упавший прогон не оставляет файлов на C:
+        if "acf_out.sh put" in line and not line.lstrip().startswith("#"):
+            s = i
+            while s > 0 and not lines[s].lstrip().startswith("- "):
+                s -= 1
+            if not any(re.match(r"^\s*if:.*\balways\(\)", x) for x in lines[s:i]):
+                out.append((i + 1, "acf-out-always"))
+        if DOWNLOAD.search(line) and not line.lstrip().startswith("#"):
+            out.append((i + 1, "download-artifact"))
+        if not UPLOAD.search(line) or line.lstrip().startswith("#"):
             continue
-        if name not in ARTIFACT_ALLOW:
-            out.append((i + 1, "upload-not-allowed"))
-        for j in range(i + 1, min(i + 1 + UPLOAD_CTX, len(lines))):
-            if UPLOAD_DIR.match(lines[j]):
-                out.append((j + 1, "upload-dir"))
-            elif PATH_BLOCK.match(lines[j]):
-                # `path: |` / `>`: каждый элемент блока — отдельный путь (ревью t_1011874c)
-                ind = len(lines[j]) - len(lines[j].lstrip())
-                for k in range(j + 1, len(lines)):
-                    item = lines[k]
-                    if item.strip() and len(item) - len(item.lstrip()) <= ind:
-                        break
-                    if BLOCK_DIR.match(item):
-                        out.append((k + 1, "upload-dir"))
+        ctx, j = [line], i - 1
+        while j >= 0 and lines[j].strip().startswith("#"):
+            ctx.append(lines[j])
+            j -= 1
+        m = next((ARTIFACT_SIZE.search(c) for c in ctx if ARTIFACT_SIZE.search(c)), None)
+        mb = float(m.group(1).replace(",", ".")) / (1024 if m and m.group(2).upper() in ("KB", "КБ") else 1) if m else None
+        if mb is None or mb >= SIZE_MAX_MB:
+            out.append((i + 1, "upload-size"))
+        out += [(n, "upload-media") for n, pth in _upload_paths(lines, i) if not TEXT_EXT.search(pth)]
     return out
 
 
@@ -184,7 +205,7 @@ def main(root="."):
     bad = 0
     for f in files:
         lines = f.read_text(encoding="utf-8").splitlines()
-        for n, rule in lint_text("\n".join(lines)) + lint_net_timeout(lines) + lint_job_budget(lines) + lint_upload_budget(f.name, lines):
+        for n, rule in lint_text("\n".join(lines)) + lint_net_timeout(lines) + lint_job_budget(lines) + lint_artifacts(lines):
             print(f"{f.relative_to(root).as_posix()}:{n}: {rule}: {lines[n - 1].strip()}")
             bad += 1
     if bad:

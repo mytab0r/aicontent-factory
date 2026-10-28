@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """t_ba72c7aa R2: выпуск собирается ИЗ БАНКА (bank_release), не генерирует.
-R4: статистика отказов по промптам (stats_record/fail_rate/prompt_enabled) в bank.py.
+R4 (t_fed47d5f): статистика брака по промптам за 30 дней в stats.json банка, выключение промпта > 50%.
 Тесты = контракт; реализация пишется по тому же контракту (TDD RED)."""
 import hashlib
 import json
@@ -176,53 +176,92 @@ def test_release_budget_under_15_min():
     assert bank_release.release_budget_sec(20) < 900
 
 
-def test_fail_rate_and_prompt_enabled():
-    """Критерий 9: статистика отказов; промпт с браком >50% выключается автоматически."""
-    lines = [json.dumps({"prompt": "p1", "seed": i, "ok": i % 2 == 0, "ts": i}) for i in range(20)]
-    assert bank.fail_rate(lines, "p1") == 0.5
-    lines_bad = lines[:-12] + [json.dumps({"prompt": "p1", "seed": i, "ok": False, "ts": i}) for i in range(12)]
-    assert bank.fail_rate(lines_bad, "p1") == 0.8
-    assert bank.fail_rate(["{broken"], "p1") is None          # битая строка не роняет
-    assert bank.fail_rate([], "p1") is None                   # нет данных
-    few = [json.dumps({"prompt": "p1", "ok": False}) for _ in range(3)]
-    assert bank.prompt_enabled(few, "p1") is True             # < min_n = недостаточно данных
-    assert bank.prompt_enabled(lines_bad, "p1") is False      # 0.8 > 0.5
-    assert bank.prompt_enabled(lines, "p1") is True           # ровно 0.5 не > 0.5
+DAY = 86400
 
 
-def test_stats_record_appends_jsonl():
-    dk = FakeDocker({})
-    bank.stats_record("anime lofi", "p1", 7, True, docker_sh=dk)
-    bank.stats_record("anime lofi", "p1", 8, False, "CE low", docker_sh=dk)
-    assert len(dk.ops) == 2
-    for (_, cmd), ok in zip(dk.ops, (True, False)):
-        row = json.loads(cmd.split("echo ", 1)[1].rsplit(" >>", 1)[0].strip("'\""))
-        assert row["prompt"] == "p1" and row["ok"] is ok and "ts" in row
+def _row(prompt, ok, ts, seed=1):
+    return {"prompt": prompt, "seed": seed, "ok": ok, "why": "" if ok else "CE low", "ts": ts}
 
 
-def test_bank_main_skips_disabled_prompts():
-    """Критерий 9: генератор берёт первый включённый вариант; все disabled -> fallback pick()."""
-    import refpool
-    saved = (bank.refpool if hasattr(bank, "refpool") else None)
-    variants = ["v1 89 BPM, F major", "v2 82 BPM, D major", "v3 76 BPM, G major"]
-    refpool.PROMPT_VARIANTS, saved_variants = variants, variants
-    refpool.pick = lambda now=None: {"prompt": variants[0], "ref_path": ""}
-    try:
-        chosen = []
-        def enabled(lines, prompt):
-            chosen.append(prompt)
-            return prompt != variants[0]  # v1 выключен, v2 включён
-        got = bank.pick_prompt(enabled)
-        assert got == variants[1], (got, chosen)
-        def none_enabled(lines, prompt):
-            return False
-        fallback = {"prompt": variants[2], "ref_path": ""}
-        refpool.pick = lambda now=None: fallback
-        assert bank.pick_prompt(none_enabled) == variants[2]  # fallback без фильтра
-    finally:
-        refpool.PROMPT_VARIANTS = saved_variants
-        if saved is not None:
-            bank.refpool = saved
+def test_fail_rate_and_prompt_enabled_30_days():
+    """t_fed47d5f R4: брак > 50% за последние 30 дней = промпт выключен; старше 30 дней не в счёт."""
+    now = 100 * DAY
+    half = [_row("p1", i % 2 == 0, now - i) for i in range(20)]
+    assert bank.fail_rate(half, "p1", now) == (0.5, 20)
+    assert bank.prompt_enabled(half, "p1", now) is True              # ровно 0.5 не > 0.5
+    bad = [_row("p1", i < 4, now - i) for i in range(20)]            # 80% брака
+    assert bank.prompt_enabled(bad, "p1", now) is False
+    old_bad = [_row("p1", False, now - 31 * DAY) for _ in range(20)]
+    assert bank.fail_rate(old_bad, "p1", now) == (None, 0)          # вне окна
+    assert bank.prompt_enabled(old_bad + half, "p1", now) is True
+    few = [_row("p1", False, now) for _ in range(3)]
+    assert bank.prompt_enabled(few, "p1", now) is True               # < min_n = данных мало
+    assert bank.prompt_enabled(bad, "p2", now) is True               # статистика по промпту
+
+
+def test_high_reject_prompt_is_skipped():
+    """t_fed47d5f R4 (CI-критерий): генератор не берёт промпт с браком > 50%; все выключены -> без фильтра."""
+    now = time.time()
+    v = ["v1 70 BPM, F major", "v2 68 BPM, D major"]
+    rows = [_row(v[0], False, now) for _ in range(10)] + [_row(v[1], True, now) for _ in range(10)]
+    assert bank.enabled_variants(v, rows) == [v[1]]
+    counts = {(70, "F major"): 10, (68, "D major"): 3}                # открытая группа v1 больше
+    key = lambda x: (int(x.split()[1]), x.split(", ")[1])
+    assert bank.choose_prompt(v, counts, 24, v[0], key) == v[0]       # без статистики добивал бы v1
+    on = bank.enabled_variants(v, rows)
+    assert bank.choose_prompt(on, counts, 24, on[0], key) == v[1]     # со статистикой v1 пропущен
+    all_bad = [_row(x, False, now) for x in v for _ in range(10)]
+    assert bank.enabled_variants(v, all_bad) == v
+
+
+def test_stats_flush_updates_file_and_prunes():
+    """t_fed47d5f R4: stats.json дописывается после сегмента, атомарно (cp .part -> mv), >30 дней выкинуты."""
+    now = 100 * DAY
+    path = bank.stats_path("anime lofi")
+    assert path == "/app/output/bank/anime-lofi/stats.json"
+    old = [_row("p1", True, now - 40 * DAY), _row("p1", False, now - DAY)]
+    sent = {}
+
+    def dk(*a):
+        if a[0] == "cp":
+            sent["data"] = json.loads(Path(a[1]).read_text(encoding="utf-8"))
+            sent["dst"] = a[2]
+            return ""
+        if a[-1].startswith("cat "):
+            return json.dumps(old)
+        sent.setdefault("ops", []).append(a)
+        return ""
+    assert bank.stats_flush("anime lofi", [_row("p1", True, now)], dk, now=now) is True
+    assert sent["dst"] == f"ace-step:{path}.part"
+    assert sent["ops"][-1] == ("exec", "ace-step", "mv", f"{path}.part", path)
+    assert [r["ts"] for r in sent["data"]] == [now - DAY, now]       # 40-дневная выкинута
+    # битый файл = заново; exec недоступен = не перезаписываем вслепую
+    assert bank.stats_load("anime lofi", lambda *a: "{broken") == []
+
+    def down(*a):
+        raise RuntimeError("exec down")
+    assert bank.stats_load("anime lofi", down) is None
+    assert bank.stats_flush("anime lofi", [_row("p1", True, now)], down, now=now) is False
+
+
+def test_stats_json_invisible_to_release():
+    """Release unaffected: выпуск берёт только *.mp3 с json-мета; stats.json сегментом не становится."""
+    dk = FakeDocker({"ls /app/output/bank/anime-lofi": "stats.json\na.mp3\na.json\n",
+                     "a.json": json.dumps({"bpm": 70, "key": "F major", "prompt": "p"})})
+    assert [e["name"] for e in bank_release.entries("anime lofi", docker_sh=dk)] == ["a"]
+
+
+def test_gated_gen_records_every_candidate():
+    """R4: каждый кандидат сегмента (OK и брак) попадает в статистику через record."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("music_r4", Path(__file__).resolve().parent / "03_music.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    got = []
+    gen = m.gated_gen(lambda i, k: f"/nonexistent/s{i}_{k}.mp3", lambda ps: [[7.9] * 3, [3.0] * 3, [7.0] * 3],
+                      lambda p: [], attempts=3, log=lambda *a: None, record=lambda p, ok, why: got.append(ok))
+    assert gen(0) == "/nonexistent/s0_0.mp3"
+    assert got == [True, False, True]
 
 
 def test_margin_absorbs_ragged_cp_burst():
@@ -420,7 +459,10 @@ def test_master_final_loudnorms_when_too_quiet():
             sys.modules.pop("mastering", None)
         else:
             sys.modules["mastering"] = saved_mastering
-    assert any("loudnorm" in " ".join(map(str, c)) for c in ran), ran[:2]
+    # t_2c32a785: нормализация = постоянный gain к LUFS_TARGET (loudnorm linear молча уходил в динамику).
+    import re as _re
+    gains = [float(g) for c in ran for g in _re.findall(r"volume=(-?[\d.]+)dB,", " ".join(map(str, c)))]
+    assert gains and max(gains) >= qg.LUFS_TARGET - fake_mastering.measure(track)["i"] - 0.05, (gains, ran[:2])
 
 
 def test_trim_fade_head_cuts_leading_fade():

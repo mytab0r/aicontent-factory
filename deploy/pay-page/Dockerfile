@@ -2,10 +2,12 @@
 #   docker build -f deploy/pay-page/Dockerfile .
 FROM node:22-alpine
 WORKDIR /app
+ARG GIT_SHA
+ENV GIT_SHA=$GIT_SHA
+ENV PORT=8080 DATA_DIR=/data
 COPY functions ./functions
 COPY config/payment-providers.json ./deploy/pay-page/payment-providers.json
 COPY deploy/pay-page/server.mjs ./deploy/pay-page/server.mjs
-ENV PORT=8080 DATA_DIR=/data
 # projectId Reown публичный (уходит в HTML каждому браузеру), не секрет; secrets.json перекрывает
 ENV REOWN_PROJECT_ID=987afabd28d84f735c75cab6a6742e54
 RUN mkdir /data && chown node:node /data

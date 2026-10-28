@@ -137,7 +137,7 @@ export function makeServer({ dataDir, ownerEmail, apiToken, accessTeam, accessAu
     const m = request.method;
     const ctx = (params = {}) => ({ env, request, params });
 
-    if (p === '/healthz') return json({ ok: true });
+    if (p === '/healthz') return json({ ok: true, sha: process.env.GIT_SHA || 'unknown' });
     if (p === '/' ) return payPage.onRequestGet(ctx());
 
     // публичное: страница счёта и его API

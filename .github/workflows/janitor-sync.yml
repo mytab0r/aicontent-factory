@@ -7,7 +7,10 @@ on:
 
 jobs:
   sync:
-    runs-on: [self-hosted, pc]
+    # t_5cdbb967: release, не pc/ci — pc занят часовыми bank fill, ci очередью PR; release простаивает
+    # между выпусками (все раннеры видят docker.sock хоста). Свап самого release-раннера janitor делает
+    # только без Runner.Worker, т.е. после завершения этой джобы.
+    runs-on: [self-hosted, release]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4

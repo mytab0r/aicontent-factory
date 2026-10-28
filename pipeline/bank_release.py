@@ -317,43 +317,86 @@ def _music_mod():
 
 LIMIT_DB = -1.5  # t_96de1cc6: потолок alimiter; гейт MAX_TP -1.0, 0.5 дБ запаса на mp3-овершут
 TP_SAFE = -1.2   # после кодирования TP выше -> статический доворот вниз (гейт -1.0 не трогаем)
+LN_PASSES = 8    # t_2c32a785/t_32ee66e0: рендеров с доводкой остатка громкости после лимитера
+LN_TOL = 0.5     # допуск к LUFS_TARGET (гейт MIN_I..MAX_I = цель -2/+1)
+
+
+def _next_gain(pts: list, target: float) -> float:
+    """t_32ee66e0 (run 40527578183: phonk -16.2 LUFS после фикса t_2c32a785): под лимитером I(gain)
+    немонотонна — громкость пикового трека сидит в пиках, лимитер их срезает всё агрессивнее с
+    ростом gain (замер: +12 дБ -> -15.9, +14 дБ -> -19.5 LUFS). Шаг gain += target - I в такой яме
+    уходит назад или топчется, фиксированного числа рендеров не хватает (выпуски -16.1..-16.5).
+    Бисекция по вилке (gain тише цели, gain громче цели); без вилки — шаг минимум 3 дБ в сторону
+    цели, чтобы выйти из плоского участка быстрее одного дБ за рендер."""
+    lo = [p for p in pts if p[1] < target]
+    hi = [p for p in pts if p[1] >= target]
+    if not hi:
+        g, i = max(lo, key=lambda p: p[0])
+        return g + max(target - i, 3.0)
+    if not lo:
+        g, i = min(hi, key=lambda p: p[0])
+        return g - max(i - target, 3.0)
+    g_hi, i_hi = min(hi, key=lambda p: p[0])
+    below = [p for p in lo if p[0] < g_hi]
+    if not below:
+        return g_hi - max(i_hi - target, 3.0)
+    g_lo = max(below, key=lambda p: p[0])[0]
+    return (g_lo + g_hi) / 2
 
 
 def loudnorm_2pass(src: str, dst: str) -> dict:
-    """Двухпроходный loudnorm linear=true: 1-й проход меряет (ebur128: I/порог/LRA/TP), 2-й получает measured_*
-    и даёт ОДИН постоянный gain (динамики нет, LRA не давится). Затем alimiter LIMIT_DB.
-    03c FAIL 24.10 (TP -0.8): однопроходный loudnorm + mp3-перекодирование поднимали пики над -1."""
-    import json
-    import subprocess
-    from quality_gate import LUFS_TARGET
-    tgt = f"I={LUFS_TARGET:g}:TP={LIMIT_DB:g}:LRA=20"
-    # 1-й проход = ebur128 (I/порог/LRA/TP) вместо loudnorm-анализа: на часе 20 с против 127 с
-    # (run 40253826993: 03 music > 20 мин). Те же величины, что measured_* loudnorm (BS.1770).
+    """Двухпроходная нормализация: 1-й проход меряет I (ebur128), 2-й = постоянный gain к LUFS_TARGET
+    (динамики нет, LRA не давится) + alimiter LIMIT_DB на 4x частоте.
+    t_2c32a785: раньше 2-й проход = loudnorm linear=true. ffmpeg держит linear только если
+    measured_TP + gain <= TP цели; на пиковом lofi/phonk (бочка) это не так, и loudnorm молча уходит
+    в динамический режим, который недотягивает: выпуски -16.1..-16.5 LUFS при гейте -16..-13.
+    Лимитер срезает пики вместе с частью громкости, поэтому остаток до цели меряем и довешиваем к gain."""
     import re as _re
+    import subprocess
+    import mastering
+    from quality_gate import LUFS_TARGET
+    # 1-й проход = ebur128 вместо loudnorm-анализа: на часе 20 с против 127 с (run 40253826993).
     err = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", src, "-map", "0:a", "-af", "ebur128=peak=true",
                           "-f", "null", "-"], capture_output=True, text=True, check=True).stderr
     tail = err[err.rindex("Summary:"):]
     num = lambda k: _re.search(k + r":\s+(-?[\d.]+)", tail).group(1)
-    j = {"input_i": num("I"), "input_thresh": num("Threshold"), "input_lra": num("LRA"),
-         "input_tp": num("Peak"), "target_offset": "0.0"}
+    j = {"input_i": num("I"), "input_thresh": num("Threshold"), "input_lra": num("LRA"), "input_tp": num("Peak")}
     # лимитер на 4x частоте: на 48 кГц он ловит сэмплы, не межсэмпловые пики (замер на банке: TP -0.7 vs -1.0)
     lim = f"aresample=192000,alimiter=limit={10 ** (LIMIT_DB / 20):.4f}:level=disabled:attack=1:release=50"
-    af = (f"loudnorm={tgt}:linear=true:measured_I={j['input_i']}:measured_TP={j['input_tp']}:"
-          f"measured_LRA={j['input_lra']}:measured_thresh={j['input_thresh']}:offset={j['target_offset']},"
-          f"{lim},aresample=48000")
     tmp = dst + ".ln2.mp3"
-    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", src, "-af", af, "-ar", "48000",
-                    "-c:a", "libmp3lame", "-b:a", "192k", tmp], check=True)
-    os.replace(tmp, dst)
-    # mp3-кодер добавляет овершут ~0.3-0.5 дБ: замер и статический доворот (I сдвигается на те же доли дБ)
-    import mastering
-    for _ in range(2):
-        tp = mastering.measure(dst)["tp"]
-        if tp <= TP_SAFE:
-            break
-        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", dst, "-af", f"volume={TP_SAFE - tp - 0.1:.2f}dB",
+    best = dst + ".ln2best.mp3"
+    pts = []  # (gain, I) всех рендеров, I уже ПОСЛЕ TP-доворота (t_32ee66e0, см. ниже)
+    gain = LUFS_TARGET - float(j["input_i"])
+    for _ in range(LN_PASSES):
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", src, "-af",
+                        f"volume={gain:.2f}dB,{lim},aresample=48000", "-ar", "48000",
                         "-c:a", "libmp3lame", "-b:a", "192k", tmp], check=True)
-        os.replace(tmp, dst)
+        # t_32ee66e0 (run 40527578183): TP-доворот раньше шёл ПОСЛЕ выбора лучшего рендера и мог
+        # утянуть I ниже гейта без повторной проверки (лучший кандидат на границе MIN_I + overshoot
+        # TP -> trim вниз -> I вне гейта). mp3-кодер даёт овершут ~0.3-0.5 дБ: доворачиваем TP внутри
+        # кандидата, чтобы в pts попадало именно то I, которое уедет в dst.
+        for _ in range(2):
+            tp = mastering.measure(tmp)["tp"]
+            if tp <= TP_SAFE:
+                break
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", tmp, "-af",
+                            f"volume={TP_SAFE - tp - 0.1:.2f}dB", "-c:a", "libmp3lame", "-b:a", "192k", best],
+                            check=True)
+            os.replace(best, tmp)
+        i = mastering.measure(tmp)["i"]
+        if not pts or abs(i - LUFS_TARGET) < abs(min(pts, key=lambda p: abs(p[1] - LUFS_TARGET))[1] - LUFS_TARGET):
+            os.replace(tmp, best)
+        pts.append((gain, i))
+        if abs(i - LUFS_TARGET) <= LN_TOL:
+            break
+        gain = _next_gain(pts, LUFS_TARGET)
+    g, i = min(pts, key=lambda p: abs(p[1] - LUFS_TARGET))  # лучший рендер, не последний
+    j["gain"], j["i"] = f"{g:.2f}", i
+    if abs(i - LUFS_TARGET) > LN_TOL:
+        print(f"::warning::loudnorm_2pass: не сошлось за {LN_PASSES} рендеров, лучший I {i} (цель {LUFS_TARGET:g}): {pts}")
+    os.replace(best, dst)
+    if os.path.exists(tmp):
+        os.remove(tmp)
     return j
 
 
@@ -368,22 +411,29 @@ def master_final(track: str, genre: str) -> None:
 
 
 def _norm_segments(paths: list[Path], log=print) -> None:
-    """Сгладить внутренние LU-скачки сегмента ДО склейки (run 40155188504: 4.7 LU внутри
-    одного сегмента -> 03c FAIL). Single-pass loudnorm (динамический режим) на каждом
-    сегменте, тот же профиль, что master_final (I/TP/LRA); сегмент 180 с ~= секунды.
-    ponytail: однопроходный loudnorm не так точен, как two-pass; при возврате FAIL на
-    LU-скачках — перейти на two-pass с кэшем измерений в meta сегмента."""
+    """Привести сегменты к LUFS_TARGET ДО склейки статическим gain + alimiter -1.2 dBFS.
+    t_5dbfa67a: раньше single-pass loudnorm (динамический режим) давил LRA каждого сегмента
+    (фикстура 12.4 -> 6.9, run 40449097418: трек LRA 3.1 < 3.5 при CE 7.2) — тот же класс, что
+    t_522ca872 в mastering.master. Внутренние LU-скачки (run 40155188504) выравнивает flatten_blocks
+    по сетке гейта A18 на готовой склейке, сегментный компрессор для этого не нужен."""
+    import mastering
     from quality_gate import LUFS_TARGET
+    lim = "alimiter=limit=0.813:level=disabled:attack=0.1:release=20:asc=0"  # -1.2 dBFS, как mastering lofi
     def one(p):
         tmp = str(p) + ".ln.mp3"
+        try:
+            gain = LUFS_TARGET - mastering.measure(str(p))["i"]
+        except Exception as e:  # noqa: BLE001 — битый замер не портит сегмент
+            log(f"::warning::замер {p.name} не удался, сегмент как есть: {e}")
+            return
         r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(p),
-                            "-af", f"loudnorm=I={LUFS_TARGET:g}:TP=-2:LRA=11",
+                            "-af", f"volume={gain:.2f}dB,{lim}",
                             "-c:a", "libmp3lame", "-b:a", "192k", tmp],
                            capture_output=True, text=True)
         if r.returncode == 0 and os.path.getsize(tmp) > 0:
             os.replace(tmp, p)
         else:
-            log(f"::warning::loudnorm {p.name} не удался, сегмент как есть: {(r.stderr or '').strip()[:160]}")
+            log(f"::warning::нормализация {p.name} не удалась, сегмент как есть: {(r.stderr or '').strip()[:160]}")
     _music_mod().pmap(one, paths)
 
 
@@ -460,6 +510,13 @@ def assemble(paths: list[Path], run_dir: Path, metas: list[dict], genre: str, ou
     return meta
 
 
+def disk_gate_rc(need_gb: int = 1) -> int:
+    """t_1f53095a R3: единый пол C: (deploy/gpu-pc/disk_gate.sh c) — и для fill, и для take.
+    ponytail: любой rc != 0 (в т.ч. сбой самого гейта) = пропуск слота; fail-closed, алерт nobank виден."""
+    gate = ROOT / "deploy/gpu-pc/disk_gate.sh"
+    return subprocess.run(["sh", str(gate), "c", str(need_gb)]).returncode
+
+
 def main(argv=None) -> int:
     argv = list(argv or [])
     genre = os.environ.get("GENRE", "anime lofi")
@@ -474,6 +531,9 @@ def main(argv=None) -> int:
             print(f"docker {' '.join(a[:2])}: rc={r.returncode}: {(r.stderr or r.stdout).strip()[:200]}")
         return r.stdout
 
+    if disk_gate_rc() != 0:
+        print(f"::warning::nobank: банк {genre}: на C: ниже пола disk_floors.env — слот пропущен, выпуск не собираем")
+        return 2
     paths = take(genre, n_seg, str(run_dir), docker_sh=sh)
     if paths is None:
         reason = (f"банк {genre}: нет {n_seg} совместимых свободных сегментов — слот пропущен, "

@@ -430,6 +430,33 @@ def test_edge_match_measures_crossfaded_seam_like_gate():
     assert qg.seam_why(seams) == [], seams
 
 
+def test_edge_match_quiet_intro_full_gain_in_gate_window():
+    """t_44f5c3b3 (runs 40477529845 R3 595 с -17.0 -> -21.0, 40508302240 R3 1312 с -16.3 -> -20.2): у сегмента банка
+    тихое вступление (~-14 дБ к телу) длиннее DJ-перехода. edge_match давал gain +16/+15 дБ, но рампа спадала с t=0,
+    в окно гейта (центр стыка ± SEAM_HALF) доходила лишь часть -> стык 4 дБ после всех проходов. Синтетика с
+    бит-сеткой 72 BPM (dj_plan = DJ-стык как в банке), проверка тем же кодом, что гейт R3 (rms_db + seam_why)."""
+    import subprocess as sp
+    import tempfile
+    import quality_gate as qg
+    d = Path(tempfile.mkdtemp())
+
+    def seg(name, vol, seed, dur=150):
+        f = d / name
+        sp.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", f"anoisesrc=d={dur}:c=pink:a=0.08:seed={seed}",
+                "-f", "lavfi", "-i", f"sine=f=55:d={dur}", "-filter_complex",
+                "[1:a]volume='0.9*exp(-12*mod(t,0.8333))':eval=frame[k];"
+                f"[0:a][k]amix=inputs=2:normalize=0,volume='{vol}':eval=frame",
+                "-ar", "44100", "-ac", "2", "-c:a", "libmp3lame", "-b:a", "192k", str(f)], check=True)
+        return str(f)
+    fs = [seg("a.mp3", "1", 1), seg("q.mp3", "if(lt(t,60),0.15,1)", 2), seg("c.mp3", "1", 3)]
+    music.prep_segments(fs, log=lambda *x: None)
+    out = str(d / "mix.mp3")
+    _, ts = music.concat_tracks(fs, out)
+    seams = [{"t": t, "ce": 9.0, "rms_l": qg.rms_db(out, t - qg.SEAM_HALF, qg.SEAM_HALF),
+              "rms_r": qg.rms_db(out, t, qg.SEAM_HALF)} for t in ts]
+    assert len(ts) == 2 and qg.seam_why(seams) == [], seams
+
+
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"):

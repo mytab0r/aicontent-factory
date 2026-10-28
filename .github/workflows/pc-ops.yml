@@ -46,7 +46,7 @@ jobs:
         run: |
           set -e
           docker rm -f gh-runner-acf-release 2>/dev/null || true
-          docker run -d --name gh-runner-acf-release --restart unless-stopped --cpus 4 --memory 4g \
+          docker run -d --name gh-runner-acf-release --restart unless-stopped --dns 192.168.65.7 --dns 8.8.8.8 --dns 77.88.8.8 --cpus 4 --memory 4g \
             -e REPO_URL=https://github.com/mytab0r/aicontent-factory -e RUNNER_SCOPE=repo \
             -e RUNNER_NAME=pc-acf-release -e LABELS=release -e RUNNER_TOKEN="$REG" \
             -e RUNNER_WORKDIR=/tmp/runner/acf-release -e CONFIGURED_ACTIONS_RUNNER_FILES_DIR=/runner/data \
@@ -70,7 +70,7 @@ jobs:
           docker rm -f "gh-runner-$R" 2>/dev/null || true
           # config lives in this volume; without purge the old identity/labels get reused
           docker volume rm -f "gh-runner-$R-data" 2>/dev/null || true
-          docker run -d --name "gh-runner-$R" --restart unless-stopped --cpus 4 --memory 4g \
+          docker run -d --name "gh-runner-$R" --restart unless-stopped --dns 192.168.65.7 --dns 8.8.8.8 --dns 77.88.8.8 --cpus 4 --memory 4g \
             -e REPO_URL="https://github.com/${{ inputs.repo }}" -e RUNNER_SCOPE=repo \
             -e RUNNER_NAME="pc-gh-runner-$R" -e LABELS="${{ inputs.labels }}" \
             -e RUNNER_TOKEN="${{ inputs.token }}" \

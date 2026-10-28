@@ -125,6 +125,12 @@ jobs:
           # Рестарт сбрасывает зависшие задачи и возвращает дефолтный turbo без LoRA (concurrency group исключает чужой прогон).
           # 19.10 (t_03efb867): спайк остановил ace-step, затем сторонний docker rm удалил его ->
           # класс «контейнер удалён, start невозможен» закрываем recreate'ом из эталонного описания (как в xl-probe).
+          # root-cause: t_860a1c4b — #239 ставил UV_NO_SYNC=1 только при recreate; существующий контейнер без него
+          # restart'ом не лечится (env фиксирован при create) -> run 40123150806 на фикс-коммите снова 18 мин starting.
+          # Контейнер без флага = устаревший: удаляем, ниже пересоздаётся из эталона.
+          if docker inspect ace-step >/dev/null 2>&1 && ! docker inspect -f '{{json .Config.Env}}' ace-step 2>/dev/null | grep -q '"UV_NO_SYNC=1"'; then
+            echo "ace-step без UV_NO_SYNC=1 — пересоздаю (t_860a1c4b)"; docker rm -f ace-step >/dev/null
+          fi
           if ! docker inspect ace-step >/dev/null 2>&1; then
             echo "ace-step отсутствует — пересоздаю (t_03efb867)"
             docker pull -q ghcr.io/ace-step/ace-step-1.5:latest >/dev/null 2>&1 || true
@@ -230,9 +236,17 @@ jobs:
         working-directory: pipeline
         run: ../.venv/bin/python quality_gate.py --final
 
+      # t_cbeefa4f: без GO гейта запуска G1zm0 — выход без upload (рендер/QA идут, токен не пишется).
+      - name: launch gate (NO-GO = без upload)
+        id: gate
+        if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1'
+        run: |
+          if python3 scripts/launch_gate.py g1zm0; then echo "go=1" >> "$GITHUB_OUTPUT"
+          else echo "::warning::launch gate NO-GO: upload G1zm0 пропущен (reports/products/g1zm0.launch.md)"; fi
+
       - name: 05 publish (skips if no YouTube token secret)
         id: publish
-        if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1'
+        if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1' && steps.gate.outputs.go == '1'
         timeout-minutes: 60  # P18: зависание шага = failure -> TG alert, не 240 мин
         working-directory: pipeline
         env:
@@ -273,16 +287,16 @@ jobs:
 
       - name: 05b anti-repeat record (отпечаток опубликованного трека в .state)
         id: arrecord
-        if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1'
-        timeout-minutes: 5  # t_79ec2527: бюджет по факту (макс 0.4 мин за 40 прогонов) + запас; сумма шагов < лимита джобы
+        if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1' && steps.gate.outputs.go == '1'
+        timeout-minutes: 15  # P18: зависание шага = failure -> TG alert, не 240 мин
         continue-on-error: true  # видео уже на канале; потеря отпечатка не валит выпуск  # root-cause: t_f95a06da
         working-directory: pipeline
         run: ../.venv/bin/python antirepeat.py --record
 
       - name: 07 shorts (2 x 9:16 из long-form, ссылка на него)
         id: shorts
-        if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1'
-        timeout-minutes: 15  # t_79ec2527: бюджет по факту (макс 6.2 мин за 40 прогонов) + запас; сумма шагов < лимита джобы
+        if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1' && steps.gate.outputs.go == '1'
+        timeout-minutes: 30  # P18: зависание шага = failure -> TG alert, не 240 мин
         working-directory: pipeline
         run: |
           if [ -f ../.state/youtube_token.json ]; then
@@ -356,15 +370,6 @@ jobs:
         if: always()
         run: sh deploy/gpu-pc/gpu_yield.sh restore || true
 
-      - name: upload run artifact
-        if: steps.guard.outputs.published != '1'
-        # ponytail: artifact is debug-only (video is on YouTube); storage quota must never fail the release
-        continue-on-error: true  # root-cause: t_f95a06da
-        uses: actions/upload-artifact@v4  # artifact-ok: логи прогона; доставка результата вне артефактов
-        timeout-minutes: 5  # t_79ec2527: бюджет по факту (макс 0.0 мин за 40 прогонов) + запас; сумма шагов < лимита джобы
-        with:
-          name: video-${{ github.run_id }}-${{ strategy.job-index }}
-          path: |
-            runs/*/video.mp4
-            runs/*/short_*.mp4
-          retention-days: 1  # t_9d452170: доставка вне артефактов (TG/git); квота storage 500MB
+      - name: upload run files -> C:\dockerlocal\acf-out\<run_id>\ (t_265d0147)
+        if: always() && steps.guard.outputs.published != '1'  # и упавший прогон оставляет файлы на C:
+        run: sh deploy/gpu-pc/acf_out.sh put ${{ github.run_id }} runs/*/video.mp4 runs/*/short_*.mp4
