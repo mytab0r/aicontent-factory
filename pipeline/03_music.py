@@ -589,18 +589,25 @@ def _dj_seg(src, dst, start, end, lin, lout):
 
 
 def _xfade_chain(ins, ls, out):
-    """Цепочка acrossfade qsin/qsin (equal-power: на середине оба -3 дБ, мощность постоянна)."""
+    """Цепочка acrossfade qsin/qsin (equal-power: на середине оба -3 дБ, мощность постоянна).
+    t_fdba2de4 (run 40745372322 SIGKILL): один граф на N входов буферизует входы -> RSS растёт с N
+    (замер 20x180 с: 2.6 ГБ против 0.12 ГБ попарно), раннер в cgroup --memory 4g (janitor.sh) -> OOM.
+    Теперь попарно: аккумулятор + следующий сегмент, промежуточные pcm_f32le wav (без потерь, результат
+    совпадает с одним графом до -138 дБ). Временные файлы рядом с out, удаляются при любом исходе."""
     import subprocess
+    import tempfile
     if len(ins) == 1:
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(ins[0]), str(out)], check=True)
         return
-    fc, prev = [], "[0:a]"
-    for i in range(1, len(ins)):
-        o = "[a]" if i == len(ins) - 1 else f"[x{i}]"
-        fc.append(f"{prev}[{i}:a]acrossfade=d={ls[i - 1]:.4f}:c1=qsin:c2=qsin{o}")
-        prev = o
-    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", *[x for p in ins for x in ("-i", str(p))],
-                    "-filter_complex", ";".join(fc), "-map", "[a]", str(out)], check=True, capture_output=True)
+    with tempfile.TemporaryDirectory(dir=os.path.dirname(os.path.abspath(out))) as td:
+        acc = str(ins[0])
+        for i in range(1, len(ins)):
+            last = i == len(ins) - 1
+            dst = str(out) if last else f"{td}/acc{i % 2}.wav"
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", acc, "-i", str(ins[i]), "-filter_complex",
+                            f"[0:a][1:a]acrossfade=d={ls[i - 1]:.4f}:c1=qsin:c2=qsin[a]", "-map", "[a]",
+                            *([] if last else ["-c:a", "pcm_f32le"]), dst], check=True, capture_output=True)
+            acc = dst
 
 
 def seam_rms(prev, nxt, xfade=XFADE):
