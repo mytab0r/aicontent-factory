@@ -50,8 +50,25 @@ jobs:
           .venv/bin/yt-dlp -q -f bestaudio -o '/tmp/acf-ref/raw1.%(ext)s' https://youtu.be/CYZeAfaj3pc
           ffmpeg -loglevel error -y -ss 30 -t 90 -i /tmp/acf-ref/raw1.* -ac 2 -ar 48000 /tmp/acf-ref/sera.wav
 
+      - name: wait GPU idle (daily-video / bank-fill)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # 28.10 run 40605015929: daily-video/bank-fill перезапустили ace-step посреди A/B -> ConnectionRefused.
+          for i in $(seq 1 120); do
+            busy=0
+            for wf in daily-video.yml bank-fill.yml; do
+              n=$(gh api "repos/${{ github.repository }}/actions/workflows/$wf/runs?status=in_progress&per_page=1" -q .total_count 2>/dev/null || echo 1)
+              [ "$n" != "0" ] && busy=1
+            done
+            [ $busy = 0 ] && { echo "GPU idle"; exit 0; }
+            sleep 60
+          done
+          echo "::error::GPU занят 2 ч"; exit 1
+
       - name: ACE-Step up (start only, wait health)
         run: |
+          sh deploy/gpu-pc/gpu_yield.sh stop || true
           docker start ace-step >/dev/null 2>&1 || true
           for i in $(seq 1 100); do
             [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step 2>/dev/null)" = healthy ] && { echo "ace-step healthy"; exit 0; }
@@ -86,6 +103,16 @@ jobs:
                   args += ["-F", f"{k}={str(v).lower() if isinstance(v,bool) else v}"]
               out = sp.run(["curl","-sf","-m","120","-X","POST",B+path,"-F",f"{field}=@{file_path}"]+args,capture_output=True,text=True,timeout=600,check=True).stdout
               return json.loads(out)
+          
+          def wait_ace(limit=900):
+              t = time.time()
+              while time.time() - t < limit:
+                  st = subprocess.run(["docker","inspect","-f","{{.State.Health.Status}}","ace-step"],capture_output=True,text=True).stdout.strip()
+                  if st == "healthy":
+                      return
+                  subprocess.run(["docker","start","ace-step"],capture_output=True)
+                  time.sleep(10)
+              raise RuntimeError("ace-step не healthy за %ds" % limit)
           
           ref = "/tmp/acf-ref/sera.wav"
           prompt_base = "dreamy lofi chillout instrumental, bright lush synth pads, sparkling bells and plucks, soft brushed drums, warm bassline, gentle swing, polished clean mix, wide stereo, serene and bright, no vocals"
@@ -138,66 +165,77 @@ jobs:
               if v["model"]:
                   body["model"] = v["model"]
               
-              t0 = time.time()
-              if Path(ref).is_file():
-                  tid = post_file("/release_task", body, "reference_audio", ref)["data"]["task_id"]
-              else:
-                  tid = post("/release_task", body)["data"]["task_id"]
-              
-              # poll
-              while True:
-                  time.sleep(5)
-                  d = post("/query_result", {"task_id_list": [tid]})["data"][0]
-                  if d["status"] != 0:
+              d = None
+              for att in range(3):  # ace-step может упасть/рестартовать чужим job'ом: ждём health и повторяем
+                  try:
+                      wait_ace()
+                      t0 = time.time()
+                      if Path(ref).is_file():
+                          tid = post_file("/release_task", body, "reference_audio", ref)["data"]["task_id"]
+                      else:
+                          tid = post("/release_task", body)["data"]["task_id"]
+                      while True:
+                          time.sleep(5)
+                          d = post("/query_result", {"task_id_list": [tid]})["data"][0]
+                          if d["status"] != 0:
+                              break
+                          if time.time() - t0 > 1800:
+                              raise TimeoutError(f"{v['name']} seg{si+1} timeout")
                       break
-                  if time.time() - t0 > 900:
-                      raise RuntimeError(f"{v['name']} seg{si+1} timeout")
-              
+                  except (OSError, subprocess.CalledProcessError, ValueError) as e:
+                      print(f"{v['name']} seg{si+1} attempt {att+1}: {type(e).__name__}: {e}", flush=True)
+                      d = {"status": 2, "result": f"{type(e).__name__}: {e}"}
               gen_time = time.time() - t0
               
               if d["status"] != 1:
-                  print(f"{v['name']} seg{si+1} FAILED: {d.get('result')[:200]}")
+                  print(f"{v['name']} seg{si+1} FAILED: {str(d.get('result'))[:200]}")
                   rows.append({"variant": v["name"], "segment": si+1, "error": str(d.get('result'))[:200]})
                   continue
               
-              item = json.loads(d["result"])[0]
-              urllib.request.urlretrieve(B + item["file"], str(out_path))
+              try:
+                  item = json.loads(d["result"])[0]
+                  urllib.request.urlretrieve(B + item["file"], str(out_path))
               
-              # Mastering (lofi genre)
-              import mastering
-              mastering.master(str(out_path), str(out_path), genre="anime lofi")
+                  # Mastering (lofi genre)
+                  import mastering
+                  mastering.master(str(out_path), str(out_path), genre="anime lofi")
               
-              # Measure BPM
-              import librosa
-              y, sr = librosa.load(str(out_path), sr=None)
-              tempo_arr, _ = librosa.beat.beat_track(y=y, sr=sr); tempo = float(tempo_arr.flatten()[0])
-              bpm = float(tempo)
+                  # Measure BPM
+                  import librosa
+                  y, sr = librosa.load(str(out_path), sr=None)
+                  tempo_arr, _ = librosa.beat.beat_track(y=y, sr=sr); import numpy as np; tempo = float(np.atleast_1d(tempo_arr).ravel()[0])
+                  bpm = float(tempo)
               
-              # CE score (min of windows)
-              ce = ce_windows_batch([str(out_path)])[0]
-              ce_min = min(ce)
+                  # CE score (min of windows)
+                  ce = ce_windows_batch([str(out_path)])[0]
+                  ce_min = min(ce)
               
-              # Objective metrics
-              why, metrics = objective(str(out_path), "anime lofi")
-              gate_ok = not why and ce_min >= MIN_CE
+                  # Objective metrics
+                  why, metrics = objective(str(out_path), "anime lofi")
+                  gate_ok = not why and ce_min >= MIN_CE
               
-              seg_times.append(gen_time)
-              seg_ces.append(ce_min)
-              seg_bpms.append(bpm)
+                  seg_times.append(gen_time)
+                  seg_ces.append(ce_min)
+                  seg_bpms.append(bpm)
               
-              rows.append({
-                "variant": v["name"],
-                "segment": si+1,
-                "seed": seed,
-                "gen_time_sec": round(gen_time, 1),
-                "bpm": round(bpm, 1),
-                "ce_min": round(ce_min, 2),
-                "gate_ok": gate_ok,
-                "why": why,
-                "metrics": metrics,
-                "file": out_path.name
-              })
+                  rows.append({
+                    "variant": v["name"],
+                    "segment": si+1,
+                    "seed": seed,
+                    "gen_time_sec": round(gen_time, 1),
+                    "bpm": round(bpm, 1),
+                    "ce_min": round(ce_min, 2),
+                    "gate_ok": gate_ok,
+                    "why": why,
+                    "metrics": metrics,
+                    "file": out_path.name
+                  })
+              except Exception as e:
+                  print(f"{v['name']} seg{si+1} POST FAILED: {type(e).__name__}: {e}", flush=True)
+                  rows.append({"variant": v["name"], "segment": si+1, "error": f"{type(e).__name__}: {e}"[:200]})
+                  continue
               print(f"{v['name']} seg{si+1}: {gen_time:.1f}s, BPM={bpm:.1f}, CE={ce_min:.2f}, gate={'PASS' if gate_ok else 'FAIL'}", flush=True)
+              (run_dir / "manifest.json").write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
           
           # Write manifest
           manifest = run_dir / "manifest.json"
@@ -263,7 +301,8 @@ jobs:
           # Create summary CSV
           python3 -c "
           import json, csv
-          with open('$D/manifest.json') as f: rows=json.load(f)
+          import os
+          rows=json.load(open('$D/manifest.json')) if os.path.exists('$D/manifest.json') else []
           with open('samples/ab-lofi-bpm/summary.csv','w') as f:
             w=csv.writer(f); w.writerow(['variant','segment','seed','gen_time_sec','bpm','ce_min','gate_ok','why'])
             for r in rows:
@@ -273,3 +312,7 @@ jobs:
           git add -f samples
           git commit -m "ab-lofi-bpm samples $(date -u +%Y%m%d_%H%M%S)"
           for i in 1 2 3; do git push -q origin delivery/ab-lofi-bpm && { echo "PUSHED"; break; }; sleep 5; done
+
+      - name: GPU tenants restore (gpu_yield)
+        if: always()
+        run: sh deploy/gpu-pc/gpu_yield.sh restore || true
