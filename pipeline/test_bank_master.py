@@ -124,6 +124,42 @@ def test_master_final_lufs_in_gate_on_noisy_wall_audio():
         assert m["tp"] <= qg.MAX_TP, m
 
 
+def test_loudnorm_2pass_keeps_best_when_later_pass_needs_tp_trim():
+    """t_32ee66e0 review: TP-доворот писал вывод в `best` (файл лучшего кандидата) и уносил его в tmp.
+    Лучший рендер первым + худший второй с доворотом = `best` удалён, os.replace(best, dst) ->
+    FileNotFoundError, выпуск падает. Замеры подменены: последовательность форсируется детерминированно."""
+    import hashlib
+    import mastering
+    from quality_gate import LUFS_TARGET as T
+    br = _load("bank_release_tptrim", HERE / "bank_release.py")
+    br.LN_PASSES = 2
+    h = lambda p: hashlib.sha256(Path(p).read_bytes()).hexdigest()
+    seq = [("tp", -2.0), ("i", T - 0.9),                # pass 1: TP ок, лучший (вне допуска -> pass 2)
+           ("tp", -0.5), ("tp", -2.0), ("i", T - 3.0)]  # pass 2: нужен доворот, хуже pass 1
+    seen = {}
+    def fake(p):
+        k, v = seq.pop(0)
+        if k == "i":
+            seen.setdefault("best", h(p))  # хэш рендера pass 1 в момент его замера
+        return {"tp": v if k == "tp" else -2.0, "i": v if k == "i" else T}
+    real = mastering.measure
+    mastering.measure = fake
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = f"{td}/src.mp3", f"{td}/dst.mp3"
+            sp.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=220:duration=5",
+                    "-c:a", "libmp3lame", "-b:a", "192k", src], check=True)
+            j = br.loudnorm_2pass(src, dst)
+            assert not seq, f"сценарий не отыгран: {seq}"
+            assert Path(dst).exists(), "dst нет: лучший кандидат уничтожен TP-доворотом"
+            assert h(dst) == seen["best"], "в dst не рендер лучшего прохода"
+            assert j["i"] == T - 0.9, j
+            left = [f.name for f in Path(td).iterdir() if f.name not in ("src.mp3", "dst.mp3")]
+            assert not left, f"temp-файлы остались: {left}"
+    finally:
+        mastering.measure = real
+
+
 if __name__ == "__main__":  # t_110fa85f: CI запускает файл как скрипт — без блока def test_* не выполняются
     _fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for _f in _fns:

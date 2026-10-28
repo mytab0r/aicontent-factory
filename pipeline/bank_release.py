@@ -365,6 +365,7 @@ def loudnorm_2pass(src: str, dst: str) -> dict:
     lim = f"aresample=192000,alimiter=limit={10 ** (LIMIT_DB / 20):.4f}:level=disabled:attack=1:release=50"
     tmp = dst + ".ln2.mp3"
     best = dst + ".ln2best.mp3"
+    trim = dst + ".ln2tp.mp3"  # t_32ee66e0 review: доворот пишется сюда, НЕ в best (там лучший кандидат)
     pts = []  # (gain, I) всех рендеров, I уже ПОСЛЕ TP-доворота (t_32ee66e0, см. ниже)
     gain = LUFS_TARGET - float(j["input_i"])
     for _ in range(LN_PASSES):
@@ -380,9 +381,9 @@ def loudnorm_2pass(src: str, dst: str) -> dict:
             if tp <= TP_SAFE:
                 break
             subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", tmp, "-af",
-                            f"volume={TP_SAFE - tp - 0.1:.2f}dB", "-c:a", "libmp3lame", "-b:a", "192k", best],
+                            f"volume={TP_SAFE - tp - 0.1:.2f}dB", "-c:a", "libmp3lame", "-b:a", "192k", trim],
                             check=True)
-            os.replace(best, tmp)
+            os.replace(trim, tmp)
         i = mastering.measure(tmp)["i"]
         if not pts or abs(i - LUFS_TARGET) < abs(min(pts, key=lambda p: abs(p[1] - LUFS_TARGET))[1] - LUFS_TARGET):
             os.replace(tmp, best)
