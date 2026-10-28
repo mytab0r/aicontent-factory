@@ -90,7 +90,21 @@ swap_runner() {
     docker rm -f "$n" >/dev/null 2>&1; docker rename "$n-old" "$n"; docker start "$n" >/dev/null
   fi
 }
+# t_8ba1bcfb: 28.10 18:33Z массовый `docker update` (источник вне репо) опустил все gh-runner-* до 1G/1CPU ->
+# job test на acf-раннерах ловит SIGKILL ffmpeg (OOM) в test_publish_gated. Эталон лимита = 4g/4cpu
+# (pc-ops.yml, runner-unbreak.yml, swap_runner ниже). Каждый цикл возвращаем эталон; update живой, без рестарта.
+# ponytail: только acf-раннеры; другие репо — добавить имя в список.
+ACF_RUNNERS='gh-runner-acf-release gh-runner-aicontent-factory gh-runner-acf-ci'
+enforce_limits() {
+  for n in $ACF_RUNNERS; do
+    m=$(docker inspect -f '{{.HostConfig.Memory}}' "$n" 2>/dev/null) || continue
+    [ "$m" -ge 4294967296 ] && continue
+    docker update --memory 4g --memory-swap 4g --cpus 4 "$n" >/dev/null 2>&1 \
+      && echo "RUNNER LIMITS RESTORED $n mem=$m -> 4g $(date -u +%FT%TZ)" || echo "RUNNER LIMITS RESTORE FAILED $n $(date -u +%FT%TZ)"
+  done
+}
 while true; do
+  enforce_limits
   guard_ace
   for c in $(docker ps -a --format '{{.Names}}'); do [ "$c" = ace-step ] && continue; echo "$c" | grep -Eq "$BAD_CT" && docker rm -f "$c" >/dev/null 2>&1; done
   for v in $(docker volume ls -q); do echo "$v" | grep -Eq "$BAD_VOL" && docker volume rm "$v" >/dev/null 2>&1; done
