@@ -15,6 +15,16 @@ purge_tmp() {
       for x in pip uv ms-playwright-tmp; do find /root/.cache/$x -mindepth 1 -maxdepth 1 -mmin +720 -exec rm -rf {} + 2>/dev/null; done; true' >/dev/null 2>&1
   done
 }
+# t_3dfceb20 (27.10): WSL пишет дампы падений (headless chrome ~1-2.5 ГБ каждый) в Windows Temp на C:;
+# за ночь 26.10 набралось 10.7 ГБ, C: упал под пол 30 ГБ и встал bank-fill. Держим только 1 свежий дамп.
+# 28.10 ревью: Windows Temp (18 ГБ на 26.10) тоже без потолка -> файлы старше 2 суток удаляем здесь же, каждый цикл.
+WINTEMP=/run/desktop/mnt/host/c/Users/magic/AppData/Local/Temp
+purge_crashes() {
+  docker run --rm -v "$WINTEMP:/t" alpine:3.20 sh -c '
+    find /t -xdev -mindepth 1 -type f -mtime +2 -delete 2>/dev/null
+    find /t -xdev -mindepth 2 -type d -empty -delete 2>/dev/null
+    [ -d /t/wsl-crashes ] && ls -t /t/wsl-crashes | tail -n +2 | while read -r f; do rm -f "/t/wsl-crashes/$f"; done; true' >/dev/null 2>&1
+}
 # H-051: ace-step is protected - recreate if deleted, start if stopped >10 min. Never stop/rm it here.
 # 25.10: recreate обязан ставить UV_NO_SYNC=1 (как в daily-video #239): без него entrypoint `uv run`
 # пересинхронизирует venv (torch ~10 МБ/мин) и health висит в starting, выпуск падает.
@@ -88,5 +98,6 @@ while true; do
   docker builder prune -f --filter until=24h >/dev/null 2>&1
   purge_tmp
   for r in gh-runner-acf-release gh-runner-aicontent-factory; do swap_runner $r; done
+  purge_crashes
   sleep 600
 done
