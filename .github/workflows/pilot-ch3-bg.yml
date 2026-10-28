@@ -1,0 +1,39 @@
+name: pilot-ch3-bg
+# t_ce03cf96: ambient-фон для пилота ch3 (sleep history). Только ветка pilot/ch3-bg, в main не мержится.
+# ponytail: 3 трека x 600 с, склейка петлёй на стороне сборки; нужен 1 час+ своей музыки — увеличить N.
+on:
+  push:
+    branches: [pilot/ch3-bg]
+jobs:
+  bg:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 90
+    env:
+      ACE15_ENDPOINT: http://ace-step:8001
+    steps:
+      - uses: actions/checkout@v4
+      - name: ACE-Step healthy
+        run: |
+          docker start ace-step >/dev/null 2>&1 || true
+          for i in $(seq 1 40); do [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step)" = healthy ] && exit 0; sleep 6; done; exit 1
+      - name: generate
+        working-directory: pipeline
+        run: |
+          mkdir -p /tmp/ch3bg && python3 - <<'PY'
+          import importlib.util, json, time
+          s = importlib.util.spec_from_file_location("m", "03_music.py"); m = importlib.util.module_from_spec(s); s.loader.exec_module(m)
+          P = ("slow ambient drone for sleep, deep ocean atmosphere, soft warm pads, distant low swells, "
+               "no drums, no melody hooks, no vocals, very calm, 60 BPM, D minor")
+          log = []
+          for seed in (311, 523, 877):
+              t = time.time()
+              it = m.generate_track_v15(P, 600, seed, f"/tmp/ch3bg/bg_{seed}.mp3")
+              log.append({"seed": seed, "sec": round(time.time() - t), "model": it.get("dit_model"), "prompt": P})
+              print(log[-1], flush=True)
+          json.dump(log, open("/tmp/ch3bg/gen.json", "w"), indent=1)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ch3-bg
+          path: /tmp/ch3bg/
+          retention-days: 3
