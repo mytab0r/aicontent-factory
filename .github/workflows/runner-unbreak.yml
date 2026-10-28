@@ -25,7 +25,7 @@ jobs:
         run: |
           set -e
           if [ "${{ inputs.target }}" = "release" ]; then
-            NAME=gh-runner-acf-release; RUNNER_NAME=pc-acf-release; LBL=release; WORK=/tmp/runner/acf-release; VOL=gh-runner-acf-release-work
+            NAME=gh-runner-acf-release; RUNNER_NAME=pc-acf-release; LBL=release,ci; WORK=/tmp/runner/acf-release; VOL=gh-runner-acf-release-work
           else
             NAME=gh-runner-aicontent-factory; RUNNER_NAME=pc-acf; LBL=pc; WORK=/tmp/runner/aicontent-factory; VOL=gh-runner-aicontent-factory-work
           fi
