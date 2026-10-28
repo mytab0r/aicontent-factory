@@ -409,7 +409,7 @@ def mix_raw(run_dir, prompt, seed, ref, genre_name):
 
 
 def plan_mix(target_sec, gen, dur, budget_sec=1800, max_tracks=12, now=None, min_sec=900,
-             max_drops=5):
+             max_drops=50):
     """Час-микс из цельных треков 1.5 (модель отдаёт ~482 с вместо 600 — считаем по факту).
     Стоп: набрали target, max_tracks, следующий трек не влезает в бюджет времени шага,
     или max_drops сегментов подряд выбраковал гейт (None). Уже набранное не трогаем.
