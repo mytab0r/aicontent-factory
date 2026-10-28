@@ -16,6 +16,9 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      pushed: ${{ steps.fresh.outputs.ok }}
+      sha: ${{ env.SHA }}
     env:
       SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
     steps:
@@ -69,6 +72,13 @@ jobs:
         run: |
           B=$(sed -n 's/^FROM //p' deploy/pay-page/Dockerfile | head -1)
           for n in 1 2 3 4; do docker pull -q "$B" && break; [ $n = 4 ] && exit 1; echo "pull $B: попытка $n не удалась, повтор через $((n*20)) с"; sleep $((n*20)); done
+      # root-cause t_1b6fdb47: workflow_dispatch минует ci -> образ с SyntaxError ушёл в :latest, прод в crashloop.
+      # Синтаксис сервера проверяем до push на любом событии.
+      - name: syntax gate (node --check server.mjs)
+        if: steps.fresh.outputs.ok == 'true'
+        run: |
+          B=$(sed -n 's/^FROM //p' deploy/pay-page/Dockerfile | head -1)
+          docker run --rm -v "$PWD:/w" -w /w "$B" node --check deploy/pay-page/server.mjs
       - name: build + push (retry on registry transport errors only)
         if: steps.fresh.outputs.ok == 'true'
         run: |
@@ -76,7 +86,7 @@ jobs:
           for n in 1 2 3 4; do
             if docker buildx build --push \
                  -f deploy/pay-page/Dockerfile \
-                 --build-arg GIT_SHA=${{ github.event.workflow_run.head_sha }} \
+                 --build-arg GIT_SHA=${{ env.SHA }} \
                  -t ghcr.io/${{ github.repository_owner }}/pay-pxbt:latest \
                  -t ghcr.io/${{ github.repository_owner }}/pay-pxbt:sha-${{ env.SHA }} \
                  .; then exit 0; fi
@@ -86,7 +96,7 @@ jobs:
 
   deploy-verify:
     needs: build-push
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    if: needs.build-push.outputs.pushed == 'true'
     runs-on: [self-hosted, release]
     permissions:
       contents: read
@@ -96,7 +106,7 @@ jobs:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           TG_THREAD_ID: ${{ secrets.TG_THREAD_ID }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_SHA: ${{ needs.build-push.outputs.sha }}
         run: |
           set -e
           URL="https://pay.pxbt.app/healthz"
