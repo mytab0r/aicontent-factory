@@ -23,22 +23,37 @@ jobs:
       SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
     steps:
       # root-cause t_88af3bec: ci-очередь на self-hosted держит push-ci часами; поздно завершившийся ci старого
-      # push (25.10, 88bfdd7 до фикса #257) перезаписал :latest устаревшим кодом. Собираем только если head_sha
-      # всё ещё HEAD ветки; иначе skip (success) — образ соберёт ci более свежего коммита.
-      # ls-remote не ответил за 3 попытки -> fail (лучше без образа, чем устаревший).
-      - name: stale guard (head_sha == HEAD ветки)
+      # push (25.10, 88bfdd7 до фикса #257) перезаписал :latest устаревшим кодом.
+      # Точное head_sha == HEAD оказалось недостижимо: бот коммитит `[skip ci]` (mood rotation) в master, ci на
+      # них не идёт -> 13 ч после #308 ни одной fresh-сборки. Поэтому stale = HEAD ветки содержит изменения
+      # входов образа (IMAGE_INPUTS = источники COPY в Dockerfile) после head_sha; иначе образ из head_sha
+      # идентичен HEAD -> собираем. compare не ahead / >=300 файлов / API не ответил -> fail-closed (skip/fail).
+      # Инвариант IMAGE_INPUTS <-> Dockerfile: pipeline/test_pay_image_guard.py.
+      - name: stale guard (входы образа не менялись после head_sha)
         id: fresh
         env:
           BRANCH: ${{ github.event.workflow_run.head_branch }}
           GH_TOKEN: ${{ github.token }}
+          IMAGE_INPUTS: "deploy/pay-page/ functions/ config/payment-providers.json"
         run: |
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then echo "ok=true" >> "$GITHUB_OUTPUT"; echo "workflow_dispatch: guard пропущен, собираю $SHA"; exit 0; fi
           for n in 1 2 3; do
-            head=$(git ls-remote "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY" "refs/heads/$BRANCH" | cut -f1) && [ -n "$head" ] && break
-            [ $n = 3 ] && { echo "ls-remote $BRANCH не ответил"; exit 1; }; sleep $((n*10))
+            cmp=$(curl -sf -H "Authorization: Bearer $GH_TOKEN" "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/compare/$SHA...$BRANCH") && break
+            [ $n = 3 ] && { echo "compare $SHA...$BRANCH не ответил"; exit 1; }; sleep $((n*10))
           done
-          if [ "$head" = "$SHA" ]; then echo "ok=true" >> "$GITHUB_OUTPUT"; echo "fresh: $SHA = HEAD $BRANCH"
-          else echo "ok=false" >> "$GITHUB_OUTPUT"; echo "::notice::stale: head_sha $SHA != HEAD $BRANCH $head — skip build/push"; fi
+          verdict=$(printf '%s' "$cmp" | python3 -c '
+          import json, os, sys
+          c = json.load(sys.stdin); pre = tuple(os.environ["IMAGE_INPUTS"].split())
+          files = [f["filename"] for f in c.get("files", [])]
+          hit = [f for f in files if f.startswith(pre)]
+          head = c["commits"][-1]["sha"] if c.get("commits") else os.environ["SHA"]
+          if c.get("status") not in ("ahead", "identical") or len(files) >= 300: print("stale", head, "compare status=%s files=%d" % (c.get("status"), len(files)))
+          elif hit: print("stale", head, "входы образа изменены: " + " ".join(hit[:5]))
+          else: print("fresh", head, "behind=%d, входы образа не менялись" % c.get("ahead_by", 0))
+          ')
+          set -- $verdict; state=$1; head=$2; shift 2
+          if [ "$state" = fresh ]; then echo "ok=true" >> "$GITHUB_OUTPUT"; echo "fresh: $SHA ~ HEAD $BRANCH $head ($*)"
+          else echo "ok=false" >> "$GITHUB_OUTPUT"; echo "::notice::stale: head_sha $SHA != HEAD $BRANCH $head ($*) — skip build/push"; fi
       - uses: actions/checkout@v4
         if: steps.fresh.outputs.ok == 'true'
         with:
