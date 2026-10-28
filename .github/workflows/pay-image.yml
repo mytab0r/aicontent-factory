@@ -78,7 +78,8 @@ jobs:
         if: steps.fresh.outputs.ok == 'true'
         run: |
           B=$(sed -n 's/^FROM //p' deploy/pay-page/Dockerfile | head -1)
-          docker run --rm -v "$PWD:/w" -w /w "$B" node --check deploy/pay-page/server.mjs
+          # stdin, не bind-mount: демон Docker Desktop не видит FS раннера
+          docker run --rm -i "$B" sh -c 'cat > /tmp/s.mjs && node --check /tmp/s.mjs' < deploy/pay-page/server.mjs
       - name: build + push (retry on registry transport errors only)
         if: steps.fresh.outputs.ok == 'true'
         run: |
