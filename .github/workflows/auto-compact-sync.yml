@@ -1,0 +1,24 @@
+name: auto-compact-sync
+# t_5dec8455: C:\dockerlocal\auto-compact.ps1 (task DockerVhdxCompact) lived only on the host; its
+# Optimize-VHD fallback swallowed errors. Reference copy lives in repo; this workflow (manual) pushes it to host.
+on:
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: [self-hosted, release]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: parse gate (PowerShell AST, no errors)
+        run: |
+          set -e
+          docker run --rm -i mcr.microsoft.com/powershell:lts-alpine-3.20 pwsh -NoProfile -Command \
+            '$s=[Console]::In.ReadToEnd(); $e=$null; [void][System.Management.Automation.Language.Parser]::ParseInput($s,[ref]$null,[ref]$e); if ($e.Count) { $e | % { $_.Message }; exit 1 }; "parse ok"' \
+            < deploy/gpu-pc/host/auto-compact.ps1
+      - name: sync host auto-compact.ps1
+        run: |
+          set -e
+          # file via stdin: runner workspace is not visible to host daemon (run 40132476922)
+          docker run --rm -i -v //c/dockerlocal:/h alpine \
+            sh -c 'cp /h/auto-compact.ps1 /h/auto-compact.ps1.bak 2>/dev/null; cat > /h/auto-compact.ps1 && grep -c "exit 1" /h/auto-compact.ps1' < deploy/gpu-pc/host/auto-compact.ps1
