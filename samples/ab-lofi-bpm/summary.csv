@@ -1,0 +1,5 @@
+variant,segment,seed,gen_time_sec,bpm,ce_min,gate_ok,why
+V1_turbo_20steps,1,10000,300.1,137.2,6.38,False,[]
+V1_turbo_20steps,2,10010,180.2,137.2,7.1,True,[]
+V1_turbo_20steps,3,10020,200.4,137.2,6.15,False,[]
+V2_base_50_adg_shift3,1,10100,270.5,125.0,2.44,False,['LRA 0.4 < 3.5: динамика раздавлена (каша)']
