@@ -66,14 +66,15 @@ jobs:
           import json, os, time, subprocess, tempfile
           from pathlib import Path
           import sys
+          import numpy as np
           sys.path.insert(0, str(Path.cwd()))
-          
+
           import importlib.util
           spec = importlib.util.spec_from_file_location("music", "03_music.py")
           m = importlib.util.module_from_spec(spec)
           spec.loader.exec_module(m)
           from quality_gate import ce_windows_batch, objective, MIN_CE
-          
+
           B = os.environ["ACE15_ENDPOINT"]
           import urllib.request
           def post(path, body, timeout=600):
@@ -86,10 +87,10 @@ jobs:
                   args += ["-F", f"{k}={str(v).lower() if isinstance(v,bool) else v}"]
               out = sp.run(["curl","-sf","-m","120","-X","POST",B+path,"-F",f"{field}=@{file_path}"]+args,capture_output=True,text=True,timeout=600,check=True).stdout
               return json.loads(out)
-          
+
           ref = "/tmp/acf-ref/sera.wav"
           prompt_base = "dreamy lofi chillout instrumental, bright lush synth pads, sparkling bells and plucks, soft brushed drums, warm bassline, gentle swing, polished clean mix, wide stereo, serene and bright, no vocals"
-          
+
           # 4 variants as specified in task
           variants = [
             # 1. turbo inference_steps=20 (control)
@@ -101,23 +102,27 @@ jobs:
             # 4. batch_size=4, best by CE
             {"name": "V4_turbo_batch4", "model": None, "extra": {"inference_steps": 20, "shift": None, "guidance_scale": None, "use_adg": None, "audio_format": "mp3", "batch_size": 4}},
           ]
-          
+
           run_dir = Path("../runs") / f"ab_lofi_{int(time.time())}"
           run_dir.mkdir(parents=True, exist_ok=True)
-          
+
+          # Write manifest incrementally - start with empty array so it exists even on early failure
+          manifest = run_dir / "manifest.json"
+          manifest.write_text("[]", encoding="utf-8")
+
           rows = []
           seed_base = 10000
-          
+
           for vi, v in enumerate(variants):
             seg_times = []
             seg_ces = []
             seg_bpms = []
-            
+
             for si in range(3):  # 3 segments per variant
               seed = seed_base + vi * 100 + si * 10
               duration = int(os.environ.get("SEG_SEC", "180"))
               out_path = run_dir / f"{v['name']}_seg{si+1}.mp3"
-              
+
               body = {
                 "prompt": f"{prompt_base}, 68 BPM, F major",
                 "lyrics": "[Instrumental]",
@@ -129,21 +134,21 @@ jobs:
                 "use_random_seed": False,
                 "seed": seed,
               }
-              
+
               # Apply variant-specific params
               for k, val in v["extra"].items():
                   if val is not None:
                       body[k] = val
-              
+
               if v["model"]:
                   body["model"] = v["model"]
-              
+
               t0 = time.time()
               if Path(ref).is_file():
                   tid = post_file("/release_task", body, "reference_audio", ref)["data"]["task_id"]
               else:
                   tid = post("/release_task", body)["data"]["task_id"]
-              
+
               # poll
               while True:
                   time.sleep(5)
@@ -152,39 +157,42 @@ jobs:
                       break
                   if time.time() - t0 > 900:
                       raise RuntimeError(f"{v['name']} seg{si+1} timeout")
-              
+
               gen_time = time.time() - t0
-              
+
               if d["status"] != 1:
                   print(f"{v['name']} seg{si+1} FAILED: {d.get('result')[:200]}")
                   rows.append({"variant": v["name"], "segment": si+1, "error": str(d.get('result'))[:200]})
+                  # Update manifest with error row
+                  manifest.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
                   continue
-              
+
               item = json.loads(d["result"])[0]
               urllib.request.urlretrieve(B + item["file"], str(out_path))
-              
+
               # Mastering (lofi genre)
               import mastering
               mastering.master(str(out_path), str(out_path), genre="anime lofi")
-              
-              # Measure BPM
+
+              # Measure BPM - robust handling for librosa version differences
               import librosa
               y, sr = librosa.load(str(out_path), sr=None)
-              tempo_arr, _ = librosa.beat.beat_track(y=y, sr=sr); tempo = float(tempo_arr.flatten()[0])
+              tempo_result = librosa.beat.beat_track(y=y, sr=sr)
+              tempo = np.asarray(tempo_result[0]).flatten()[0]
               bpm = float(tempo)
-              
+
               # CE score (min of windows)
               ce = ce_windows_batch([str(out_path)])[0]
               ce_min = min(ce)
-              
+
               # Objective metrics
               why, metrics = objective(str(out_path), "anime lofi")
               gate_ok = not why and ce_min >= MIN_CE
-              
+
               seg_times.append(gen_time)
               seg_ces.append(ce_min)
               seg_bpms.append(bpm)
-              
+
               rows.append({
                 "variant": v["name"],
                 "segment": si+1,
@@ -198,11 +206,10 @@ jobs:
                 "file": out_path.name
               })
               print(f"{v['name']} seg{si+1}: {gen_time:.1f}s, BPM={bpm:.1f}, CE={ce_min:.2f}, gate={'PASS' if gate_ok else 'FAIL'}", flush=True)
-          
-          # Write manifest
-          manifest = run_dir / "manifest.json"
-          manifest.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
-          
+
+              # Update manifest after each successful segment
+              manifest.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+
           # Summary table
           print("\n=== SUMMARY ===")
           for v in variants:
@@ -213,10 +220,10 @@ jobs:
               avg_ce = sum(r["ce_min"] for r in vrows) / len(vrows)
               all_gate = all(r["gate_ok"] for r in vrows)
               print(f"{v['name']}: avg_time={avg_time:.1f}s avg_bpm={avg_bpm:.1f} avg_ce={avg_ce:.2f} gate_all={all_gate}")
-          
+
           PY
 
-      - name: upload samples to C:\dockerlocal\acf-out\<run_id>\
+      - name: upload samples to C:\dockerlocal\acf-out\<run_id>\\
         if: always()
         run: sh deploy/gpu-pc/acf_out.sh put ${{ github.run_id }} runs/ab_*/*.mp3 runs/ab_*/manifest.json
 
@@ -244,7 +251,7 @@ jobs:
                 curl -sS -m 120 "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendAudio" -F chat_id="${TG_CHAT_ID}" -F message_thread_id="${TG_THREAD_ID}" -F audio="@${f}" >/dev/null && echo "sent_tg: ${f}" || echo "send fail: ${f}"
               else
                 resp=$(curl -sS -m 120 -F "file=@${f}" https://tmpfiles.org/api/v1/upload)
-                url=$(echo "$resp" | grep -o "https://tmpfiles.org/[^\"\\ ]*" | head -1)
+                url=$(echo "$resp" | grep -o "https://tmpfiles.org/[^\\\"\\\\ ]*" | head -1)
                 echo "url: ${f} -> ${url}"
               fi
             done
@@ -255,6 +262,7 @@ jobs:
         run: |
           D=$(ls -d runs/ab_* 2>/dev/null | tail -1)
           [ -z "$D" ] && { echo "no ab dir"; exit 0; }
+          [ ! -f "$D/manifest.json" ] && { echo "manifest.json missing in $D"; exit 0; }
           git config user.email "bot@users.noreply.github.com"
           git config user.name "acf-bot"
           git checkout -B delivery/ab-lofi-bpm
