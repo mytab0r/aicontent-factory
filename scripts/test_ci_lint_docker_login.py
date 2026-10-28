@@ -61,3 +61,8 @@ assert A(put.format("        if: steps.g.outputs.p != '1'\n").splitlines()) == [
 assert A(put.format("        if: always() && x\n").splitlines()) == []
 assert lint.main(str(ROOT)) == 0
 print("ok")
+# t_79ec2527: сумма бюджетов шагов >= лимита джобы = FAIL (джоба убивается без имени шага)
+wf = "jobs:\n  a:\n    timeout-minutes: 30\n    steps:\n      - run: x\n        timeout-minutes: 20\n      - uses: astral-sh/setup-uv@v3\n        timeout-minutes: 10\n"
+assert lint.lint_job_budget(wf.splitlines()) == [(3, "job-budget(steps=30>=30)")], lint.lint_job_budget(wf.splitlines())
+assert lint.lint_job_budget(wf.replace("timeout-minutes: 30", "timeout-minutes: 45").splitlines()) == []
+assert lint.lint_job_budget("jobs:\n  a:\n    steps:\n      - run: x\n        timeout-minutes: 99\n".splitlines()) == []

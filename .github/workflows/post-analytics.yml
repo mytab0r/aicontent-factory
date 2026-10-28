@@ -18,7 +18,7 @@ permissions:
 jobs:
   report:
     runs-on: [self-hosted, release]  # ubuntu-latest: billing блокирует hosted-раннеры
-    timeout-minutes: 5
+    timeout-minutes: 10  # t_79ec2527: setup-uv сам до 5 мин (макс 5.0 в daily-video) — сумма шагов < лимита джобы
     env:
       YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
       TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
