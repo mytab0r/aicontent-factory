@@ -133,7 +133,7 @@ export function makeServer({ dataDir, ownerEmail, apiToken, accessTeam, accessAu
 
   async function route(request) {
     const url = new URL(request.url);
-    const p = url.pathname.replace(/\\/+$/, '') || '/';
+    const p = url.pathname.replace(/\/+$/, '') || '/';
     const m = request.method;
     const ctx = (params = {}) => ({ env, request, params });
 
@@ -142,8 +142,8 @@ export function makeServer({ dataDir, ownerEmail, apiToken, accessTeam, accessAu
 
     // публичное: страница счёта и его API
     let mm;
-    if ((mm = p.match(/^\\/i\\/([A-Za-z0-9]{1,64})$/)) && m === 'GET') return invoicePage.onRequestGet(ctx({ id: mm[1] }));
-    if ((mm = p.match(/^\\/api\\/invoice\\/([A-Za-z0-9]{1,64})$/))) {
+    if ((mm = p.match(/^\/i\/([A-Za-z0-9]{1,64})$/)) && m === 'GET') return invoicePage.onRequestGet(ctx({ id: mm[1] }));
+    if ((mm = p.match(/^\/api\/invoice\/([A-Za-z0-9]{1,64})$/))) {
       const h = { GET: invoiceApi.onRequestGet, POST: invoiceApi.onRequestPost, PUT: invoiceApi.onRequestPut }[m];
       return h ? h(ctx({ id: mm[1] })) : json({ error: 'method' }, 405);
     }
@@ -184,7 +184,7 @@ export function makeServer({ dataDir, ownerEmail, apiToken, accessTeam, accessAu
     if (p === '/api/claim/nonce' && m === 'POST') return claimNonce.onRequestPost(ctx());
     if (p === '/api/claim/verify' && m === 'POST') return claimVerify.onRequestPost(ctx());
     if (p === '/api/admin/providers' && m === 'GET') return json(publicProviders(providers, readSecrets()));
-    if ((mm = p.match(/^\\/api\\/admin\\/providers\\/([a-z0-9_-]+)(\\/check)?$/))) {
+    if ((mm = p.match(/^\/api\/admin\/providers\/([a-z0-9_-]+)(\/check)?$/))) {
       const prov = providers.find((x) => x.id === mm[1] && x.fields);
       if (!prov) return json({ error: 'unknown provider' }, 404);
       const secrets = readSecrets();
