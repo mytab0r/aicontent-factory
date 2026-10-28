@@ -477,14 +477,16 @@ def flatten_blocks(track: str, log=print) -> None:
         ch = sorted(st[b * JB10:(b + 1) * JB10])
         meds.append(ch[len(ch) // 2])
     whole = sorted(st)[len(st) // 2]
-    gains = [max(-6.0, min(6.0, whole - m)) for m in meds]
-    if all(abs(g) <= tol for g in gains):
+    # t_6633f8cd: исправляем только превышение допуска, не сводим музыку к
+    # одной медиане. При коррекции <= 6 дБ блоки остаются в ±tol; предел 6 дБ не меняем.
+    gains = [max(-6.0, min(6.0, whole - m - max(-tol, min(tol, whole - m)))) for m in meds]
+    if not any(gains):
         return
     # последний блок тянется до конца файла: хвост < 60 с иначе остаётся без поправки
     end = lambda i: (i + 1) * JB10 / 10 + off / 10 if i < nblk - 1 else 1e9
     expr = "+".join(
         f"({10 ** (g / 20):.4f}-1)*between(t,{(i * JB10 + (off if i else 0)) / 10:.1f},{end(i):.1f})"
-        for i, g in enumerate(gains) if abs(g) > tol)
+        for i, g in enumerate(gains) if g)
     af = f"volume=volume='1.0+{expr}':eval=frame"
     tmp = track + ".fl.mp3"
     rr = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", track,
