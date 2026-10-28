@@ -150,6 +150,25 @@ def test_tts_falls_back_to_alternate_voice():
         oc.subprocess.run = orig
 
 
+def test_tts_error_carries_stderr():
+    """t_d0733c35: CalledProcessError печатал только команду — stderr edge_tts (NoAudioReceived) обязан быть в ошибке."""
+    import subprocess as sp
+
+    def fake(cmd, **k):
+        if "edge_tts" in cmd:
+            assert k.get("capture_output"), "stderr edge_tts не перехватывается"
+            raise sp.CalledProcessError(1, cmd, "", "edge_tts.exceptions.NoAudioReceived: No audio was received.")
+        return sp.CompletedProcess(cmd, 0, "1.5" + chr(10), "")
+    orig, oc.subprocess.run = oc.subprocess.run, fake
+    try:
+        oc.tts("hi", Path("x.mp3"), sleep=lambda s: None)
+        raise AssertionError("tts не упал при отказе всех голосов")
+    except RuntimeError as e:
+        assert "NoAudioReceived" in str(e) and "rc=1" in str(e), str(e)
+    finally:
+        oc.subprocess.run = orig
+
+
 def test_render_filter_has_no_upscale():
     """t_33aa9813: SIGKILL=OOM от scale=1188:2112 перед zoompan — рендер сразу в целевом разрешении."""
     import inspect
