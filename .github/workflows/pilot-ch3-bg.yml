@@ -4,6 +4,8 @@ name: pilot-ch3-bg
 on:
   push:
     branches: [pilot/ch3-bg]
+permissions:
+  contents: write
 jobs:
   bg:
     runs-on: [self-hosted, pc]
@@ -32,8 +34,9 @@ jobs:
               print(log[-1], flush=True)
           json.dump(log, open("/tmp/ch3bg/gen.json", "w"), indent=1)
           PY
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ch3-bg
-          path: /tmp/ch3bg/
-          retention-days: 3
+      # upload-artifact запрещён allowlist'ом репо -> mp3 коммитом в эту же ветку (ветка не мержится)
+      - name: publish to branch
+        run: |
+          git config user.name hermes; git config user.email factory@pxbt.app
+          mkdir -p pilot_out && cp /tmp/ch3bg/* pilot_out/
+          git add pilot_out && git commit -qm "ch3 bg audio [skip ci]" && git push -q origin HEAD:pilot/ch3-bg
