@@ -57,7 +57,7 @@ jobs:
             [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step 2>/dev/null)" = healthy ] && { echo "ace-step healthy"; exit 0; }
             sleep 6
           done
-          echo "::error::ace-step не healthy за 10 мин"; docker logs --tail 80 ace-step 2>&1 || true; exit 1
+          echo "::error::ace-step не healthy за 10 мин: $(docker inspect -f '{{.State.Status}}' ace-step 2>&1)"; docker logs --tail 80 ace-step 2>&1 || true; exit 1
 
       - name: generate 4 variants x 3 segments
         working-directory: pipeline
