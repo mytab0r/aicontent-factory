@@ -24,7 +24,7 @@ jobs:
       - name: generate
         working-directory: pipeline
         run: |
-          mkdir -p /tmp/ch3bg && python3 - <<'PY'
+          mkdir -p /tmp/ch3bg && .venv/bin/python - <<'PY'
           import importlib.util, json, time
           s = importlib.util.spec_from_file_location("m", "03_music.py"); m = importlib.util.module_from_spec(s); s.loader.exec_module(m)
           P = ("slow ambient drone for sleep, deep ocean atmosphere, soft warm pads, distant low swells, "
