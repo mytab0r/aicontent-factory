@@ -330,12 +330,15 @@ def _next_gain(pts: list, target: float) -> float:
     цели, чтобы выйти из плоского участка быстрее одного дБ за рендер."""
     lo = [p for p in pts if p[1] < target]
     hi = [p for p in pts if p[1] >= target]
+    # без вилки шаг удваивается (3, 6, 12, 24 дБ): на «стене» I ползёт ~0.3 LU/3 дБ, линейный шаг
+    # не доходил до вилки за LN_PASSES (замер t_32ee66e0: 8 рендеров, лучший -16.1..-16.4)
+    step = 3.0 * 2 ** min(len(pts) - 1, 3)
     if not hi:
         g, i = max(lo, key=lambda p: p[0])
-        return g + max(target - i, 3.0)
+        return g + max(target - i, step)
     if not lo:
         g, i = min(hi, key=lambda p: p[0])
-        return g - max(i - target, 3.0)
+        return g - max(i - target, step)
     g_hi, i_hi = min(hi, key=lambda p: p[0])
     below = [p for p in lo if p[0] < g_hi]
     if not below:
@@ -366,32 +369,38 @@ def loudnorm_2pass(src: str, dst: str) -> dict:
     tmp = dst + ".ln2.mp3"
     best = dst + ".ln2best.mp3"
     trim = dst + ".ln2tp.mp3"  # t_32ee66e0 review: доворот пишется сюда, НЕ в best (там лучший кандидат)
-    pts = []  # (gain, I) всех рендеров, I уже ПОСЛЕ TP-доворота (t_32ee66e0, см. ниже)
+    # t_32ee66e0 (run 40612738736: шаг 03 timeout 20 мин): рендер часа ~35 c, замер ~20 c (ПК-раннер).
+    # Доворот TP внутри каждого прохода = до 2 рендеров + 3 замера на проход, x8 проходов = ~30 мин.
+    # Бюджет: 1 рендер + 1 замер на проход. Статический volume сдвигает I ровно на свои дБ, поэтому
+    # I после доворота считаем без рендера (eff), рендерим доворот один раз — для лучшего кандидата.
+    pts = []  # (gain, eff_I): I, которое уедет в dst после TP-доворота
+    best_m = None
     gain = LUFS_TARGET - float(j["input_i"])
-    for _ in range(LN_PASSES):
+    for n in range(LN_PASSES):
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", src, "-af",
                         f"volume={gain:.2f}dB,{lim},aresample=48000", "-ar", "48000",
                         "-c:a", "libmp3lame", "-b:a", "192k", tmp], check=True)
-        # t_32ee66e0 (run 40527578183): TP-доворот раньше шёл ПОСЛЕ выбора лучшего рендера и мог
-        # утянуть I ниже гейта без повторной проверки (лучший кандидат на границе MIN_I + overshoot
-        # TP -> trim вниз -> I вне гейта). mp3-кодер даёт овершут ~0.3-0.5 дБ: доворачиваем TP внутри
-        # кандидата, чтобы в pts попадало именно то I, которое уедет в dst.
-        for _ in range(2):
-            tp = mastering.measure(tmp)["tp"]
-            if tp <= TP_SAFE:
-                break
-            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", tmp, "-af",
-                            f"volume={TP_SAFE - tp - 0.1:.2f}dB", "-c:a", "libmp3lame", "-b:a", "192k", trim],
-                            check=True)
-            os.replace(trim, tmp)
-        i = mastering.measure(tmp)["i"]
+        m = mastering.measure(tmp)
+        i = m["i"] + min(0.0, TP_SAFE - m["tp"] - 0.1)
+        print(f"loudnorm_2pass #{n + 1}: gain {gain:+.2f} dB -> I {m['i']} TP {m['tp']} (после доворота I {i:.2f})", flush=True)
         if not pts or abs(i - LUFS_TARGET) < abs(min(pts, key=lambda p: abs(p[1] - LUFS_TARGET))[1] - LUFS_TARGET):
             os.replace(tmp, best)
+            best_m = m
         pts.append((gain, i))
         if abs(i - LUFS_TARGET) <= LN_TOL:
             break
         gain = _next_gain(pts, LUFS_TARGET)
     g, i = min(pts, key=lambda p: abs(p[1] - LUFS_TARGET))  # лучший рендер, не последний
+    tp = best_m["tp"]
+    for _ in range(2):  # mp3-кодер даёт овершут ~0.3-0.5 дБ: доворот вниз только у выбранного кандидата
+        if tp <= TP_SAFE:
+            break
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", best, "-af",
+                        f"volume={TP_SAFE - tp - 0.1:.2f}dB", "-c:a", "libmp3lame", "-b:a", "192k", trim],
+                       check=True)
+        os.replace(trim, best)
+        mm = mastering.measure(best)
+        tp, i = mm["tp"], mm["i"]
     j["gain"], j["i"] = f"{g:.2f}", i
     if abs(i - LUFS_TARGET) > LN_TOL:
         print(f"::warning::loudnorm_2pass: не сошлось за {LN_PASSES} рендеров, лучший I {i} (цель {LUFS_TARGET:g}): {pts}")
