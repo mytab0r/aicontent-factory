@@ -194,17 +194,22 @@ def _run_ffmpeg(cmd: list) -> None:
 def tts(text: str, out: Path, sleep=None, tries=4, voice=VOICE) -> float:
     import time
     sleep = sleep or time.sleep
-    for k in range(tries):  # edge_tts NoAudioReceived = сбой сервиса, повтор с паузой (run 39659160544)
+    # root-cause: t_d0733c35 — NoAudioReceived = отказ сервиса Microsoft, не аргументов: тексты упавших runs
+    # 39319293958/39345881394 проходят локально 15/15 на edge-tts 7.3.1 (последняя). Чинить в сервисе нельзя,
+    # поэтому повтор + фолбэк-голос; stderr идёт в лог и в текст ошибки, новый класс сбоя виден сразу.
+    for k in range(tries):
         try:
             subprocess.run([sys.executable, "-m", "edge_tts", "--voice", voice, "--rate", "+6%",
-                            "--text", text, "--write-media", str(out)], check=True)
+                            "--text", text, "--write-media", str(out)], check=True, capture_output=True, text=True)
             break
-        except subprocess.CalledProcessError:
+        except subprocess.CalledProcessError as e:
+            err = (e.stderr or "").strip()[-800:]
+            print(f"edge_tts {voice} попытка {k + 1}/{tries} rc={e.returncode}: {err}")
             if k == tries - 1:
                 if voice == VOICE:  # t_33aa9813: ретраи исчерпаны -> фолбэк-голос, выпуск не падает
                     print(f"edge_tts недоступен на {VOICE} после {tries} попыток, фолбэк на {FALLBACK_VOICE}")
                     return tts(text, out, sleep=sleep, tries=3, voice=FALLBACK_VOICE)
-                raise
+                raise RuntimeError(f"edge_tts {voice} rc={e.returncode} после {tries} попыток: {err}") from e
             sleep(15 * (k + 1))
     dur = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(out)],
                          capture_output=True, text=True, check=True).stdout
