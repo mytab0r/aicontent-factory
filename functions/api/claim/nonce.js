@@ -5,7 +5,7 @@
 export async function onRequestPost({ env, request }) {
   const body = await request.json().catch(() => ({}));
   const chain = body.chain;
-  if (!['evm', 'tron', 'solana'].includes(chain)) {
+  if (!['evm', 'tron', 'solana', 'btc', 'ton'].includes(chain)) {
     return json({ error: 'bad chain' }, 400);
   }
   const nonce = crypto.randomUUID().replace(/-/g, '');

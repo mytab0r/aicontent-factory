@@ -22,7 +22,7 @@ export const PAIRS = {
 
 // Address shapes: trust boundary for owner-entered values (PUT /api/admin/config).
 const ADDRESS_VALIDATORS = {
-  btc: (v) => /^(bc1[a-z0-9]{25,62}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})$/.test(v),
+  btc: (v) => /^bc1q[a-z0-9]{38}$/.test(v), // только P2WPKH (bc1q, 42 симв.) — legacy/taproot не принимаем
   ton: (v) => /^[EU]Q[A-Za-z0-9_-]{46}$/.test(v),
   tron: (v) => /^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(v),
   solana: (v) => /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(v),

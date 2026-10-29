@@ -25,7 +25,7 @@ export async function onRequestPost({ env, request }) {
 
     const cfg = JSON.parse((await env.KV.get(CONFIG_KEY)) || '{"addresses":{},"pairs":{}}');
     const stored = normalizeAddress(chain, res.address);
-    const addrKey = chain === 'tron' ? 'tron' : chain === 'solana' ? 'solana' : 'evm';
+    const addrKey = chain === 'tron' ? 'tron' : chain === 'solana' ? 'solana' : chain === 'btc' ? 'btc' : chain === 'ton' ? 'ton' : 'evm';
     cfg.addresses[addrKey] = stored;
     await env.KV.put(CONFIG_KEY, JSON.stringify(cfg));
     return json({ ok: true, address: stored, chain });
