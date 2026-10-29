@@ -12,6 +12,7 @@ with tempfile.TemporaryDirectory() as td:
 
     def down(*a, **k):
         raise RuntimeError("503 image API down")
+    import os; os.environ["ACF_COVER_BANK"] = str(d / "empty-bank")  # банк пуст -> последний рубеж = заглушка
     sys.modules["common"] = types.SimpleNamespace(router_post=down, latest_run_dir=lambda: d)
     spec = importlib.util.spec_from_file_location("cover", Path(__file__).parent / "02_cover.py")
     cover = importlib.util.module_from_spec(spec)
