@@ -1,13 +1,28 @@
 #!/usr/bin/env python3
-"""Шаг 2: сгенерировать обложку (PNG) по cover_prompt из idea.json через 9router image API."""
+"""Шаг 2: сгенерировать обложку (PNG) по cover_prompt из idea.json через 9router image API.
+
+t_629a7ba2: 27-28.10 codex/gpt-image-1.5 отдавал 429 «usage limit (reset after 6-32s)» -> градиент-заглушка ->
+04b FAIL (V14). Цепочка: модель -> ретрай по «reset after Ns» -> следующая модель -> банк готовых артов
+(assets/cover_bank/<lofi|phonk>/) -> заглушка только при пустом банке. Путь пишется в cover_source.json (04b печатает).
+"""
 import base64
 import hashlib
+import io
 import json
+import os
+import re
+import time
+from pathlib import Path
 
 from common import router_post, latest_run_dir
 
-MODEL = "cx/gpt-image-1.5"
-SIZE = "1536x1024"  # горизонталь под кадр 16:9 (квадрат давал чёрные поля)
+# (модель, размеры по порядку). flux-1-schnell (Cloudflare) не принимает size вовсе -> None.
+MODELS = [
+    ("cx/gpt-image-1.5", ["1536x1024", "1024x1024"]),  # горизонталь под 16:9; квадрат 04 обрежет
+    ("cf/@cf/black-forest-labs/flux-1-schnell", [None]),
+]
+RETRY_MAX_WAIT = 60  # ждём «reset after Ns» только если окно короткое; дольше -> следующая модель
+BANK_DIR = Path(__file__).resolve().parent.parent / "assets" / "cover_bank"
 # единый узнаваемый стиль канала: меняется только сцена из idea.json.
 # Phonk-выпуск (t_c678b8fa шаг 3) — свой стиль: ночная дорога/неон вместо
 # тёплой аниме-комнаты; концепт берётся из cover_prompt (LLM уже знает жанр).
@@ -19,18 +34,18 @@ STYLE_PHONK = ("moody night drive phonk illustration, neon city glow, wet asphal
                "wide 16:9 composition, scene fills the whole frame, no text, no letters, no watermark")
 
 
+def _genre() -> str:
+    # жанр по env GENRE (ставит workflow matrix); cover_prompt может не содержать слова жанра.
+    return "phonk" if "phonk" in (os.environ.get("GENRE") or "").lower() else "lofi"
+
+
 def styled(prompt: str) -> str:
-    # жанр определяем по env GENRE (ставит workflow matrix); cover_prompt может
-    # не содержать слова жанра (фолбэк-сцены аниме-специфичны).
-    import os
-    genre = (os.environ.get("GENRE") or "").lower()
-    style = STYLE_PHONK if "phonk" in genre else STYLE
+    style = STYLE_PHONK if _genre() == "phonk" else STYLE
     return f"{prompt.rstrip(' ,.')}. Style: {style}"
 
 
 def fallback_cover(prompt: str, out_path) -> None:
-    """Image API недоступен -> вертикальный градиент (цвета из хэша промпта).
-    ponytail: аварийная обложка без арта; апгрейд — пул одобренных обложек в репо."""
+    """Последний рубеж (банк пуст) -> вертикальный градиент (цвета из хэша промпта); 04b такой выпуск валит (V14)."""
     from PIL import Image
 
     h = hashlib.sha256(prompt.encode()).digest()
@@ -47,24 +62,72 @@ def fallback_cover(prompt: str, out_path) -> None:
     img.save(out_path)
 
 
+def _save_png(raw: bytes, out_path) -> None:
+    """flux отдаёт JPEG, gpt-image PNG; дальше (04, thumbnails.set image/png) нужен PNG."""
+    from PIL import Image
+    Image.open(io.BytesIO(raw)).convert("RGB").save(out_path, "PNG")
+
+
+def generate(prompt: str, out_path, log: list):
+    """Модели по очереди; 429 с коротким «reset after Ns» = один повтор после паузы. Вернёт модель или None."""
+    for model, sizes in MODELS:
+        for size in sizes:
+            body = {"model": model, "prompt": prompt, "n": 1, **({"size": size} if size else {})}
+            for attempt in (1, 2):
+                try:
+                    resp = router_post("/images/generations", body, timeout=180)
+                    _save_png(base64.b64decode(resp["data"][0]["b64_json"]), out_path)
+                    log.append({"model": model, "size": size, "attempt": attempt, "ok": True})
+                    return model
+                except Exception as e:  # сеть/HTTP/битый ответ/не картинка — всё = эта попытка не удалась
+                    err = str(e)[:200]
+                    log.append({"model": model, "size": size, "attempt": attempt, "error": err})
+                    print(f"cover {model} {size or 'default'} #{attempt}: {err}")
+                    m = re.search(r"reset after (?:(\d+)m )?(\d+)s", err) if "429" in err else None
+                    wait = (int(m.group(1) or 0) * 60 + int(m.group(2)) + 2) if m else None
+                    if attempt == 1 and wait is not None and wait <= RETRY_MAX_WAIT:
+                        print(f"cover: 429, ретрай через {wait} с")
+                        time.sleep(wait)
+                        continue
+                    break
+            if "429" in log[-1].get("error", ""):
+                break  # лимит модели: другой размер не поможет -> следующая модель
+    return None
+
+
+def bank_pick(prompt: str, bank_dir: Path):
+    """Готовый арт жанра; выбор по хэшу промпта (разные идеи -> разные арты).
+    ponytail: хэш без ротации, повторы возможны; апгрейд — ротация через .state, если банк станет частым путём."""
+    files = sorted(p for p in (bank_dir / _genre()).glob("*") if p.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp"))
+    if not files:
+        return None
+    return files[int(hashlib.sha256(prompt.encode()).hexdigest(), 16) % len(files)]
+
+
 def main() -> None:
     run_dir = latest_run_dir()
     idea = json.loads((run_dir / "idea.json").read_text(encoding="utf-8"))
-
     out_path = run_dir / "cover.png"
-    try:
-        body = {"model": MODEL, "prompt": styled(idea["cover_prompt"]), "size": SIZE, "n": 1}
-        try:
-            resp = router_post("/images/generations", body, timeout=180)
-        except RuntimeError as e:  # модель не умеет 1536x1024 -> квадрат, 04 обрежет до 16:9
-            print(f"size {SIZE} отклонён ({str(e)[:120]}); 1024x1024")
-            resp = router_post("/images/generations", {**body, "size": "1024x1024"}, timeout=180)
-        out_path.write_bytes(base64.b64decode(resp["data"][0]["b64_json"]))
-    except (RuntimeError, KeyError, IndexError, ValueError) as e:
-        print(f"image API недоступен ({e}); фолбэк-обложка"[:300])
+    bank_dir = Path(os.environ.get("ACF_COVER_BANK") or BANK_DIR)
+    log: list = []
+
+    model = generate(styled(idea["cover_prompt"]), out_path, log)
+    art = None if model else bank_pick(idea["cover_prompt"], bank_dir)
+    if model:
+        path = "api" if len(log) == 1 else ("retry" if model == MODELS[0][0] else "fallback_model")
+        src = {"path": path, "model": model}
+    elif art:
+        _save_png(art.read_bytes(), out_path)
+        src = {"path": "bank", "file": art.name}
+    else:
+        print("image API недоступен, банк артов пуст; фолбэк-обложка")
         fallback_cover(idea["cover_prompt"], out_path)
+        src = {"path": "placeholder"}
         # V14: маркер для 04b — заглушка без арта не публикуется
-        (run_dir / "cover_fallback.json").write_text(json.dumps({"reason": str(e)[:300]}, ensure_ascii=False), encoding="utf-8")
+        reason = log[-1].get("error", "?") if log else "?"
+        (run_dir / "cover_fallback.json").write_text(json.dumps({"reason": reason[:300]}, ensure_ascii=False), encoding="utf-8")
+    (run_dir / "cover_source.json").write_text(json.dumps({**src, "attempts": log}, ensure_ascii=False), encoding="utf-8")
+    print(f"cover_source: {src['path']} {src.get('model') or src.get('file') or ''}")
     print(f"cover -> {out_path}")
 
 

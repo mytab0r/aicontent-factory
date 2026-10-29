@@ -558,6 +558,10 @@ def main(argv):
         why += integrity_why(f, expect) + black_why(f) + res_why(f)
         why += cover_why(os.path.join(os.path.dirname(str(f)), "cover.png"))  # V9
         why += fallback_why(os.path.dirname(str(f)))  # V14
+        cs = os.path.join(os.path.dirname(str(f)), "cover_source.json")  # t_629a7ba2: какой путь дал обложку
+        if os.path.exists(cs):
+            src = json.load(open(cs, encoding="utf-8"))
+            print(f"cover_source: {src.get('path')} {src.get('model') or src.get('file') or ''}".rstrip())
     if "--no-ce" not in argv:  # R4: окна CE/дрейф/стыки и на финальном mp4 (04b) — мерим то, что заливается
         w, rep = full_ce_why(f, seams)
         why += w
