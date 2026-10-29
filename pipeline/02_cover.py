@@ -17,8 +17,9 @@ from pathlib import Path
 from common import router_post, latest_run_dir
 
 # (модель, размеры по порядку). flux-1-schnell (Cloudflare) не принимает size вовсе -> None.
+SIZE = "1536x1024"  # горизонталь под 16:9; квадрат 04 обрежет. Эталон формата (используют тесты).
 MODELS = [
-    ("cx/gpt-image-1.5", ["1536x1024", "1024x1024"]),  # горизонталь под 16:9; квадрат 04 обрежет
+    ("cx/gpt-image-1.5", [SIZE, "1024x1024"]),
     ("cf/@cf/black-forest-labs/flux-1-schnell", [None]),
 ]
 RETRY_MAX_WAIT = 60  # ждём «reset after Ns» только если окно короткое; дольше -> следующая модель
