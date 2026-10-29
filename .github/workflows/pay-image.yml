@@ -117,46 +117,15 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: wait for deploy & verify healthz sha
+      # t_1b6fdb47: логика в скрипте, чтобы ветку таймаут->TG-алерт гонял pipeline/test_pay_deploy_verify.py.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.build-push.outputs.sha }}
+          sparse-checkout: deploy/pay-page
+      - name: wait for deploy & verify healthz sha (15 min, TG alert on timeout)
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           TG_THREAD_ID: ${{ secrets.TG_THREAD_ID }}
-          HEAD_SHA: ${{ needs.build-push.outputs.sha }}
-        run: |
-          set -e
-          URL="https://pay.pxbt.app/healthz"
-          WANT_SHA="${HEAD_SHA}"
-          TIMEOUT=900  # 15 min
-          INTERVAL=30
-          START=$(date +%s)
-          
-          echo "🔍 Ждём деплой: healthz должен вернуть sha=${WANT_SHA} (таймаут ${TIMEOUT}с)"
-          
-          while true; do
-            NOW=$(date +%s)
-            ELAPSED=$((NOW - START))
-            if [ $ELAPSED -ge $TIMEOUT ]; then
-              echo "⏱️  Таймаут ${TIMEOUT}с — healthz не отдал ожидаемый sha"
-              if [ -n "${TG_BOT_TOKEN}" ] && [ -n "${TG_CHAT_ID}" ]; then
-                MSG="🚨 <b>pay-pxbt deploy timeout</b>%0Asha <code>${WANT_SHA}</code> не появился в healthz за ${TIMEOUT}с%0A${URL}"
-                curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
-                  -d chat_id="${TG_CHAT_ID}" \
-                  -d message_thread_id="${TG_THREAD_ID}" \
-                  -d parse_mode="HTML" \
-                  -d text="${MSG}" >/dev/null || true
-              fi
-              exit 1
-            fi
-            
-            RESPONSE=$(curl -sf --max-time 10 "${URL}" 2>/dev/null || echo '{}')
-            GOT_SHA=$(echo "${RESPONSE}" | grep -o '"sha":"[^"]*"' | cut -d'"' -f4 || echo '')
-            
-            if [ "${GOT_SHA}" = "${WANT_SHA}" ]; then
-              echo "✅ healthz вернул ожидаемый sha: ${GOT_SHA} (прошло ${ELAPSED}с)"
-              exit 0
-            fi
-            
-            echo "⏳ sha=${GOT_SHA:-empty}, ждём ${WANT_SHA}... (${ELAPSED}с / ${TIMEOUT}с)"
-            sleep ${INTERVAL}
-          done
+          WANT_SHA: ${{ needs.build-push.outputs.sha }}
+        run: bash deploy/pay-page/deploy_verify.sh
