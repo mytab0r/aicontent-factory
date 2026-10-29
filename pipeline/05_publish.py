@@ -9,6 +9,7 @@
 AGENTS.md п.4. selfDeclaredMadeForKids=False (канал не детский).
 """
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -69,25 +70,35 @@ def playlist_title(genre: str) -> str:
     return f"{genre.title()} Beats"
 
 
-def genre_playlist_id(youtube, genre: str) -> str:
-    """One playlist per genre: reuse by title, create on first use (public)."""
-    title = playlist_title(genre)
+OWNING_PLAYLIST = "The Economics of Owning"  # t_acc4ee1c: плейлист ch1 Owning (условие GO критика)
+
+
+def find_or_create_playlist(youtube, title: str, desc: str) -> str:
+    """Плейлист по title: переиспользовать, создать при первом использовании (public)."""
     # ponytail: first page (50) only; paginate when channel has >50 playlists
     items = youtube.playlists().list(part="snippet", mine=True, maxResults=50).execute().get("items", [])
     pid = next((i["id"] for i in items if i["snippet"]["title"] == title), None)
     if pid is None:
         pid = youtube.playlists().insert(part="snippet,status", body={
-            "snippet": {"title": title, "description": f"{genre} - instrumental, AI-generated"},
+            "snippet": {"title": title, "description": desc},
             "status": {"privacyStatus": "public"},
         }).execute()["id"]
     return pid
 
 
-def add_to_genre_playlist(youtube, video_id: str, genre: str) -> str:
-    pid = genre_playlist_id(youtube, genre)
+def genre_playlist_id(youtube, genre: str) -> str:
+    """One playlist per genre."""
+    return find_or_create_playlist(youtube, playlist_title(genre), f"{genre} - instrumental, AI-generated")
+
+
+def add_to_playlist(youtube, video_id: str, pid: str) -> str:
     youtube.playlistItems().insert(part="snippet", body={"snippet": {
         "playlistId": pid, "resourceId": {"kind": "youtube#video", "videoId": video_id}}}).execute()
     return pid
+
+
+def add_to_genre_playlist(youtube, video_id: str, genre: str) -> str:
+    return add_to_playlist(youtube, video_id, genre_playlist_id(youtube, genre))
 
 
 HASHTAGS = "#lofi #animelofi #studymusic"
@@ -151,6 +162,12 @@ def release_playlist_id(youtube, idea: dict, meta: dict):
         return None
 
 
+def privacy() -> str:
+    """PRIVACY=private|unlisted = сухой прогон launch-гейта (t_479b69e6); иначе public."""
+    v = os.environ.get("PRIVACY", "public")
+    return v if v in ("private", "unlisted") else "public"
+
+
 def build_body(idea: dict, meta: dict, playlist_id=None) -> dict:
     if idea.get("channel") == "owning":  # S1 ch1 «Economics of Owning»: нарративный Short, Education
         import owning_channel
@@ -161,8 +178,8 @@ def build_body(idea: dict, meta: dict, playlist_id=None) -> dict:
     return {
         "snippet": {"title": title, "description": desc, "defaultLanguage": "en", "defaultAudioLanguage": "en",
                     "tags": idea.get("tags", []), "categoryId": cat},
-        # containsSyntheticMedia: пометка синтетического контента (AGENTS.md п.4)
-        "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False, "containsSyntheticMedia": True},
+        # containsSyntheticMedia: пометка синтетического контента (AGENTS.md п.4); privacy: dryrun = private
+        "status": {"privacyStatus": privacy(), "selfDeclaredMadeForKids": False, "containsSyntheticMedia": True},
     }
 
 
@@ -215,6 +232,10 @@ def publish(run_dir: Path) -> str:
     if meta.exists():
         genre = json.loads(meta.read_text(encoding="utf-8"))["genre"]
         print(f"playlist -> {add_to_genre_playlist(youtube, video_id, genre)} ({genre})")
+    elif idea.get("channel") == "owning":
+        pid = find_or_create_playlist(youtube, OWNING_PLAYLIST,
+                                      "What it really costs and earns to own a small US business, in 60 seconds.")
+        print(f"playlist -> {add_to_playlist(youtube, video_id, pid)} ({OWNING_PLAYLIST})")
     print(f"OK: опубликовано {url}")
     return url
 
@@ -243,6 +264,22 @@ def main() -> None:
             from common import tg_send
             tg_send("❌ G1zm0: Content ID claim на свежий трек — видео удалено, перегенерация со следующим эталоном пула (refpool)")
             raise SystemExit(2)
+        return
+    if "--verify" in sys.argv:  # сухой прогон: автосверка выложенного (t_479b69e6)
+        pub = json.loads((run_dir / "published.json").read_text(encoding="utf-8"))
+        y = _get_youtube_service()
+        it = y.videos().list(part="snippet,status,contentDetails", id=pub["id"]).execute()["items"][0]
+        idea = json.loads((run_dir / "idea.json").read_text(encoding="utf-8"))
+        checks = {"title": (it["snippet"]["title"], idea["title"][:100]),
+                  "privacy": (it["status"]["privacyStatus"], privacy()),
+                  "cat27": (it["snippet"]["categoryId"], "27"),
+                  "duration<=60s": (int(it["contentDetails"]["duration"][2:-1]) <= 61, True)}
+        bad = {k: v for k, v in checks.items() if v[0] != v[1]}
+        for k, v in checks.items():
+            print(f"verify {k}: {v[0]!r} (ожидалось {v[1]!r})")
+        if bad:
+            sys.exit(f"verify FAIL: {list(bad)}")
+        print(f"verify OK: {pub['url']}")
         return
     publish(run_dir)
 
