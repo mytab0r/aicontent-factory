@@ -78,6 +78,6 @@ S5. Повторный nonce.
 
 ## CI
 
-Job `e2e-admin` в `.github/workflows/ci.yml`: собирает образ на базе `mcr.microsoft.com/playwright:v1.64.1-noble`
+Job `e2e-admin` в `.github/workflows/ci.yml`: собирает образ на базе `node:20-bookworm-slim` + `playwright@1.64.1` с chromium из CDN (mcr.microsoft.com недоступен с раннеров, guard `scripts/check_e2e_base.py`, t_6de08f33)
 (браузер внутри образа, раннер ничего не качает) и запускает `test/e2e/admin.e2e.mjs`. pay-image
 публикуется только после зелёного `ci` (`workflow_run` success), поэтому красный e2e-admin блокирует деплой.

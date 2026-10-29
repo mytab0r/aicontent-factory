@@ -148,10 +148,12 @@ jobs:
           set -e
           T=pay-e2e:$GITHUB_RUN_ID
           trap "docker rmi -f $T >/dev/null 2>&1 || true" EXIT
-          # 20-21.10: TLS handshake timeout к mcr.microsoft.com валил CI дважды. Базовый образ тянем
-          # отдельно с 4 попытками (слои докачиваются, не дублируются); 4 провала = падение шага.
+          # t_6de08f33: guard базы до build — не mcr.microsoft.com (недоступен с раннеров, 7 падений 20-21.10),
+          # версия playwright-образа == npm playwright@X; несуществующий тег = сразу падение без повторов.
+          python3 scripts/check_e2e_base.py --selftest && python3 scripts/check_e2e_base.py test/e2e/Dockerfile
           B=$(sed -n 's/^FROM //p' test/e2e/Dockerfile | head -1)
-          for n in 1 2 3 4; do docker pull -q "$B" && break; [ $n = 4 ] && exit 1; echo "pull $B: попытка $n не удалась, повтор через $((n*20)) с"; sleep $((n*20)); done
+          # root-cause: t_6de08f33 — повтор только на транспортные обрывы Docker Hub; manifest unknown/not found = exit 1.
+          for n in 1 2 3 4; do o=$(docker pull -q "$B" 2>&1) && break; echo "$o"; echo "$o" | grep -qiE 'manifest unknown|not found' && { echo "::error::тег $B не существует"; exit 1; }; [ $n = 4 ] && exit 1; echo "pull $B: попытка $n не удалась, повтор через $((n*20)) с"; sleep $((n*20)); done
           docker build -q -f test/e2e/Dockerfile -t $T .
           docker run --rm --ipc=host $T
   ci-bypass-lint:
