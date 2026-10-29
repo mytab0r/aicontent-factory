@@ -285,14 +285,14 @@ await scenario('S1 одна кнопка: все 5 адресов, видны п
   } finally { await env.close(); }
 });
 
-// S2: кошелька нет — понятное сообщение с путём (dApp-браузер кошелька), ни одного nonce
+// S2: кошелька нет — понятное сообщение с путём (dApp-браузер кошелька), ни одного nonce для этой цепочки
 for (const chain of CHAINS) await scenario(`S2 ${chain}: кошелька нет`, async () => {
   const env = await setup({ wallets: false });
   try {
-    await env.page.click('#connect-all');
-    await logHas(env.page, '✘ кошелёк не найден');
+    await env.page.evaluate((c) => claimChain(c), chain);
+    await logHas(env.page, `✘ ${chain}: кошелёк не найден`);
     await notDefined(env);
-    assert.strictEqual(env.nonceReqs.length, 0, 'без кошелька nonce не запрашивается');
+    assert.ok(!env.nonceReqs.some((r) => (r.postData() || '').includes(`"chain":"${chain}"`)), 'без кошелька nonce не запрашивается');
     noPageErrors(env, chain);
   } finally { await env.close(); }
 });
