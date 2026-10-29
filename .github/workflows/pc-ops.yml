@@ -103,11 +103,11 @@ jobs:
           sh deploy/gpu-pc/disk_gate.sh c 2
           docker rm -f postiz postiz-postgres postiz-redis 2>/dev/null || true
           docker network create postiz-net 2>/dev/null || true
-          docker volume create postiz-pg-data >/dev/null
-          docker volume create postiz-uploads >/dev/null
+          docker run --rm -v /run/desktop/mnt/host/c/dockerlocal/postiz:/d alpine:3.20 \
+            sh -c 'mkdir -p /d/pg-data /d/uploads'
           docker run -d --name postiz-postgres --restart unless-stopped --network postiz-net \
             -e POSTGRES_PASSWORD=postiz-local-pw -e POSTGRES_USER=postiz-user -e POSTGRES_DB=postiz-db-local \
-            -v postiz-pg-data:/var/lib/postgresql/data postgres:17-alpine
+            -v /run/desktop/mnt/host/c/dockerlocal/postiz/pg-data:/var/lib/postgresql/data postgres:17-alpine
           docker run -d --name postiz-redis --restart unless-stopped --network postiz-net redis:7-alpine
           # YOUTUBE_TOKEN_JSON — authorized_user creds (Desktop OAuth client владельца),
           # содержит client_id/client_secret. Postiz может переиспользовать тот же client,
@@ -128,7 +128,7 @@ jobs:
             -e REDIS_URL="redis://postiz-redis:6379" -e IS_GENERAL=true -e DISABLE_REGISTRATION=false \
             -e STORAGE_PROVIDER=local -e UPLOAD_DIRECTORY=/uploads -e NEXT_PUBLIC_UPLOAD_DIRECTORY=/uploads \
             -e YOUTUBE_CLIENT_ID="$YT_ID" -e YOUTUBE_CLIENT_SECRET="$YT_SECRET" \
-            -v postiz-uploads:/uploads \
+            -v /run/desktop/mnt/host/c/dockerlocal/postiz/uploads:/uploads \
             ghcr.io/gitroomhq/postiz-app:latest
           for i in $(seq 1 30); do
             sleep 5
