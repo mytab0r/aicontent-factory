@@ -47,7 +47,7 @@ const SOL_ADDR = b58(ed.getPublicKey(ED_PRIV));
 const ADDR = { evm: EVM_ADDR, tron: TRON_ADDR, solana: SOL_ADDR };
 
 // ---------- BTC (P2WPKH) ----------
-const BTC_PRIV = Uint8Array.from(Buffer.from('e9873d79c6d87dc0fb6a5778633389f4453213303da61f20bd67fc233aa3328', 'hex'));
+const BTC_PRIV = Uint8Array.from(Buffer.from('4fde91eadd6acea2cb64083cbd14102e41b9ce2c32d67c14dc955ee6cfab8e58', 'hex'));
 const BTC_PUB = secp.getPublicKey(BTC_PRIV, true); // compressed
 const BTC_HASH160 = ripemd160(sha256(BTC_PUB));
 const BTC_ADDR = encodeSegwitAddress('bc', 0, BTC_HASH160);
