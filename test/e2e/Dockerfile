@@ -16,4 +16,5 @@ COPY functions ./functions
 COPY config ./config
 COPY deploy/pay-page ./deploy/pay-page
 COPY test/e2e/admin.e2e.mjs ./test/e2e/admin.e2e.mjs
+COPY test/helpers ./test/helpers
 CMD ["node", "test/e2e/admin.e2e.mjs"]

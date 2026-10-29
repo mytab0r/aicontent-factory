@@ -7,6 +7,10 @@
  * мобила = список установленных кошельков (SafePal, Trust, MetaMask, OKX...), деск = расширения/QR.
  * EVM-подпись personal_sign через универсальный EIP-1193 провайдер AppKit;
  * Solana — window-провайдер (Phantom/SafePal); Tron — прямой TIP-1193 (AppKit Tron-адаптера нет).
+ * TON — TON Connect (@tonconnect/ui, manifest на pay.pxbt.app/tonconnect-manifest.json), ton_proof
+ *       верифицируется сервером криптографически (StateInit -> публичный ключ, без доверия клиенту).
+ * BTC — injected-провайдеры (window.phantom.bitcoin, window.unisat, window.okxwallet.bitcoin, window.xverse);
+ *       только bc1q (P2WPKH) адрес, signMessage как доказательство владения.
  * projectId приходит из env.REOWN_PROJECT_ID (прод: secrets.json; e2e: инжект).
  */
 import { PAIRS } from '../lib/config.js';
@@ -51,15 +55,10 @@ export async function onRequestGet({ env } = {}) {
  <button id="connect-all" class="primary" onclick="claimAll()">Подключить кошелек</button>
  <div id="addresses" class="addr"></div>
  <div id="nowallet" hidden><p id="nowallet-msg"></p></div>
+ <div id="ton-connect-button" hidden></div>
 </div>
 <div class="card">
- <h3>2. BTC и TON (вписать адрес вручную)</h3>
- <label class="pairline">BTC (bc1q SegWit): <input id="addr_btc" class="addrin" placeholder="bc1q..." style="width:100%"></label>
- <label class="pairline">TON: <input id="addr_ton" class="addrin" placeholder="UQ..." style="width:100%"></label>
- <button class="primary" onclick="saveAddresses()">Сохранить BTC/TON</button>
-</div>
-<div class="card">
- <h3>3. Какие пары показывать клиенту</h3>
+ <h3>2. Какие пары показывать клиенту</h3>
  <div id="pairs"></div>
  <button class="primary" onclick="savePairs()">Сохранить</button>
 </div>
@@ -174,18 +173,92 @@ async function tronWallet() {
   return { address: tw.defaultAddress.base58, async sign(msg) { return tw.trx.signMessageV2(msg); } };
 }
 
-const WALLETS = { evm: evmWallet, solana: solanaWallet, tron: tronWallet };
+const WALLETS = { evm: evmWallet, solana: solanaWallet, tron: tronWallet, ton: tonWallet, btc: btcWallet };
+
+// TON: TON Connect (@tonconnect/ui) + ton_proof. Сервер верифицирует proof криптографически
+// (StateInit -> публичный ключ), payload proof'а = выданный сервером nonce (anti-replay).
+let tonConnectUiPromise = null;
+function getTonConnectUi() {
+  if (!tonConnectUiPromise) {
+    // window.__TonConnectUIClass: e2e/test hook — avoids a real esm.sh network import.
+    tonConnectUiPromise = (window.__TonConnectUIClass
+      ? Promise.resolve({ TonConnectUI: window.__TonConnectUIClass })
+      : import('https://esm.sh/@tonconnect/ui@2.2.2')
+    ).then(({ TonConnectUI }) =>
+      new TonConnectUI({ manifestUrl: 'https://pay.pxbt.app/tonconnect-manifest.json', buttonRootId: 'ton-connect-button' })
+    );
+  }
+  return tonConnectUiPromise;
+}
+async function tonWallet(message) {
+  const ui = await getTonConnectUi();
+  ui.setConnectRequestParameters({ state: 'ready', value: { tonProof: message } });
+  if (ui.connected) await ui.disconnect().catch(() => {});
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      unsub();
+      reject(Object.assign(new Error('подключение отклонено'), { code: 4001, connect: true }));
+    }, 180000);
+    const unsub = ui.onStatusChange((wallet) => {
+      if (!wallet) return;
+      clearTimeout(timeout);
+      unsub();
+      const proofItem = wallet.connectItems && wallet.connectItems.tonProof;
+      if (!proofItem || !('proof' in proofItem)) {
+        reject(new Error('кошелёк не вернул ton_proof'));
+        return;
+      }
+      resolve({
+        address: wallet.account.address,
+        async sign() {
+          return JSON.stringify({
+            address: wallet.account.address,
+            stateInit: wallet.account.walletStateInit,
+            proof: proofItem.proof,
+          });
+        },
+      });
+    });
+    ui.connect().catch((e) => { clearTimeout(timeout); unsub(); reject(e); });
+  });
+}
+
+// BTC: injected-провайдеры (Phantom/Unisat/OKX/Xverse). Только bc1q (P2WPKH) — taproot/legacy отклоняются
+// сразу на клиенте; сервер всё равно перепроверяет (derived-address должен совпасть с подписью).
+async function btcWallet() {
+  const provider = (window.phantom && window.phantom.bitcoin) || window.unisat || (window.okxwallet && window.okxwallet.bitcoin) || window.xverse;
+  if (!provider) throw Object.assign(new Error('кошелёк не найден'), { nowallet: true });
+  let accounts;
+  try {
+    accounts = (await (provider.requestAccounts ? provider.requestAccounts() : provider.request({ method: 'requestAccounts' }))) || [];
+  } catch (e) {
+    throw Object.assign(new Error('подключение отклонено'), { code: (e && e.code) || 4001, connect: true });
+  }
+  const toAddr = (a) => (typeof a === 'string' ? a : a && a.address);
+  const bech32 = accounts.map(toAddr).find((a) => a && a.startsWith('bc1q'));
+  if (!bech32) throw new Error('только bc1q (P2WPKH) адреса принимаются');
+  return {
+    address: bech32,
+    async sign(msg) {
+      try {
+        if (provider.signMessage) return await provider.signMessage(msg, bech32);
+        return await provider.request({ method: 'signMessage', params: [msg, bech32] });
+      } catch (e) { throw Object.assign(new Error('подпись отклонена'), { code: (e && e.code) || 4001 }); }
+    },
+  };
+}
 
 async function claim(chain) {
   const btn = document.getElementById('connect-all');
   btn.disabled = true;
   try {
-    const w = await WALLETS[chain]();
-    const address = w.address;
-    if (!address) throw new Error('кошелёк не вернул адрес');
     const { nonce, message } = await api('/api/claim/nonce', { chain });
     if (!nonce) throw new Error('сервер не выдал nonce');
-    const signature = await w.sign(message || nonceMsg(nonce));
+    const payload = message || nonceMsg(nonce);
+    const w = await WALLETS[chain](payload);
+    const address = w.address;
+    if (!address) throw new Error('кошелёк не вернул адрес');
+    const signature = await w.sign(payload);
     const j = await api('/api/claim/verify', { chain, address, signature, nonce });
     if (j.ok) { log('✔ ' + chain + ': адрес сохранён ' + j.address); await loadConfig(); }
     else log('✘ ' + chain + ': ' + (j.error || 'отказ') + (j.detail ? ' — ' + j.detail : ''));
@@ -214,27 +287,18 @@ async function claimAll() {
     if (await injectedEvm()) found.push('evm');
     if ((window.phantom && window.phantom.solana) || window.solana) found.push('solana');
     if (window.tron || window.tronLink || window.tronWeb) found.push('tron');
+    if (window.phantom && window.phantom.bitcoin || window.unisat || (window.okxwallet && window.okxwallet.bitcoin) || window.xverse) found.push('btc');
     if (!found.length) {
       log('\u2718 \u043a\u043e\u0448\u0435\u043b\u0451\u043a \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d \u2014 \u043e\u0442\u043a\u0440\u044b\u0432\u0430\u044e WalletConnect (\u043c\u043e\u0436\u043d\u043e \u043e\u0442\u0441\u043a\u0430\u043d\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u043a\u043e\u0448\u0435\u043b\u044c\u043a\u043e\u043c \u043d\u0430 \u0442\u0435\u043b\u0435\u0444\u043e\u043d\u0435)');
       if (window.__appkit && !window.__appkitError) await claim('evm');
+      await claim('ton');
       return;
     }
     for (const chain of found) await claim(chain);
+    await claim('ton'); // TON Connect всегда показывает свою модалку — не нуждается в предварительном обнаружении
   } finally { btn.disabled = false; }
 }
 window.claimAll = claimAll;
-
-async function saveAddresses() {
-  const v = (id) => document.getElementById(id).value.trim();
-  const addresses = {};
-  if (v('addr_btc')) addresses.btc = v('addr_btc');
-  if (v('addr_ton')) addresses.ton = v('addr_ton');
-  if (!Object.keys(addresses).length) return log('✘ введите адрес');
-  const r = await fetch('/api/admin/config', { method: 'PUT', headers: {'content-type':'application/json'}, body: JSON.stringify({ addresses }) });
-  const j = await r.json().catch(() => ({}));
-  log(r.ok ? '✔ BTC/TON сохранены' : '✘ ' + (j.error || 'ошибка сохранения'));
-}
-window.saveAddresses = saveAddresses;
 
 async function loadConfig() {
   const cfg = await (await fetch('/api/admin/config')).json();
@@ -242,8 +306,6 @@ async function loadConfig() {
   a.textContent = '';
   for (const [k, v] of Object.entries(cfg.addresses)) { const d = document.createElement('div'); d.textContent = k + ': ' + v; a.appendChild(d); }
   if (!a.firstChild) a.innerHTML = '<i>адреса ещё не подключены</i>';
-  document.getElementById('addr_btc').value = cfg.addresses.btc || '';
-  document.getElementById('addr_ton').value = cfg.addresses.ton || '';
   const p = document.getElementById('pairs');
   p.innerHTML = Object.keys(PAIRS).map((id) =>
     '<label class="pairline"><input type="checkbox" id="pair_' + id + '"' + (cfg.pairs[id] ? ' checked' : '') + '>' + PAIRS[id].label + '</label>'

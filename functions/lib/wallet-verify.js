@@ -10,10 +10,14 @@ import { sha256, sha512 } from '../vendor/noble/hashes/sha2.js';
 import { keccak_256 } from '../vendor/noble/hashes/sha3.js';
 import * as secp from '../vendor/noble/secp256k1/secp256k1.js';
 import * as ed from '../vendor/noble/ed25519/ed25519.js';
+import { verifyBtcSignedMessage } from '../vendor/btc-verify.js';
+import { verifyTonProof } from '../vendor/ton-wallet.js';
 
 // noble-secp256k1/ed25519 3.x требуют явных синхронных хэш-провайдеров
 secp.hashes.sha256 = sha256;
 ed.hashes.sha512 = sha512;
+
+export const TON_PROOF_DOMAIN = 'pay.pxbt.app';
 
 const enc = new TextEncoder();
 
@@ -138,13 +142,43 @@ function verifySolana(msg, sigB64, expectedAddress) {
   return { address: expectedAddress, chainKind: 'solana' };
 }
 
+/** BTC: BIP-137 signed message, P2WPKH (bc1q) only. Адрес = HASH160(recovered pubkey) -> bech32. */
+function verifyBtc(msg, sigB64, expectedAddress) {
+  if (!expectedAddress) throw new Error('btc requires address');
+  verifyBtcSignedMessage({ message: msg, signatureBase64: sigB64, claimedAddress: expectedAddress });
+  return { address: expectedAddress, chainKind: 'btc' };
+}
+
 /**
- * Проверить подпись. chain: 'evm' | 'tron' | 'solana'.
- * EVM/Tron: адрес восстанавливается из подписи (подделать нельзя).
+ * TON: TON Connect ton_proof. `signature` здесь — JSON-строка {address, stateInit, proof}
+ * (TonConnect TonAddressItemReply), не сырая подпись — proof содержит её в base64 внутри.
+ * Публичный ключ НЕ берётся у клиента: извлекается из data-cell распарсенного stateInit,
+ * адрес проверяется как sha256(stateInit) == заявленный адрес.
+ */
+function verifyTon(nonceMessage, signaturePayload) {
+  let parsed;
+  try {
+    parsed = typeof signaturePayload === 'string' ? JSON.parse(signaturePayload) : signaturePayload;
+  } catch {
+    throw new Error('ton signature must be JSON {address, stateInit, proof}');
+  }
+  const { address, stateInit, proof } = parsed || {};
+  if (!proof || typeof proof.payload !== 'string') throw new Error('missing ton proof');
+  // payload привязывает proof к конкретному nonce — тому же, что выдал /api/claim/nonce.
+  if (proof.payload !== nonceMessage) throw new Error('ton proof payload does not match issued nonce');
+  const friendlyAddress = verifyTonProof({ address, stateInit, proof }, { domain: TON_PROOF_DOMAIN });
+  return { address: friendlyAddress, chainKind: 'ton' };
+}
+
+/**
+ * Проверить подпись. chain: 'evm' | 'tron' | 'solana' | 'btc' | 'ton'.
+ * EVM/Tron/BTC: адрес восстанавливается из подписи (подделать нельзя).
  * Solana: подпись проверяется против заявленного адреса (pubkey = адрес).
+ * TON: ton_proof верифицируется против публичного ключа, извлечённого из stateInit.
  * Возвращает {address, chainKind} или кидает исключение.
  */
 export function verifyWalletSignature({ chain, message, signature, address }) {
+  if (chain === 'ton') return verifyTon(message, signature);
   if (!message || typeof message !== 'string' || message.length > 512) {
     throw new Error('bad message');
   }
@@ -153,6 +187,7 @@ export function verifyWalletSignature({ chain, message, signature, address }) {
   }
   if (chain === 'evm') return verifyEvm(message, signature, address);
   if (chain === 'tron') return verifyTron(message, signature, address);
+  if (chain === 'btc') return verifyBtc(message, signature, address);
   if (chain === 'solana') {
     if (!address) throw new Error('solana requires address');
     return verifySolana(message, signature, address);
@@ -163,5 +198,5 @@ export function verifyWalletSignature({ chain, message, signature, address }) {
 /** Нормализация адреса для хранения/сравнения (без EIP-55 checksum). */
 export function normalizeAddress(chain, address) {
   if (chain === 'evm') return address.toLowerCase();
-  return address; // tron/solana base58 — чувствительны к регистру, храним как есть
+  return address; // tron/solana/btc/ton — чувствительны к регистру, храним как есть
 }

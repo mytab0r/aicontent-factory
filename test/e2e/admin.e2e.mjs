@@ -17,6 +17,11 @@ import { keccak_256 } from '../../functions/vendor/noble/hashes/sha3.js';
 import { hmac } from '../../functions/vendor/noble/hashes/hmac.js';
 import * as secp from '../../functions/vendor/noble/secp256k1/secp256k1.js';
 import * as ed from '../../functions/vendor/noble/ed25519/ed25519.js';
+import { ripemd160 } from '../../functions/vendor/noble/hashes/ripemd160.js';
+import { encodeSegwitAddress } from '../../functions/vendor/bech32.js';
+import { parseBoc, bytesToHex } from '../../functions/vendor/ton-boc.js';
+import { toFriendlyAddress } from '../../functions/vendor/ton-wallet.js';
+import { rawCellToTree, serializeBoc, bytesToBits, numToBits } from '../helpers/ton-test-boc.mjs';
 
 secp.hashes.sha256 = sha256;
 secp.hashes.hmacSha256 = (k, m) => hmac(sha256, k, m);
@@ -41,13 +46,71 @@ const TRON_ADDR = b58(Uint8Array.from([...tronPayload, ...sha256(sha256(tronPayl
 const SOL_ADDR = b58(ed.getPublicKey(ED_PRIV));
 const ADDR = { evm: EVM_ADDR, tron: TRON_ADDR, solana: SOL_ADDR };
 
+// ---------- BTC (P2WPKH) ----------
+const BTC_PRIV = Uint8Array.from(Buffer.from('e9873d79c6d87dc0fb6a5778633389f4453213303da61f20bd67fc233aa3328', 'hex'));
+const BTC_PUB = secp.getPublicKey(BTC_PRIV, true); // compressed
+const BTC_HASH160 = ripemd160(sha256(BTC_PUB));
+const BTC_ADDR = encodeSegwitAddress('bc', 0, BTC_HASH160);
+function bitcoinMessageHash(message) {
+  const magic = enc.encode('\x18Bitcoin Signed Message:\n');
+  const msgBytes = enc.encode(message);
+  const cs = msgBytes.length < 0xfd ? new Uint8Array([msgBytes.length])
+    : new Uint8Array([0xfd, msgBytes.length & 0xff, (msgBytes.length >> 8) & 0xff]);
+  return sha256(sha256(Uint8Array.from([...magic, ...cs, ...msgBytes])));
+}
+function btcSign(message) {
+  const digest = bitcoinMessageHash(message);
+  const sig = secp.sign(digest, BTC_PRIV, { format: 'recovered', prehash: false }); // [recid, r, s]
+  const header = 39 + sig[0]; // BIP-137: compressed P2WPKH range
+  const out = new Uint8Array(65);
+  out[0] = header;
+  out.set(sig.slice(1), 1);
+  return Buffer.from(out).toString('base64');
+}
+
+// ---------- TON (V4R2 wallet, StateInit + ton_proof) ----------
+const V4R2_CODE_B64 = 'te6ccgECFAEAAtQAART/APSkE/S88sgLAQIBIAIDAgFIBAUE+PKDCNcYINMf0x/THwL4I7vyZO1E0NMf0x/T//QE0VFDuvKhUVG68qIF+QFUEGT5EPKj+AAkpMjLH1JAyx9SMMv/UhD0AMntVPgPAdMHIcAAn2xRkyDXSpbTB9QC+wDoMOAhwAHjACHAAuMAAcADkTDjDQOkyMsfEssfy/8QERITAubQAdDTAyFxsJJfBOAi10nBIJJfBOAC0x8hghBwbHVnvSKCEGRzdHK9sJJfBeAD+kAwIPpEAcjKB8v/ydDtRNCBAUDXIfQEMFyBAQj0Cm+hMbOSXwfgBdM/yCWCEHBsdWe6kjgw4w0DghBkc3RyupJfBuMNBgcCASAICQB4AfoA9AQw+CdvIjBQCqEhvvLgUIIQcGx1Z4MesXCAGFAEywUmzxZY+gIZ9ADLaRfLH1Jgyz8gyYBA+wAGAIpQBIEBCPRZMO1E0IEBQNcgyAHPFvQAye1UAXKwjiOCEGRzdHKDHrFwgBhQBcsFUAPPFiP6AhPLassfyz/JgED7AJJfA+ICASAKCwBZvSQrb2omhAgKBrkPoCGEcNQICEekk30pkQzmkD6f+YN4EoAbeBAUiYcVnzGEAgFYDA0AEbjJftRNDXCx+AA9sp37UTQgQFA1yH0BDACyMoHy//J0AGBAQj0Cm+hMYAIBIA4PABmtznaiaEAga5Drhf/AABmvHfaiaEAQa5DrhY/AAG7SB/oA1NQi+QAFyMoHFcv/ydB3dIAYyMsFywIizxZQBfoCFMtrEszMyXP7AMhAFIEBCPRR8qcCAHCBAQjXGPoA0z/IVCBHgQEI9FHyp4IQbm90ZXB0gBjIywXLAlAGzxZQBPoCFMtqEssfyz/Jc/sAAgBsgQEI1xj6ANM/MFIkgQEI9Fnyp4IQZHN0cnB0gBjIywXLAlAFzxZQA/oCE8tqyx8Syz/Jc/sAAAr0AMntVA==';
+const TON_PRIV = ed.utils.randomSecretKey();
+const TON_PUB = ed.getPublicKey(TON_PRIV);
+const tonCodeRoot = parseBoc(Uint8Array.from(Buffer.from(V4R2_CODE_B64, 'base64')))[0];
+const tonCodeTree = rawCellToTree(tonCodeRoot);
+const TON_WALLET_ID = 698983191;
+const tonDataTree = { bits: [...numToBits(0, 32), ...numToBits(TON_WALLET_ID, 32), ...bytesToBits(TON_PUB), 0], refs: [] };
+const tonStateInitRoot = { bits: [0, 0, 1, 1, 0], refs: [tonCodeTree, tonDataTree] };
+const tonStateInitBoc = serializeBoc(tonStateInitRoot);
+const TON_STATE_INIT_B64 = Buffer.from(tonStateInitBoc).toString('base64');
+const tonAddressHash = parseBoc(tonStateInitBoc)[0].hash;
+const TON_RAW_ADDR = '0:' + bytesToHex(tonAddressHash);
+const TON_ADDR = toFriendlyAddress(0, tonAddressHash);
+const TON_DOMAIN = 'pay.pxbt.app';
+ADDR.btc = BTC_ADDR;
+ADDR.ton = TON_ADDR;
+ADDR.tonRaw = TON_RAW_ADDR;
+ADDR.tonStateInit = TON_STATE_INIT_B64;
+function tonProofSign(payload) {
+  const timestamp = Math.floor(Date.now() / 1000);
+  const domainBytes = enc.encode(TON_DOMAIN);
+  const wc = new Uint8Array(4); new DataView(wc.buffer).setInt32(0, 0, false);
+  const dl = new Uint8Array(4); new DataView(dl.buffer).setUint32(0, domainBytes.length, true);
+  const tsBuf = new Uint8Array(8); new DataView(tsBuf.buffer).setBigUint64(0, BigInt(timestamp), true);
+  const payloadBytes = enc.encode(payload);
+  const msg = Uint8Array.from([
+    ...enc.encode('ton-proof-item-v2/'), ...wc, ...tonAddressHash, ...dl, ...domainBytes, ...tsBuf, ...payloadBytes,
+  ]);
+  const digest = sha256(Uint8Array.from([0xff, 0xff, ...enc.encode('ton-connect'), ...sha256(msg)]));
+  const signature = Buffer.from(ed.sign(digest, TON_PRIV)).toString('base64');
+  return { domain: TON_DOMAIN, timestamp, payload, signature };
+}
+
 function secpSign(prefix, msgBytes) {
   const d = keccak_256(Uint8Array.from([...enc.encode(prefix + msgBytes.length), ...msgBytes]));
   const rec = secp.sign(d, SECP_PRIV, { prehash: false, format: 'recovered' }); // [v, r, s]
   return '0x' + hex(rec.slice(1)) + (rec[0] + 27).toString(16);
 }
-// msg: {hex} (EVM personal_sign) | {text} (Tron) | {bytes} (Solana)
+// msg: {hex} (EVM personal_sign) | {text} (Tron/BTC) | {bytes} (Solana) | {payload} (TON proof)
 function walletSign(chain, msg) {
+  if (chain === 'btc') return btcSign(msg.text);
+  if (chain === 'ton') return tonProofSign(msg.payload);
   const bytes = msg.hex ? Uint8Array.from(Buffer.from(msg.hex.replace(/^0x/, ''), 'hex'))
     : msg.text != null ? enc.encode(msg.text) : Uint8Array.from(msg.bytes);
   if (chain === 'evm') return secpSign('\x19Ethereum Signed Message:\n', bytes);
@@ -120,6 +183,46 @@ function injectWallets(cfg) {
       },
     },
   };
+  // BTC: injected provider (Unisat-shaped). Only bc1q (P2WPKH) is ever returned.
+  if (cfg.addr.btc) {
+    window.unisat = {
+      async requestAccounts() {
+        if (cfg.reject === 'connect') throw err4001();
+        return [cfg.btcTaproot ? cfg.addr.btcTaproot : cfg.addr.btc];
+      },
+      async signMessage(msg) {
+        if (cfg.reject === 'sign') throw err4001();
+        return window.__walletSign('btc', { text: msg });
+      },
+    };
+  }
+  // TON: fake TonConnectUI (admin/index.js picks it up via window.__TonConnectUIClass hook).
+  if (cfg.addr.ton) {
+    window.__TonConnectUIClass = class {
+      constructor() { this.connected = false; this._tonProofPayload = null; }
+      setConnectRequestParameters(params) { this._tonProofPayload = params && params.value && params.value.tonProof; }
+      async disconnect() { this.connected = false; }
+      onStatusChange(cb) {
+        this._cb = cb;
+        return () => { this._cb = null; };
+      }
+      async connect() {
+        if (cfg.reject === 'connect') throw err4001();
+        if (cfg.reject === 'sign') {
+          // кошелёк подключился, но не вернул ton_proof (эквивалент отказа подписи)
+          if (this._cb) this._cb({ account: { address: cfg.addr.tonRaw, walletStateInit: cfg.addr.tonStateInit }, connectItems: {} });
+          return;
+        }
+        const proof = await window.__walletSign('ton', { payload: this._tonProofPayload });
+        if (this._cb) {
+          this._cb({
+            account: { address: cfg.addr.tonRaw, walletStateInit: cfg.addr.tonStateInit },
+            connectItems: { tonProof: { proof } },
+          });
+        }
+      }
+    };
+  }
 }
 
 // ---------- окружение ----------
@@ -159,7 +262,7 @@ const shown = (chain, addr) => chain + ': ' + (chain === 'evm' ? addr.toLowerCas
 const noPageErrors = (env, what) => assert.deepStrictEqual(env.errors, [], what + ': необработанные исключения на странице');
 const notDefined = async (env) => assert.doesNotMatch(await env.page.locator('#log').textContent(), /is not defined/);
 
-const CHAINS = ['evm', 'tron', 'solana'];
+const CHAINS = ['evm', 'tron', 'solana', 'btc'];
 const results = [];
 async function scenario(name, fn) {
   const t0 = Date.now();
@@ -168,16 +271,16 @@ async function scenario(name, fn) {
 }
 
 // S1: успешная привязка + адрес в списке после перезагрузки
-await scenario('S1 одна кнопка: все 3 адреса, видны после reload', async () => {
+await scenario('S1 одна кнопка: все 5 адресов, видны после reload', async () => {
   const env = await setup();
   try {
     await env.page.click('#connect-all');
-    for (const chain of CHAINS) {
+    for (const chain of [...CHAINS, 'ton']) {
       await logHas(env.page, `✔ ${chain}: адрес сохранён ${shown(chain, ADDR[chain]).slice(chain.length + 2)}`);
       await addrHas(env.page, shown(chain, ADDR[chain]), 'адрес в #addresses');
     }
     await env.page.reload();
-    for (const chain of CHAINS) await addrHas(env.page, shown(chain, ADDR[chain]), 'адрес после reload');
+    for (const chain of [...CHAINS, 'ton']) await addrHas(env.page, shown(chain, ADDR[chain]), 'адрес после reload');
     noPageErrors(env, 'S1');
   } finally { await env.close(); }
 });
@@ -309,6 +412,52 @@ await scenario('S5 evm: повторный nonce', async () => {
     const second = JSON.parse(env.verifyBodies[1]);
     assert.notStrictEqual(second.nonce, first.nonce, 'новый nonce');
     noPageErrors(env, 'evm');
+  } finally { await env.close(); }
+});
+
+// BTC-specific: taproot/legacy address rejected on the client (never reaches nonce)
+await scenario('btc: taproot адрес отклоняется (принят только bc1q/p2wpkh)', async () => {
+  const env = await setup();
+  try {
+    await env.page.evaluate(() => {
+      window.unisat.requestAccounts = async () => ['bc1phajtersv55fwud5xr0t70p5234swy396a6avqhuny0qf83zssvrsm7tl4q'];
+    });
+    await env.page.evaluate(() => claimChain('btc'));
+    await logHas(env.page, '✘ btc: только bc1q (P2WPKH) адреса принимаются');
+    assert.strictEqual(env.nonceReqs.length, 0, 'taproot-адрес даже не запрашивает nonce');
+    noPageErrors(env, 'btc taproot');
+  } finally { await env.close(); }
+});
+
+// TON-specific: proof signed for a different nonce payload is rejected (replay/mismatch defense)
+await scenario('ton: proof с чужим payload отклоняется', async () => {
+  const env = await setup();
+  try {
+    await env.page.evaluate(() => {
+      const realSign = window.__walletSign;
+      window.__walletSign = (chain, msg) => chain === 'ton' ? realSign(chain, { payload: 'wrong-payload' }) : realSign(chain, msg);
+    });
+    await env.page.evaluate(() => claimChain('ton'));
+    await logHas(env.page, '✘ ton: ');
+    assert.ok(!(await addresses(env.page)).includes(shown('ton', ADDR.ton)), 'адрес не сохранён');
+    noPageErrors(env, 'ton wrong payload');
+  } finally { await env.close(); }
+});
+
+// TON-specific: stateInit that does not derive the claimed address is rejected (identity spoof defense)
+await scenario('ton: поддельный stateInit (не свой адрес) отклоняется', async () => {
+  const env = await setup();
+  try {
+    await env.page.evaluate((stateInit) => {
+      window.__TonConnectUIClass.prototype.connect = async function () {
+        const proof = await window.__walletSign('ton', { payload: this._tonProofPayload });
+        if (this._cb) this._cb({ account: { address: '0:' + '00'.repeat(32), walletStateInit: stateInit }, connectItems: { tonProof: { proof } } });
+      };
+    }, ADDR.tonStateInit);
+    await env.page.evaluate(() => claimChain('ton'));
+    await logHas(env.page, '✘ ton: ');
+    assert.ok(!(await addresses(env.page)).includes('ton:'), 'адрес не сохранён');
+    noPageErrors(env, 'ton spoofed stateInit');
   } finally { await env.close(); }
 });
 
