@@ -50,7 +50,7 @@ for genre in ("anime lofi", "chill phonk"):
     assert src["path"] == "bank", src
     assert calls.count("cx/gpt-image-1.5") == 2, calls  # исходная модель + один ретрай по reset after
     assert any("flux" in c for c in calls), "не переключился на другую модель"
-    assert sleeps == [8], sleeps  # 6s + 2
+    assert sleeps == [8, 8], sleeps  # по одному ретраю (6s+2) на каждую модель
     assert not (d / "cover_fallback.json").exists() and qg.fallback_why(d) == [], "банк есть, а стоит заглушка"
     from PIL import Image
     assert Image.open(d / "cover.png").size[0] >= 1024, "из банка пришла не обложка"
