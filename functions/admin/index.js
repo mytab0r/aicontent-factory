@@ -252,13 +252,21 @@ async function claim(chain) {
   const btn = document.getElementById('connect-all');
   btn.disabled = true;
   try {
-    const { nonce, message } = await api('/api/claim/nonce', { chain });
-    if (!nonce) throw new Error('сервер не выдал nonce');
-    const payload = message || nonceMsg(nonce);
-    const w = await WALLETS[chain](payload);
+    let w, nonce, message;
+    if (chain === 'ton') {
+      // TON Connect подписывает nonce как ton_proof payload в процессе подключения —
+      // nonce нужен ДО вызова кошелька (в отличие от остальных цепочек).
+      ({ nonce, message } = await api('/api/claim/nonce', { chain }));
+      if (!nonce) throw new Error('сервер не выдал nonce');
+      w = await WALLETS[chain](message || nonceMsg(nonce));
+    } else {
+      w = await WALLETS[chain]();
+      ({ nonce, message } = await api('/api/claim/nonce', { chain }));
+      if (!nonce) throw new Error('сервер не выдал nonce');
+    }
     const address = w.address;
     if (!address) throw new Error('кошелёк не вернул адрес');
-    const signature = await w.sign(payload);
+    const signature = await w.sign(message || nonceMsg(nonce));
     const j = await api('/api/claim/verify', { chain, address, signature, nonce });
     if (j.ok) { log('✔ ' + chain + ': адрес сохранён ' + j.address); await loadConfig(); }
     else log('✘ ' + chain + ': ' + (j.error || 'отказ') + (j.detail ? ' — ' + j.detail : ''));
