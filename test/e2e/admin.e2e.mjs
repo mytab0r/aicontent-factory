@@ -127,12 +127,12 @@ const SSO = 'e2e-sso-secret';
 const browser = process.env.CDP_URL ? await chromium.connectOverCDP(process.env.CDP_URL) : await chromium.launch();
 const HOST = process.env.E2E_HOST || '127.0.0.1';
 
-async function setup({ wallets = true, reject = null } = {}) {
+async function setup({ wallets = true, reject = null, userAgent } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pay-e2e-'));
   const srv = makeServer({ dataDir: dir, ownerEmail: 'o@example.com', proxySecret: SSO, extraEnv: { REOWN_PROJECT_ID: 'e2e-project-id' } });
   await new Promise((r) => srv.listen(0, '0.0.0.0', r));
   const base = `http://${HOST}:${srv.address().port}`;
-  const ctx = await browser.newContext({ extraHTTPHeaders: { 'x-pay-proxy-auth': SSO } });
+  const ctx = await browser.newContext({ extraHTTPHeaders: { 'x-pay-proxy-auth': SSO }, ...(userAgent ? { userAgent } : {}) });
   await ctx.exposeFunction('__walletSign', walletSign);
   await ctx.addInitScript(injectWallets, { wallets, reject, addr: ADDR });
   const page = await ctx.newPage();
@@ -285,9 +285,31 @@ await scenario('S7 evm: Telegram UA — сразу подсказка без м�
     await env.page.evaluate(() => claimChain('evm'));
     await logHas(env.page, '✘ evm: кошелёк не найден');
     assert.ok(await env.page.locator('#nowallet').isVisible(), 'подсказка видна');
-    assert.match(await env.page.locator('#nowallet-msg').textContent(), /Safari/);
+    assert.match(await env.page.locator('#nowallet-msg').textContent(), /pay\.pxbt\.app\/admin в SafePal → Discover/);
     assert.ok(!(await env.page.evaluate(() => window.__appkit && window.__appkit.modal.getState().open)), 'модалка не открывается');
     noPageErrors(env, 'S7');
+  } finally { await env.close(); }
+});
+
+// S8: Telegram WebView / iOS без window.ethereum — подсказка SafePal видна сразу после загрузки, без клика
+const IOS_SAFARI = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+const IOS_TG = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Telegram-iOS/10.0';
+for (const [name, userAgent] of [['iOS без window.ethereum', IOS_SAFARI], ['Telegram UA', IOS_TG]]) {
+  await scenario(`S8 ${name}: подсказка SafePal → Discover сразу при загрузке`, async () => {
+    const env = await setup({ wallets: false, userAgent });
+    try {
+      await env.page.waitForFunction(() => !document.getElementById('nowallet').hidden, null, { timeout: 3000 });
+      assert.match(await env.page.locator('#nowallet-msg').textContent(), /pay\.pxbt\.app\/admin в SafePal → Discover/);
+      noPageErrors(env, 'S8');
+    } finally { await env.close(); }
+  });
+}
+// S8b: десктоп без кошелька — подсказка при загрузке НЕ показывается (не шумим зря)
+await scenario('S8b desktop: подсказки при загрузке нет', async () => {
+  const env = await setup({ wallets: false });
+  try {
+    await env.page.waitForTimeout(1000);
+    assert.ok(await env.page.locator('#nowallet').isHidden(), 'подсказка скрыта на десктопе');
   } finally { await env.close(); }
 });
 

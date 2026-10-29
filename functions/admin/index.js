@@ -96,6 +96,15 @@ function injectedEvm() {
     setTimeout(() => { window.removeEventListener('eip6963:announceProvider', on); res(first || (window.ethereum ? { provider: window.ethereum } : null)); }, 300);
   });
 }
+// Telegram WebView / iOS без инжектед-кошелька: WalletConnect deep links там ненадёжны -> подсказка SafePal сразу.
+const isTelegramWebView = () => /Telegram/i.test(navigator.userAgent);
+const isIOS = () => /iPhone|iPad|iPod/i.test(navigator.userAgent);
+const needsWalletBrowser = () => isTelegramWebView() || (isIOS() && !window.ethereum);
+const NOWALLET_HINT = 'Откройте pay.pxbt.app/admin в SafePal → Discover (вставьте адрес в строку поиска) и нажмите «Подключить кошелек». Или в Safari: в Telegram «…» → Открыть в Safari.';
+function showNoWalletHint() {
+  document.getElementById('nowallet-msg').textContent = NOWALLET_HINT;
+  document.getElementById('nowallet').hidden = false;
+}
 // AppKit (WalletConnect): уже подключённая сессия или модалка + ожидание подключения (до 3 мин).
 async function appkitEvm() {
   const m = window.__appkit.modal;
@@ -104,7 +113,7 @@ async function appkitEvm() {
     // Висящая WC-сессия без аккаунта (прошлая попытка/другая сеть) дизейблит все кошельки в модалке (AppKit: hasAnyConnection). Сбрасываем.
     try { await m.disconnect(); } catch (e) {}
     // iOS Telegram in-app browser: deep links из модалки не работают — сразу подсказка, модалка вторична.
-    if (/Telegram/i.test(navigator.userAgent)) {
+    if (isTelegramWebView()) {
       throw Object.assign(new Error('кошелёк не найден'), { nowallet: true });
     }
     await m.open();
@@ -194,8 +203,7 @@ async function claim(chain) {
     else if (rejected(e)) log('✘ ' + chain + ': ' + (e && e.connect ? 'подключение отклонено в кошельке' : 'подпись отклонена в кошельке'));
     else if (e && e.nowallet) {
       log('✘ ' + chain + ': кошелёк не найден');
-      document.getElementById('nowallet-msg').textContent = 'Откройте pay.pxbt.app/admin во встроенном браузере кошелька (SafePal: Discover → ввести адрес) или в Safari на iPhone (в Telegram: «…» → Открыть) и повторите.';
-      document.getElementById('nowallet').hidden = false;
+      showNoWalletHint();
     }
     else log('✘ ' + chain + ': ' + ((e && e.message) || String(e)));
   } finally { btn.disabled = false; }
@@ -299,6 +307,8 @@ async function loadProviders() {
   renderProviders(list);
 }
 loadConfig().catch((e) => log('✘ конфиг: ' + e.message));
+// Инжект провайдера кошелька может прийти чуть позже загрузки — проверяем через 500 мс.
+setTimeout(() => { if (needsWalletBrowser()) showNoWalletHint(); }, 500);
 loadProviders().catch(() => {});
 </script></body></html>`;
   return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
