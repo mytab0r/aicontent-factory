@@ -59,5 +59,12 @@ put = "      - name: x\n{}        run: sh deploy/gpu-pc/acf_out.sh put 1 a.mp3\n
 assert A(put.format("").splitlines()) == [(2, "acf-out-always")]
 assert A(put.format("        if: steps.g.outputs.p != '1'\n").splitlines()) == [(3, "acf-out-always")]
 assert A(put.format("        if: always() && x\n").splitlines()) == []
+# t_bac7e3ad: прямая mcr.microsoft.com/playwright ссылка в FROM/pull/container обязана ронять линт
+assert lint.lint_mcr(["FROM mcr.microsoft.com/playwright:v1.64.1-noble\n"]) == [(1, "mcr-playwright-pull")]
+assert lint.lint_mcr(["      container: mcr.microsoft.com/playwright:v1.64.1-noble\n"]) == [(1, "mcr-playwright-pull")]
+assert lint.lint_mcr(["          docker pull mcr.microsoft.com/playwright:v1.64.1-noble\n"]) == [(1, "mcr-playwright-pull")]
+assert lint.lint_mcr(["      # root-cause: t_bac7e3ad\n", "FROM mcr.microsoft.com/playwright:v1.64.1-noble\n"]) == []
+assert lint.lint_mcr(["# TLS handshake timeout к mcr.microsoft.com валил CI\n"]) == []
+
 assert lint.main(str(ROOT)) == 0
 print("ok")

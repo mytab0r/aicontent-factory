@@ -39,6 +39,31 @@ SIZE_MAX_MB = 10
 TEXT_EXT = re.compile(r"\.(?:json|jsonl|log|txt|md|csv)$")
 PATH_KEY = re.compile(r"""^\s*(?:-\s*)?path:\s*(.*?)\s*(?:#.*)?$""")
 
+# t_bac7e3ad: прямой pull mcr.microsoft.com/playwright с раннеров ПК/ВПС валил CI TLS handshake
+# timeout'ом (HEAD-запрос manifest, TLS RST на 150.171.69/70). Фикс — test/e2e/Dockerfile собирает
+# образ сам (node:20-bookworm-slim + npx playwright install). Guard ловит возврат прямой ссылки
+# в FROM/docker pull/docker run/container:/services:/image: — не в описательных комментариях.
+MCR_REF = re.compile(r"mcr\.microsoft\.com/playwright", re.I)
+MCR_DIRECTIVE = re.compile(r"^\s*FROM\s|container:|services:|image:|docker\s+(?:pull|run)\b", re.I)
+
+
+def lint_mcr(lines):
+    out = []
+    for i, line in enumerate(lines):
+        if not MCR_REF.search(line) or line.lstrip().startswith("#"):
+            continue
+        if not MCR_DIRECTIVE.search(line):
+            continue
+        ctx, j = [line], i - 1
+        while j >= 0 and lines[j].strip().startswith("#"):
+            ctx.append(lines[j])
+            j -= 1
+        if not any(ROOT_CAUSE.search(c) for c in ctx):
+            out.append((i + 1, "mcr-playwright-pull"))
+    return out
+
+
+
 
 def _rules(line, lines=None, i=0):
     if COE.match(line):
@@ -179,10 +204,15 @@ def lint_artifacts(lines):
 def main(root="."):
     root = pathlib.Path(root)
     files = sorted(p for ext in ("*.yml", "*.yaml") for p in (root / ".github/workflows").glob(ext))
+    # t_bac7e3ad: ссылка на mcr.microsoft.com/playwright может прятаться в Dockerfile, не только в workflow
+    files += sorted(p for p in root.rglob("Dockerfile*") if "node_modules" not in p.parts)
     bad = 0
     for f in files:
         lines = f.read_text(encoding="utf-8").splitlines()
-        for n, rule in lint_text("\n".join(lines)) + lint_net_timeout(lines) + lint_artifacts(lines):
+        checks = lint_mcr(lines)
+        if f.suffix in (".yml", ".yaml"):
+            checks += lint_text("\n".join(lines)) + lint_net_timeout(lines) + lint_artifacts(lines)
+        for n, rule in checks:
             print(f"{f.relative_to(root).as_posix()}:{n}: {rule}: {lines[n - 1].strip()}")
             bad += 1
     if bad:
