@@ -136,6 +136,14 @@ try {
   assert.strictEqual((await req('/i/nope')).status, 404);
   assert.strictEqual((await req('/healthz')).status, 200);
 
+  // манифест TonConnect — публичный, нужен кошелькам без SSO (t_6c9b8247)
+  {
+    const r = await req('/tonconnect-manifest.json');
+    assert.strictEqual(r.status, 200);
+    const j = await r.json();
+    assert.strictEqual(j.url, 'https://pay.pxbt.app');
+  }
+
   // реестр адресов для агентов (t_705becfe): публичное чтение, явная ошибка при отсутствии
   {
     let j = await (await req('/api/address?chain=tron')).json();
