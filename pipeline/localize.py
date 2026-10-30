@@ -17,7 +17,9 @@ import sys
 from pathlib import Path
 
 LANGS = {"es": ("Spanish (neutral Latin American)", "Español"), "pt-BR": ("Brazilian Portuguese", "Português (Brasil)")}
-MODELS = ["glm/glm-5.3-flash", "auto-worker-combo"]  # 19.10: gemini 429, glm/combo отдают валидный JSON
+# t_b87507e0 (30.10): glm убран — 404 (нет активных кредов на 9router). auto-cheap-combo — живой
+# второй фолбэк (проверено прямым запросом к 9router).
+MODELS = ["auto-worker-combo", "auto-cheap-combo"]
 
 
 def enabled() -> bool:

@@ -78,6 +78,33 @@ def test_idea_main_survives_router_down():
         assert (Path(d) / "idea.json").exists()
 
 
+def test_dead_models_removed_from_chains():
+    """t_b87507e0: glm (404 нет кредов) и cx/gpt-5.5 (400 unsupported) мертвы на 9router — не в цепочках."""
+    idea_mod = load("01_idea.py")
+    loc_mod = load("localize.py")
+    for chain in (idea_mod.MODELS, loc_mod.MODELS):
+        assert "glm/glm-5.3-flash" not in chain, chain
+        assert "cx/gpt-5.5" not in chain, chain
+
+
+def test_llm_idea_falls_through_model_chain():
+    """t_b87507e0: модель[0] падает (как 404/400 — без ретраев) -> сразу модель[1], без лишних попыток."""
+    idea_mod = load("01_idea.py")
+    calls = []
+
+    def fake_router_post(path, payload, **kw):
+        calls.append(payload["model"])
+        if payload["model"] == idea_mod.MODELS[0]:
+            raise RuntimeError("9router HTTP 404: model_not_found")
+        return {"choices": [{"message": {"content": '{"ok": true}'}}]}
+
+    idea_mod.router_post = fake_router_post
+    idea_mod.MODELS = ["dead-model", "live-model"]
+    out, err = idea_mod.llm_idea("prompt")
+    assert err is None and out == {"ok": True}, (out, err)
+    assert calls == ["dead-model", "live-model"], calls
+
+
 def test_fallback_cover_png():
     cover = load("02_cover.py")
     from PIL import Image
