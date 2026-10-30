@@ -1,0 +1,101 @@
+name: pc-langfuse-deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "deploy | status | logs | stop"
+        type: choice
+        options: [deploy, status, logs, stop]
+        default: deploy
+      force:
+        description: "force recreate secrets and directories"
+        type: boolean
+        default: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: generate secrets on PC (first run)
+        if: ${{ inputs.force || inputs.action == 'deploy' }}
+        run: |
+          set -e
+          mkdir -p /run/desktop/mnt/host/c/dockerlocal/langfuse/secrets
+          for f in postgres_password clickhouse_password redis_password minio_root_user minio_root_password nextauth_secret; do
+            if [ ! -f /run/desktop/mnt/host/c/dockerlocal/langfuse/secrets/${f}.txt ] || [ "${{ inputs.force }}" = "true" ]; then
+              openssl rand -base64 32 | tr -d '\n' > /run/desktop/mnt/host/c/dockerlocal/langfuse/secrets/${f}.txt
+              echo "Generated $f"
+            fi
+          done
+
+      - name: create data directories on PC
+        if: ${{ inputs.action == 'deploy' }}
+        run: |
+          set -e
+          for d in postgres clickhouse redis minio web-uploads; do
+            mkdir -p /run/desktop/mnt/host/c/dockerlocal/langfuse/$d
+          done
+
+      - name: deploy langfuse stack
+        if: ${{ inputs.action == 'deploy' }}
+        run: |
+          set -e
+          cd deploy/gpu-pc/langfuse
+          docker compose pull
+          docker compose up -d
+          for i in {1..30}; do
+            sleep 10
+            if docker compose ps --format '{{.Name}} {{.Status}}' | grep -q 'unhealthy'; then
+              echo "Some services unhealthy, checking..."
+              docker compose ps
+            fi
+            READY=$(docker compose ps --format '{{.Name}} {{.Status}}' | grep -c 'healthy\|running' || true)
+            TOTAL=$(docker compose ps --format '{{.Name}}' | wc -l)
+            echo "[$i/30] $READY/$TOTAL services ready"
+            if [ "$READY" -eq "$TOTAL" ] && [ "$TOTAL" -gt 0 ]; then
+              echo "All services up"
+              exit 0
+            fi
+          done
+          echo "Timeout waiting for services"
+          docker compose ps
+          docker compose logs --tail 50
+          exit 1
+
+      - name: show langfuse status
+        if: ${{ inputs.action == 'status' || inputs.action == 'deploy' }}
+        run: |
+          set -e
+          cd deploy/gpu-pc/langfuse
+          docker compose ps --format '{{.Name}}\t{{.Status}}\t{{.Image}}'
+          echo
+          echo "=== Web health ==="
+          curl -sf http://localhost:3000/api/public/health || echo "web not responding"
+          echo
+          echo "=== Resource usage ==="
+          docker stats --no-stream langfuse-postgres langfuse-clickhouse langfuse-redis langfuse-minio langfuse-web langfuse-worker 2>/dev/null || true
+
+      - name: show langfuse logs
+        if: ${{ inputs.action == 'logs' }}
+        run: |
+          set -e
+          cd deploy/gpu-pc/langfuse
+          docker compose logs --tail 100 -f
+
+      - name: stop langfuse stack
+        if: ${{ inputs.action == 'stop' }}
+        run: |
+          set -e
+          cd deploy/gpu-pc/langfuse
+          docker compose down
+
+      - name: verify langfuse reachable from VPS via pc-link
+        if: ${{ inputs.action == 'deploy' }}
+        run: |
+          set -e
+          echo "Testing pc-link tunnel to langfuse-web:3000..."
+          curl -sf http://localhost:3000/api/public/health && echo "PC local: OK"

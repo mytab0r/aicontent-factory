@@ -1,0 +1,46 @@
+name: pc-link-update
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "rebuild | status"
+        type: choice
+        options: [rebuild, status]
+        default: rebuild
+
+jobs:
+  rebuild:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: build updated pc-link image
+        if: ${{ inputs.action == 'rebuild' }}
+        run: |
+          set -e
+          cd deploy/gpu-pc/langfuse
+          docker build -t pc-link:4 .
+          echo "Built pc-link:4"
+
+      - name: restart pc-link with new image
+        if: ${{ inputs.action == 'rebuild' }}
+        run: |
+          set -e
+          docker rm -f pc-link 2>/dev/null || true
+          # pc-link needs the keys volume and runnernet/proxynet networks
+          docker run -d --name pc-link --restart unless-stopped \
+            --network runnernet \
+            --network-alias pc-link \
+            -v pclink-keys:/k:ro \
+            pc-link:4
+          sleep 5
+          docker ps --filter name=pc-link --format '{{.Names}} {{.Status}} {{.Image}}'
+          echo "pc-link restarted with new port forward"
+
+      - name: show pc-link status
+        run: |
+          set -e
+          docker ps --filter name=pc-link --format '{{.Names}} {{.Status}} {{.Image}}'
+          docker logs --tail 20 pc-link
