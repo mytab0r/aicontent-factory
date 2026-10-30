@@ -1,0 +1,7 @@
+# Ignore secrets
+secrets/
+deploy/gpu-pc/langfuse/secrets/
+
+# Ignore docker volumes
+/mnt/d/
+/run/desktop/mnt/host/c/
