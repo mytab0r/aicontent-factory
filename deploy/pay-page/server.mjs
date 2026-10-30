@@ -22,6 +22,7 @@ import * as claimVerify from '../../functions/api/claim/verify.js';
 import * as invoiceCreate from '../../functions/api/invoice/create.js';
 import * as invoiceApi from '../../functions/api/invoice/[[id]].js';
 import * as invoicePage from '../../functions/i/[[id]].js';
+import * as tonManifest from '../../functions/tonconnect-manifest.json.js';
 import * as payPage from '../../functions/pay/index.js';
 import * as tarot from '../../functions/tarot/index.js';
 
@@ -139,6 +140,7 @@ export function makeServer({ dataDir, ownerEmail, apiToken, accessTeam, accessAu
 
     if (p === '/healthz') return json({ ok: true, sha: process.env.GIT_SHA || 'unknown' });
     if (p === '/' ) return payPage.onRequestGet(ctx());
+    if (p === '/tonconnect-manifest.json' && m === 'GET') return tonManifest.onRequestGet(ctx());
 
     // публичное: страница счёта и его API
     let mm;
