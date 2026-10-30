@@ -201,3 +201,9 @@ if __name__ == "__main__":
         if name.startswith("test_"):
             fn()
             print(f"ok {name}")
+
+
+def test_private_and_unlisted_excluded():
+    vids = [{"id": i, "title": i, "published": NOW} for i in ("pub", "priv", "unl", "unknown")]
+    got = pa.public_only(vids, {"pub": "public", "priv": "private", "unl": "unlisted"})
+    assert [v["id"] for v in got] == ["pub"]

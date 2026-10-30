@@ -136,9 +136,18 @@ def uploads(at):
     ch = api(YT + "channels?part=contentDetails&mine=true", at)["items"][0]
     pl = ch["contentDetails"]["relatedPlaylists"]["uploads"]
     items = api(YT + f"playlistItems?part=contentDetails,snippet&maxResults={HISTORY}&playlistId={pl}", at)["items"]
-    return [{"id": i["contentDetails"]["videoId"], "title": i["snippet"]["title"],
-             "published": dt.datetime.fromisoformat(i["contentDetails"]["videoPublishedAt"].replace("Z", "+00:00"))}
-            for i in items if i["contentDetails"].get("videoPublishedAt")]
+    ids = ",".join(i["contentDetails"]["videoId"] for i in items)
+    privacy = {v["id"]: v["status"]["privacyStatus"]
+               for v in (api(YT + f"videos?part=status&id={ids}", at)["items"] if ids else [])}
+    return public_only([{"id": i["contentDetails"]["videoId"], "title": i["snippet"]["title"],
+                         "published": dt.datetime.fromisoformat(i["contentDetails"]["videoPublishedAt"].replace("Z", "+00:00"))}
+                        for i in items if i["contentDetails"].get("videoPublishedAt")], privacy)
+
+
+def public_only(videos, privacy):
+    """Private/unlisted (тесты, dry-run, недопубликованное) не попадают ни в отчёт, ни в медиану:
+    зрителей у них нет, метрики = мусор. Неизвестный статус = не public = выкидываем."""
+    return [v for v in videos if privacy.get(v["id"]) == "public"]
 
 
 def metric(at, ids, start, name) -> dict:
