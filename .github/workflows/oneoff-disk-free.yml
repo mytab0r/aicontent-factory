@@ -1,11 +1,11 @@
 name: oneoff-disk-free
 # t_629a7ba2: C: free 30G = пол disk_floors.env -> bank_release скипает слот (nobank), 04b не запускается.
-# Меряем, что занимает C:, и снимаем acf-out старше 2 суток (регенерируемое: ссылки на прогоны в TG).
+# Меряем, что занимает C:, и снимаем acf-out старше 7 суток (регенерируемое: ссылки на прогоны в TG).
 on:
   workflow_dispatch:
     inputs:
       apply:
-        description: "1 = удалить acf-out старше 2 суток"
+        description: "1 = удалить acf-out старше 7 суток"
         default: "0"
 jobs:
   free:
@@ -18,6 +18,6 @@ jobs:
           set -eu
           docker run --rm -v /run/desktop/mnt/host/c:/c:ro alpine:3.20 sh -c 'df -h /c | tail -1; du -xsh /c/dockerlocal/* 2>/dev/null | sort -h | tail -8'
           if [ "${{ inputs.apply }}" = "1" ]; then
-            docker run --rm -v /run/desktop/mnt/host/c:/c alpine:3.20 sh -c 'find /c/dockerlocal/acf-out -mindepth 1 -maxdepth 1 -type d -mtime +2 ! -exec test -e {}/keep \; -print -exec rm -rf {} + | wc -l'
+            docker run --rm -v /run/desktop/mnt/host/c:/c alpine:3.20 sh -c 'find /c/dockerlocal/acf-out -mindepth 1 -maxdepth 1 -type d -mtime +7 ! -exec test -e {}/keep \; -print -exec rm -rf {} + | wc -l'
             docker run --rm -v /run/desktop/mnt/host/c:/c:ro alpine:3.20 sh -c 'df -h /c | tail -1'
           fi
