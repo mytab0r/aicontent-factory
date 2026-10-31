@@ -1,0 +1,22 @@
+name: oneoff-disk-top
+# t_629a7ba2: C: 30.9G при поле 30G -> bank_release nobank -> 04b не запускается. Точечный замер едоков C:.
+on:
+  push:
+    branches: [ops/dtop]
+  workflow_dispatch:
+jobs:
+  top:
+    runs-on: [self-hosted, release]
+    timeout-minutes: 15
+    steps:
+      - name: measure
+        run: |
+          docker run --rm -v /run/desktop/mnt/host/c:/c:ro alpine:3.20 sh -c '
+            df -h /c | tail -1
+            echo "== hiber/pagefile =="
+            ls -la /c/hiberfil.sys /c/pagefile.sys /c/swapfile.sys 2>&1
+            echo "== dockerlocal =="
+            du -xsh /c/dockerlocal/* 2>/dev/null | sort -h | tail -8
+            echo "== acf-out =="
+            du -sk /c/dockerlocal/acf-out/* 2>/dev/null | sort -rn | head -10
+          '
