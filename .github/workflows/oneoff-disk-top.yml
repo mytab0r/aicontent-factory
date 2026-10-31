@@ -1,4 +1,7 @@
 name: oneoff-disk-top
+# t_629a7ba2: C: 29.6G < пола 30G -> bank_release nobank -> 04b не запускается.
+# Все каталоги acf-out моложе 7 суток, поэтому штатный ретеншн (#355) ничего не снял.
+# Снимаем acf-out старше 2 суток (регенерируемое, ссылки на прогоны в TG), keep-каталоги не трогаем.
 on:
   push:
     branches: [ops/dtop]
@@ -8,14 +11,10 @@ jobs:
     runs-on: [self-hosted, release]
     timeout-minutes: 15
     steps:
-      - name: measure
+      - name: prune acf-out older than 2 days
         run: |
-          docker run --rm -v /run/desktop/mnt/host/c:/c:ro alpine:3.20 sh -c '
+          docker run --rm -v /run/desktop/mnt/host/c:/c alpine:3.20 sh -c '
             df -h /c | tail -1
-            echo "== wsl vhdx =="
-            find /c/Users -xdev -name "*.vhdx" -size +2G -printf "%s %p\n" 2>/dev/null | sort -rn | head -6
-            echo "== user caches =="
-            du -xsh /c/Users/*/AppData/Local/Temp /c/Users/*/AppData/Local/uv /c/Users/*/AppData/Local/pip /c/Users/*/AppData/Local/npm-cache /c/Users/*/AppData/Local/Docker /c/Users/*/AppData/Roaming/Docker* 2>/dev/null | sort -h | tail -10
-            echo "== programdata =="
-            du -xsh /c/ProgramData/* 2>/dev/null | sort -h | tail -6
+            find /c/dockerlocal/acf-out -mindepth 1 -maxdepth 1 -type d -mtime +2 ! -exec test -e {}/keep \; -print -exec rm -rf {} + | wc -l
+            df -h /c | tail -1
           '
