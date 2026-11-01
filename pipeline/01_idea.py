@@ -9,7 +9,7 @@ from datetime import date
 from pathlib import Path
 
 import dd_channel
-from common import STATE_DIR, rotate, router_post, next_mood, new_run_dir
+from common import STATE_DIR, rotate, router_post, next_mood, new_run_dir, model_alive
 from watchdog import GENRE_IN_TITLE
 
 # ponytail: фолбэк по списку; квота gemini кончается -> следующая модель.
@@ -201,6 +201,9 @@ def owning_idea() -> None:
     prompt, err = oc.idea_prompt(plan), None
     # t_b87507e0 (30.10): glm убран из цепочки — нет активных кредов на 9router (404 model_not_found).
     for model in MODELS:
+        if not model_alive(model, router_post):  # t_b87507e0: мёртвая (404/400) / лежащая (5xx) -> следующая
+            err = RuntimeError(f"{model}: probe failed (404/400/5xx)")
+            continue
         try:
             # 4000: reasoning-модели тратят бюджет до ответа (при 1500 content пустой); json_object чинит битый JSON combo
             resp = router_post("/chat/completions", {"model": model, "stream": False, "max_tokens": 4000,
@@ -223,6 +226,9 @@ def llm_idea(prompt: str):
     """(idea | None, ошибка): модели по очереди, ```json-обёртка срезается."""
     resp, err = None, None
     for model in MODELS:
+        if not model_alive(model, router_post):  # t_b87507e0: мёртвая (404/400) / лежащая (5xx) -> следующая
+            err = RuntimeError(f"{model}: probe failed (404/400/5xx)")
+            continue
         try:
             resp = router_post("/chat/completions", {
                 "model": model,
