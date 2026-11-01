@@ -88,12 +88,12 @@ def test_dead_models_removed_from_chains():
 
 
 def test_llm_idea_falls_through_model_chain():
-    """t_b87507e0: модель[0] падает (как 404/400 — без ретраев) -> сразу модель[1], без лишних попыток."""
+    """t_b87507e0: probe мёртвой модели (404) -> сразу следующая; генерация только у живой."""
     idea_mod = load("01_idea.py")
     calls = []
 
     def fake_router_post(path, payload, **kw):
-        calls.append(payload["model"])
+        calls.append((payload["model"], payload.get("max_tokens")))
         if payload["model"] == idea_mod.MODELS[0]:
             raise RuntimeError("9router HTTP 404: model_not_found")
         return {"choices": [{"message": {"content": '{"ok": true}'}}]}
@@ -102,7 +102,9 @@ def test_llm_idea_falls_through_model_chain():
     idea_mod.MODELS = ["dead-model", "live-model"]
     out, err = idea_mod.llm_idea("prompt")
     assert err is None and out == {"ok": True}, (out, err)
-    assert calls == ["dead-model", "live-model"], calls
+    # мёртвая не получает полный запрос: только probe (16 токенов), затем probe+генерация живой
+    assert [c for c in calls if c[0] == "dead-model"] == [("dead-model", 16)], calls
+    assert calls[-2:] == [("live-model", 16), ("live-model", 1500)], calls
 
 
 def test_fallback_cover_png():

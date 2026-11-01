@@ -74,13 +74,16 @@ def check_translation(src: dict, out: dict) -> dict:
 
 
 def llm_translate(src: dict, lang: str) -> dict:
-    from common import router_post
+    from common import router_post, model_alive
     prompt = (f"Translate this YouTube Shorts metadata and subtitle lines from English to {LANGS[lang][0]}. "
               "Keep numbers, $ amounts, URLs and #hashtags unchanged; natural spoken style; same number of lines, same order.\n"
               'Return STRICT JSON only: {"title": str (max 100 chars), "description": str, "lines": [str, ...]}\n\n'
               + json.dumps(src, ensure_ascii=False))
     err = None
     for model in MODELS:
+        if not model_alive(model, router_post):  # t_b87507e0: мёртвая (404/400) / лежащая (5xx) -> следующая
+            err = RuntimeError(f"{model}: probe failed (404/400/5xx)")
+            continue
         try:
             resp = router_post("/chat/completions", {"model": model, "stream": False, "max_tokens": 6000,
                                                      "response_format": {"type": "json_object"},
