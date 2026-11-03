@@ -260,22 +260,30 @@ def _music_mod():
 
 
 def master_final(track: str, genre: str) -> None:
-    """t_cron1024b (run 40087548227): сегменты мастерились поодиночке, но concat перекодирует
-    и поднимает пики — TP склейки -0.8 dBTP > порога гейта -1.0 (клиппинг).
-    TP в норме -> только fade_end (0 проходов: шаг в P18-бюджете 20 мин; полный
-    mastering.master на часовом файле > 20 мин, run 40095684453 — timeout).
-    TP > -1 -> один проход loudnorm TP=-2 (EQ сегменты получили при записи в банк)."""
+    """t_cron1024b + t_619efc27: release path lacked loudnorm; final mix LRA can be below gate
+    because individual bank segments pass per-segment gate but concat doesn't raise LRA.
+    Now: measure -> if LRA < 4.0 add extra loudnorm LRA=11; if TP > -1 add TP=-2 fix; always fade_end."""
     import os
     import subprocess
     m = _music_mod()
     import mastering
     from quality_gate import LUFS_TARGET
+    metrics = mastering.measure(track)
+    passes = []
+    if metrics["lra"] < 4.0:
+        tmp = track + ".lra.mp3"
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", track,
+                        "-af", f"loudnorm=I={LUFS_TARGET:g}:TP=-2:LRA=11",
+                        "-c:a", "libmp3lame", "-b:a", "192k", tmp], check=True)
+        os.replace(tmp, track)
+        passes.append("lra")
     if mastering.measure(track)["tp"] > -1.0:
         tmp = track + ".tp.mp3"
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", track,
-                        "-af", f"loudnorm=I={LUFS_TARGET:g}:TP=-2:LRA=11", "-c:a", "libmp3lame", "-b:a", "192k", tmp],
-                       check=True)
+                        "-af", f"loudnorm=I={LUFS_TARGET:g}:TP=-2:LRA=11",
+                        "-c:a", "libmp3lame", "-b:a", "192k", tmp], check=True)
         os.replace(tmp, track)
+        passes.append("tp")
     m.fade_end(track)
 
 

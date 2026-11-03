@@ -152,23 +152,27 @@ def test_assemble_writes_music_meta_and_concat():
     sys.modules["acf_music03"] = m
     spec.loader.exec_module(m)
     calls = {}
-    m.prep_segments = lambda ps, log=print: calls.setdefault("prep", ps)
-    m.concat_tracks = lambda ps, out, xfade=m.XFADE: calls.update(out=str(out), paths=ps)
-    bank_release.master_final = lambda path, genre: calls.update(master=str(path), genre=genre)  # mastering не тестируем
-    m._probe_sec = lambda p: 180.0
-    with tempfile.TemporaryDirectory() as td:
-        rd = Path(td)
-        paths = [rd / "a.mp3", rd / "b.mp3"]
-        for p in paths:
-            p.write_bytes(b"x")
-        metas = [meta("a", 89, "F major", seed=11), meta("b", 89, "F major", seed=22)]
-        mm = bank_release.assemble(paths, rd, metas, "anime lofi")
-        assert calls["paths"] == [str(x) for x in paths] and calls["out"].endswith("track.mp3")
-        assert mm["genre"] == "anime lofi" and "89 BPM" in mm["prompt"]
-        assert mm["seed"] == 11 and len(mm["segments"]) == 2
-        assert mm["chapters"] and len(mm["seams"]) == 1
-        on_disk = json.loads((rd / "music_meta.json").read_text(encoding="utf-8"))
-        assert on_disk["segments"] == mm["segments"]
+    saved_mf = bank_release.master_final
+    try:
+        m.prep_segments = lambda ps, log=print: calls.setdefault("prep", ps)
+        m.concat_tracks = lambda ps, out, xfade=m.XFADE: calls.update(out=str(out), paths=ps)
+        bank_release.master_final = lambda path, genre: calls.update(master=str(path), genre=genre)  # mastering не тестируем
+        m._probe_sec = lambda p: 180.0
+        with tempfile.TemporaryDirectory() as td:
+            rd = Path(td)
+            paths = [rd / "a.mp3", rd / "b.mp3"]
+            for p in paths:
+                p.write_bytes(b"x")
+            metas = [meta("a", 89, "F major", seed=11), meta("b", 89, "F major", seed=22)]
+            mm = bank_release.assemble(paths, rd, metas, "anime lofi")
+            assert calls["paths"] == [str(x) for x in paths] and calls["out"].endswith("track.mp3")
+            assert mm["genre"] == "anime lofi" and "89 BPM" in mm["prompt"]
+            assert mm["seed"] == 11 and len(mm["segments"]) == 2
+            assert mm["chapters"] and len(mm["seams"]) == 1
+            on_disk = json.loads((rd / "music_meta.json").read_text(encoding="utf-8"))
+            assert on_disk["segments"] == mm["segments"]
+    finally:
+        bank_release.master_final = saved_mf
 
 
 def test_release_budget_under_15_min():
@@ -372,6 +376,135 @@ def test_pick_short_mix_instead_of_skip():
     ents = [_meta(f"g{i}", 89, "F major") for i in range(3)]
     got = bank_release.pick(ents, need=20, now=now, used_lines=[], rng=__import__("random").Random(1))
     assert got is None, got
+
+
+def test_master_final_low_lra_applies_extra_loudnorm_and_fade():
+    """master_final: LRA < 4.0 -> extra loudnorm pass LRA=11 + fade_end."""
+    import bank_release as br
+    import mastering
+    from quality_gate import LUFS_TARGET
+
+    saved_measure = mastering.measure
+    saved_run = __import__("subprocess").run
+    calls = []
+
+    def fake_measure(path: str) -> dict:
+        return {"i": -14.0, "lra": 3.2, "tp": -1.4}
+
+    def fake_run(cmd, *a, **k):
+        calls.append(cmd)
+        try:
+            if isinstance(cmd, list) and cmd[:1] == ['ffmpeg'] and '-af' in cmd and any(str(p).endswith('.mp3') for p in cmd):
+                out = [p for p in cmd if str(p).endswith('.mp3')][-1]
+                Path(out).write_bytes(b'ff')
+        except Exception:
+            pass
+        stdout = b'10.0\n' if isinstance(cmd, list) and cmd[:1] == ['ffprobe'] else b""
+        r = type('R', (), {})()
+        r.stdout = stdout
+        r.stderr = b""
+        r.returncode = 0
+        return r
+
+    mastering.measure = fake_measure
+    __import__("subprocess").run = fake_run
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            track = Path(td) / "track.mp3"
+            track.write_bytes(b"x")
+            br.master_final(str(track), "anime lofi")
+    finally:
+        mastering.measure = saved_measure
+        __import__("subprocess").run = saved_run
+    assert any(f"loudnorm=I={LUFS_TARGET:g}:TP=-2:LRA=11" in " ".join(c) for c in calls), calls
+    assert any("afade=t=out" in " ".join(c) for c in calls), calls
+    print("ok master_final low-LRA fix applied")
+
+
+def test_master_final_high_tp_applies_tp_fix():
+    """master_final: TP > -1 -> one-pass TP=-2 loudnorm + fade_end."""
+    import bank_release as br
+    import mastering
+    from quality_gate import LUFS_TARGET
+
+    saved_measure = mastering.measure
+    saved_run = __import__("subprocess").run
+    calls = []
+
+    def fake_measure(path: str) -> dict:
+        return {"i": -14.0, "lra": 4.5, "tp": -0.7}
+
+    def fake_run(cmd, *a, **k):
+        calls.append(cmd)
+        try:
+            if isinstance(cmd, list) and cmd[:1] == ['ffmpeg'] and '-af' in cmd and any(str(p).endswith('.mp3') for p in cmd):
+                out = [p for p in cmd if str(p).endswith('.mp3')][-1]
+                Path(out).write_bytes(b'ff')
+        except Exception:
+            pass
+        stdout = b'10.0\n' if isinstance(cmd, list) and cmd[:1] == ['ffprobe'] else b""
+        r = type('R', (), {})()
+        r.stdout = stdout
+        r.stderr = b""
+        r.returncode = 0
+        return r
+
+    mastering.measure = fake_measure
+    __import__("subprocess").run = fake_run
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            track = Path(td) / "track.mp3"
+            track.write_bytes(b"x")
+            br.master_final(str(track), "anime lofi")
+    finally:
+        mastering.measure = saved_measure
+        __import__("subprocess").run = saved_run
+    assert any(f"loudnorm=I={LUFS_TARGET:g}:TP=-2:LRA=11" in " ".join(c) for c in calls), calls
+    assert any("afade=t=out" in " ".join(c) for c in calls), calls
+    print("ok master_final TP fix applied")
+
+
+def test_master_final_no_op_when_metrics_ok():
+    """master_final: LRA >= 4.0 and TP <= -1 -> only fade_end, no extra loudnorm."""
+    import bank_release as br
+    import mastering
+    from quality_gate import LUFS_TARGET
+
+    saved_measure = mastering.measure
+    saved_run = __import__("subprocess").run
+    calls = []
+
+    def fake_measure(path: str) -> dict:
+        return {"i": -14.0, "lra": 4.2, "tp": -1.4}
+
+    def fake_run(cmd, *a, **k):
+        calls.append(cmd)
+        try:
+            if isinstance(cmd, list) and cmd[:1] == ['ffmpeg'] and '-af' in cmd and any(str(p).endswith('.mp3') for p in cmd):
+                out = [p for p in cmd if str(p).endswith('.mp3')][-1]
+                Path(out).write_bytes(b'ff')
+        except Exception:
+            pass
+        stdout = b'10.0\n' if isinstance(cmd, list) and cmd[:1] == ['ffprobe'] else b""
+        r = type('R', (), {})()
+        r.stdout = stdout
+        r.stderr = b""
+        r.returncode = 0
+        return r
+
+    mastering.measure = fake_measure
+    __import__("subprocess").run = fake_run
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            track = Path(td) / "track.mp3"
+            track.write_bytes(b"x")
+            br.master_final(str(track), "anime lofi")
+    finally:
+        mastering.measure = saved_measure
+        __import__("subprocess").run = saved_run
+    assert not any("loudnorm=I=" in " ".join(c) for c in calls), calls
+    assert any("afade=t=out" in " ".join(c) for c in calls), calls
+    print("ok master_final no-op when metrics good")
 
 
 if __name__ == "__main__":
