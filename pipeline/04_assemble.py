@@ -18,7 +18,7 @@ import subprocess
 from PIL import Image, ImageDraw, ImageOps
 
 from common import latest_run_dir
-from quality_gate import LUFS_TARGET, MAX_TP
+from quality_gate import LUFS_TARGET, MAX_TP, encode_aac_tp, tp_of
 
 TARGET_W, TARGET_H = 1920, 1080  # V8: 720p в нише = «дёшево», HD-ранжирование ниже
 
@@ -58,27 +58,10 @@ def normalize(track, dst) -> None:
 TP_TARGET = MAX_TP - 0.3  # запас под округление гейта 04b
 
 
-def tp_of(path) -> float:
-    e = subprocess.run(["ffmpeg", "-nostdin", "-hide_banner", "-nostats", "-i", str(path), "-vn",
-                        "-af", "ebur128=peak=true", "-f", "null", "-"], capture_output=True, text=True).stderr
-    return float(re.findall(r"Peak:\s+(-?[\d.]+|-inf)", e)[-1].replace("-inf", "-200"))
-
-
 def encode_audio(src, dst, tries=5) -> float:
-    """t_fef617d9: AAC-кодер ffmpeg (192k) поднимает true peak на несколько дБ ПОСЛЕ лимитера
-    (run 40408005493: track TP -1.4 -> video.mp4 +6.5). Лимитер до кодера овершут не видит, поэтому
-    меряем ЗАКОДИРОВАННЫЙ звук и опускаем потолок лимитера, пока TP <= TP_TARGET; mux потом -c:a copy.
-    320k: овершут кодера меньше (замер: -3.2 dBTP wav -> +1.3 при 192k, -2.6 при 320k). Не сошлось = исключение."""
-    limit, tp = -1.5, None
-    for _ in range(tries):
-        subprocess.run(["ffmpeg", "-nostdin", "-y", "-loglevel", "error", "-i", str(src),
-                        "-af", f"alimiter=limit={limit:.2f}dB:level=false",
-                        "-c:a", "aac", "-b:a", "320k", str(dst)], check=True)
-        tp = tp_of(dst)
-        if tp <= TP_TARGET:
-            return tp
-        limit -= tp - TP_TARGET + 0.5
-    raise RuntimeError(f"AAC true peak {tp:+.1f} dBTP > {TP_TARGET} после {tries} проходов")
+    """t_fef617d9/t_f5e84e62: замер TP ЗАКОДИРОВАННОГО звука, а не WAV до кодера (320k: овершут меньше).
+    Механизм общий для всех путей рендера — quality_gate.encode_aac_tp (одно место, не копия)."""
+    return encode_aac_tp(src, dst, "320k", TP_TARGET, tries)
 
 
 def assemble_loop(run_dir, loop, track, out_path) -> None:

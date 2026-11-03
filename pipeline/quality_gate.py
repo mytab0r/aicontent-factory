@@ -194,6 +194,29 @@ def duration(f):
                                 capture_output=True, text=True).stdout)
 
 
+def tp_of(f) -> float:
+    """True peak файла (ebur128=peak=true), дБТП; -inf -> -200."""
+    e = ff(f, "ebur128=peak=true")
+    return float(re.findall(r"Peak:\s+(-?[\d.]+|-inf)", e)[-1].replace("-inf", "-200"))
+
+
+def encode_aac_tp(src, dst, bitrate: str, tp_max: float, tries: int = 5) -> float:
+    """t_f5e84e62: AAC-кодер поднимает true peak ПОСЛЕ лимитера — лимитер овершут кодера не видит.
+    Замер: WAV TP -1.5 -> +0.1 dBTP после aac 192k (фикстура click/noise), 04b run 40408005493 -3.7 -> +6.5.
+    Поэтому меряем ЗАКОДИРОВАННЫЙ звук и опускаем потолок лимитера, пока TP <= tp_max; mux потом -c:a copy.
+    Не сошлось = исключение (не молча: иначе гейт ловит клиппинг уже после заливки)."""
+    limit, tp = tp_max - 0.5, None
+    for _ in range(tries):
+        subprocess.run(["ffmpeg", "-nostdin", "-y", "-loglevel", "error", "-i", str(src),
+                        "-af", f"alimiter=limit={limit:.2f}dB:level=false",
+                        "-c:a", "aac", "-b:a", bitrate, str(dst)], check=True)
+        tp = tp_of(dst)
+        if tp <= tp_max:
+            return tp
+        limit -= tp - tp_max + 0.5
+    raise RuntimeError(f"AAC true peak {tp:+.1f} dBTP > {tp_max} после {tries} проходов: {dst}")
+
+
 def cut(f, start, length, out):
     subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-ss", str(max(0.0, start)), "-t", str(length), "-i", str(f),
                     "-vn", "-c:a", "pcm_s16le", str(out)], check=True)

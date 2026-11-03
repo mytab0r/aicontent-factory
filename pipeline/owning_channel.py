@@ -16,7 +16,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from quality_gate import LUFS_TARGET
+from quality_gate import LUFS_TARGET, SPEECH_TP_MAX, encode_aac_tp
 
 TOPICS = [
     "car wash", "laundromat", "vending route", "self-storage facility",
@@ -302,8 +302,14 @@ def render(run_dir: Path) -> Path:
     lst = w / "list.txt"
     lst.write_text("".join(f"file '{p.name}'\n" for p in segs))
     out = run_dir / "video.mp4"
+    # t_f5e84e62: громкость -> WAV, AAC-кодер отдельно с замером TP ПОСЛЕ кодера, mux -c:a copy
+    # (loudnorm TP=-2 не видит овершут кодера: WAV -1.5 -> +0.1 dBTP после aac 192k).
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(lst),
-                    "-af", f"loudnorm=I={LUFS_TARGET:g}:TP=-2.0", "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", str(out)], check=True)
+                    "-af", f"loudnorm=I={LUFS_TARGET:g}:TP=-2.0", "-c:a", "pcm_s16le", str(w / "mix.wav")], check=True)
+    aac = w / "mix.m4a"
+    encode_aac_tp(w / "mix.wav", aac, "160k", SPEECH_TP_MAX)
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(lst),
+                    "-i", str(aac), "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "copy", str(out)], check=True)
     total = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0",
                                   str(out)], capture_output=True, text=True, check=True).stdout)
     if total > 60:
