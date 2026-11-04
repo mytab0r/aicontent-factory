@@ -1,0 +1,19 @@
+# Prod: image from GHCR (CI build-push job publishes :latest on main);
+# Watchtower on the host pulls + restarts containers labelled below.
+# No manual stop/rm/run.
+
+services:
+  dashboard:
+    image: ghcr.io/mytab0r/aicontent-factory:latest
+    container_name: aicontent-factory-dashboard
+    restart: unless-stopped
+    env_file:
+      - .env.dashboard
+    volumes:
+      - data:/opt/data
+    network_mode: host
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+
+volumes:
+  data:
