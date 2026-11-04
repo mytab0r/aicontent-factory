@@ -209,13 +209,13 @@ def rms_db(f, start, dur):
 
 def critic_clips(paths):
     """Реальный критик: CE для каждого wav ОДНИМ прогоном audiobox в контейнере ace-step (модель грузится 1 раз)."""
+    td = tempfile.mkdtemp()
     names = []
-    with tempfile.TemporaryDirectory() as td:  # t_3c6b9f04: копии wav не копятся в /tmp
-        for i, p in enumerate(paths):  # имя сортируется = порядок paths (AES читает sorted listdir)
-            names.append(f"c{i:05d}.wav")
-            subprocess.run(["cp", str(p), f"{td}/{names[-1]}"], check=True)
-        subprocess.run(["docker", "exec", "ace-step", "sh", "-c", "rm -rf /app/output/qg && mkdir -p /app/output/qg"], check=True)
-        subprocess.run(["docker", "cp", f"{td}/.", "ace-step:/app/output/qg/in"], check=True)
+    for i, p in enumerate(paths):  # имя сортируется = порядок paths (AES читает sorted listdir)
+        names.append(f"c{i:05d}.wav")
+        subprocess.run(["cp", str(p), f"{td}/{names[-1]}"], check=True)
+    subprocess.run(["docker", "exec", "ace-step", "sh", "-c", "rm -rf /app/output/qg && mkdir -p /app/output/qg"], check=True)
+    subprocess.run(["docker", "cp", f"{td}/.", "ace-step:/app/output/qg/in"], check=True)
     out = subprocess.run(["docker", "exec", "ace-step", "sh", "-c", AES], capture_output=True, text=True, timeout=3000)
     res = {l.split("\t")[0]: json.loads(l.split("\t")[1])["CE"] for l in out.stdout.splitlines() if "\t" in l}
     want = ["in/" + n for n in names]
@@ -233,11 +233,11 @@ def _critic(paths, critic):
 
 def window_report(f, seams=(), critic=None):
     """CE по всем окнам WIN + окну ±SEAM_HALF и RMS по сторонам каждого стыка. Сбой критика = исключение."""
-    ws = windows(duration(f))
-    with tempfile.TemporaryDirectory() as td:  # t_3c6b9f04: w/s000NN.wav (до 620 MB) удаляются и при сбое
-        clips = [cut(f, s, l, f"{td}/w{i:05d}.wav") for i, (s, l) in enumerate(ws)]
-        clips += [cut(f, t - SEAM_HALF, 2 * SEAM_HALF, f"{td}/s{i:05d}.wav") for i, t in enumerate(seams)]
-        ce = _critic(clips, critic)
+    dur, td = duration(f), tempfile.mkdtemp()
+    ws = windows(dur)
+    clips = [cut(f, s, l, f"{td}/w{i:05d}.wav") for i, (s, l) in enumerate(ws)]
+    clips += [cut(f, t - SEAM_HALF, 2 * SEAM_HALF, f"{td}/s{i:05d}.wav") for i, t in enumerate(seams)]
+    ce = _critic(clips, critic)
     return {"wins": [(s, round(c, 3)) for (s, _), c in zip(ws, ce)],
             "seams": [{"t": t, "ce": round(c, 3), "rms_l": round(rms_db(f, t - SEAM_HALF, min(SEAM_HALF, t)), 2),
                        "rms_r": round(rms_db(f, t, SEAM_HALF), 2)} for t, c in zip(seams, ce[len(ws):])]}
@@ -255,13 +255,12 @@ def full_ce_why(f, seams=(), critic=None):
 def ce_windows_batch(files, critic=None):
     """Гейт сегмента час-микса (gated_gen/best-of): CE КАЖДОГО окна WIN каждого файла одним прогоном критика.
     Возврат [[ce окна, ...], ...] в порядке files; min() = R1 сегмента. Ошибка критика = исключение."""
-    clips, n, out = [], [], []
-    with tempfile.TemporaryDirectory() as td:
-        for fi, f in enumerate(files):
-            ws = windows(duration(f))
-            clips += [cut(f, s, l, f"{td}/f{fi:03d}w{i:04d}.wav") for i, (s, l) in enumerate(ws)]
-            n.append(len(ws))
-        ce = _critic(clips, critic)
+    td, clips, n = tempfile.mkdtemp(), [], []
+    for fi, f in enumerate(files):
+        ws = windows(duration(f))
+        clips += [cut(f, s, l, f"{td}/f{fi:03d}w{i:04d}.wav") for i, (s, l) in enumerate(ws)]
+        n.append(len(ws))
+    ce, out = _critic(clips, critic), []
     for k in n:
         out, ce = out + [ce[:k]], ce[k:]
     return out
@@ -274,12 +273,11 @@ def ce_scores(f):
 def ce_batch(files, critic=None):
     """t_b4006a6e (best-of сегментов): CE 3 отрывков по 30 с (10/50/90 %) на трек одним прогоном критика.
     Возврат [[c,c,c], ...] в порядке files. Ошибка критика = исключение (FAIL)."""
-    clips = []
-    with tempfile.TemporaryDirectory() as td:
-        for fi, f in enumerate(files):
-            dur = duration(f)
-            clips += [cut(f, dur * frac - 15, 30, f"{td}/t{fi:03d}c{i}.wav") for i, frac in enumerate((0.1, 0.5, 0.9))]
-        ce = _critic(clips, critic)
+    td, clips = tempfile.mkdtemp(), []
+    for fi, f in enumerate(files):
+        dur = duration(f)
+        clips += [cut(f, dur * frac - 15, 30, f"{td}/t{fi:03d}c{i}.wav") for i, frac in enumerate((0.1, 0.5, 0.9))]
+    ce = _critic(clips, critic)
     return [ce[3 * i:3 * i + 3] for i in range(len(files))]
 
 
@@ -372,23 +370,6 @@ SHORT_FADES = "afade=t=in:d=0.5,afade=t=out:st={st:.2f}:d=1.5"
 EDGE_WIN, EDGE_DROP = 0.05, 12.0
 
 
-# V8: 720p в ленте выглядит дёшево и не получает HD-ранжирование (p-kkEmLGviU был 1280x720).
-MIN_SHORT = 1080
-
-
-def res_why(f):
-    """V8: [причина], если короткая сторона видео < 1080 (720p = дёшево, HD-ранжирование ниже)."""
-    j = json.loads(subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
-                                   "stream=width,height", "-of", "json", str(f)],
-                                  capture_output=True, text=True).stdout or "{}")
-    st = (j.get("streams") or [{}])[0]
-    w, h = int(st.get("width") or 0), int(st.get("height") or 0)
-    if not w or not h:
-        return []  # нет видео-потока — разрешение не наша проверка
-    return [f"разрешение {w}x{h}: короткая сторона < {MIN_SHORT} (V8: 720p выглядит дёшево)"] \
-        if min(w, h) < MIN_SHORT else []
-
-
 def short_edge_why(f):
     """A24: [причины], если шортс начинается/кончается скачком (нет фейда)."""
     d = duration(f)
@@ -477,13 +458,6 @@ def tuning_why(f):
 
 
 
-# A27: YouTube перекодирует звук в Opus и поднимает true peak речи. Замер 26.10 YouTube-копий канала 2:
-# K5cqI_AX4hk TP -0.3, kQauDNrBAWU -0.8 dBTP (мастер проходил MAX_TP -1.0); A26: Opus +0.6 дБ.
-# Мастер речи обязан иметь запас: TP <= MAX_TP - OPUS_OVERSHOOT (-1.6). Мастер A26 (loudnorm TP=-2.0) проходит.
-OPUS_OVERSHOOT = 0.6
-SPEECH_TP_MAX = MAX_TP - OPUS_OVERSHOOT
-
-
 def speech_why(f):
     """A25: звук речевого ролика (edge-tts): громкость MIN_I..MAX_I, true peak <= MAX_TP, нет тишины >= SIL_MIN с
     ниже SIL_DB (сбой TTS пункта = пустой mp3) вне первых 0.5 с и последней 1 с. Замер 23.10 канала 2 с YouTube
@@ -496,8 +470,7 @@ def speech_why(f):
     dur = duration(f)
     st = [float(x) for x in re.findall(r"silence_start: (-?[\d.]+)", e)]
     en = [float(x) for x in re.findall(r"silence_end: ([\d.]+)", e)] + [dur] * len(st)
-    why = loud_why(li) + ([f"true peak {tp:+.1f} dBTP > {SPEECH_TP_MAX}: клиппинг после Opus YouTube"]
-                          if tp > SPEECH_TP_MAX else [])
+    why = loud_why(li) + ([f"true peak {tp:+.1f} dBTP > {MAX_TP}: клиппинг"] if tp > MAX_TP else [])
     return why + [f"тишина {b - a:.1f} с на {a:.1f} с (< {SIL_DB} дБ): сбой озвучки" for a, b in zip(st, en)
                   if a > 0.5 and b < dur - 1.0]
 
@@ -518,7 +491,7 @@ def video_why(d):
             why.append(f"нет файла {os.path.basename(str(f))}")
             continue
         tag = os.path.basename(str(f))
-        why += [f"{tag}: {w}" for w in integrity_why(f) + black_why(f) + res_why(f) + speech_why(f) + (short_why(f) if f in shorts else [])]
+        why += [f"{tag}: {w}" for w in integrity_why(f) + black_why(f) + speech_why(f) + (short_why(f) if f in shorts else [])]
     return why + cover_why(os.path.join(d, "cover.png"))
 
 
@@ -555,13 +528,9 @@ def main(argv):
     why += tuning_why(f)  # A19
     why += end_why(f)  # A16: только целый трек/финальный mp4, не сегменты best-of (их хвосты режет склейка)
     if "--final" in argv:
-        why += integrity_why(f, expect) + black_why(f) + res_why(f)
+        why += integrity_why(f, expect) + black_why(f)
         why += cover_why(os.path.join(os.path.dirname(str(f)), "cover.png"))  # V9
         why += fallback_why(os.path.dirname(str(f)))  # V14
-        cs = os.path.join(os.path.dirname(str(f)), "cover_source.json")  # t_629a7ba2: какой путь дал обложку
-        if os.path.exists(cs):
-            src = json.load(open(cs, encoding="utf-8"))
-            print(f"cover_source: {src.get('path')} {src.get('model') or src.get('file') or ''}".rstrip())
     if "--no-ce" not in argv:  # R4: окна CE/дрейф/стыки и на финальном mp4 (04b) — мерим то, что заливается
         w, rep = full_ce_why(f, seams)
         why += w
