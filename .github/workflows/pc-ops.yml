@@ -109,16 +109,19 @@ jobs:
             -e POSTGRES_PASSWORD=postiz-local-pw -e POSTGRES_USER=postiz-user -e POSTGRES_DB=postiz-db-local \
             -v /run/desktop/mnt/host/c/dockerlocal/postiz/pg-data:/var/lib/postgresql/data postgres:17-alpine
           docker run -d --name postiz-redis --restart unless-stopped --network postiz-net redis:7-alpine
-          # YOUTUBE_TOKEN_JSON — authorized_user creds (Desktop OAuth client владельца),
-          # содержит client_id/client_secret. Postiz может переиспользовать тот же client,
-          # но нужен ОДИН ручной шаг владельца: добавить Web redirect URI в GCP Console
-          # (см. вывод ниже) — headless-сессия это сделать не может (OAuth consent screen edit).
+          if [ -n "${{ secrets.GHCR_TOKEN }}" ]; then
+            # root-cause: t_831d9fd6 — docker login daemon ping ghcr.io/v2/ через прокси Docker Desktop -> timeout.
+            # Используем DOCKER_CONFIG вместо docker login: пишем auth в временный конфиг, docker pull подхватит сам.
+            mkdir -p /tmp/docker-config
+            printf '{"auths":{"ghcr.io":{"auth":"%s"}}\n' "$(echo -n "${{ github.actor }}:${{ secrets.GHCR_TOKEN }}" | base64 -w0)" > /tmp/docker-config/config.json
+            export DOCKER_CONFIG=/tmp/docker-config
+          fi
           YT_ID=$(python3 -c "import json,os; print(json.loads(os.environ['YOUTUBE_TOKEN_JSON']).get('client_id',''))")
           YT_SECRET=$(python3 -c "import json,os; print(json.loads(os.environ['YOUTUBE_TOKEN_JSON']).get('client_secret',''))")
-          for i in 1 2 3; do
-            docker pull ghcr.io/gitroomhq/postiz-app:latest && break
-            [ $i = 3 ] && { echo "::error::postiz image pull failed"; exit 1; }
-            sleep 15
+          for i in 1 2 3 4 5; do
+            docker pull --platform linux/amd64 ghcr.io/gitroomhq/postiz-app:latest && break
+            [ $i = 5 ] && { echo "::error::postiz image pull failed"; exit 1; }
+            sleep $((i * 15))
           done
           docker run -d --name postiz --restart unless-stopped --network postiz-net -p 5070:5000 \
             -e MAIN_URL="http://localhost:5070" -e FRONTEND_URL="http://localhost:5070" \
