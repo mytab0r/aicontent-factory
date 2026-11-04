@@ -78,4 +78,37 @@ assert src["path"] == "fallback_model" and "flux" in src["model"] and sleeps == 
 # без банка и без моделей — прежний V14: заглушка + маркер (04b не пропустит)
 d, src = run("всё 429, банк пуст ->", always_429, bank=False)
 assert src["path"] == "placeholder" and qg.fallback_why(d), src
+
+# t_2b4f5dec: 401/403/404/408 не должны жечь лимиты ретраями — сразу дальше по цепочке
+AUTH_401 = '9router /images/generations HTTP 401: {"error":{"message":"[codex/gpt-image-1.5] [401]: Encountered invalidated oauth token for user, failing request (reset after 6s)"}}'
+auth_calls = []
+def auth_401_all(path, body, timeout=0):
+    auth_calls.append(body["model"])
+    raise RuntimeError(AUTH_401)
+
+# gpt-image 401, flux ok -> fallback_model без лишних повторений gpt
+n_gpt = []
+def gpt_401_flux_ok(path, body, timeout=0):
+    if "gpt-image" in body["model"]:
+        n_gpt.append(body["model"])
+        raise RuntimeError(AUTH_401)
+    assert "size" not in body, "flux не принимает size"
+    return {"data": [{"b64_json": png_b64()}]}
+
+os.environ["GENRE"] = "anime lofi"
+d, src = run("401 -> flux ->", gpt_401_flux_ok)
+assert src["path"] == "fallback_model" and "flux" in src["model"], src
+assert n_gpt.count("cx/gpt-image-1.5") == 2, n_gpt  # один size 1536x1024 + один 1024x1024, без ретраев на 401
+assert qg.fallback_why(d) == []
+
+# все 401 -> банк
+os.environ["GENRE"] = "anime lofi"
+d, src = run("401 всё -> банк ->", auth_401_all)
+assert src["path"] == "bank", src
+assert qg.fallback_why(d) == []
+
+# все 401, банк пуст -> заглушка
+d, src = run("401 всё, банк пуст ->", auth_401_all, bank=False)
+assert src["path"] == "placeholder" and qg.fallback_why(d), src
+
 print("test_cover_429 OK")
