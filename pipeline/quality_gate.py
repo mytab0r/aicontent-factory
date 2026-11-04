@@ -28,6 +28,7 @@ BAND_MAX = 5.0   # жёсткое: одиночная полоса дальше 
 BAND_SOFT_SUM = 8.0  # сумма мягких отклонений (одобренный versija_1 даёт 7.7, жалобы 14.9+)
 BAL_TOL = 2.0
 MAX_TP = -1.0  # true peak dBTP; 17.10 YouTube-копия p-kkEmLGviU: +1.3..+1.9 = клиппинг  # (среднее 1-5 кГц) - (150-400 Гц) не хуже эталона более чем на столько
+SPEECH_TP_MAX = -1.6  # речь: мастер с запасом на Opus YouTube (+2..3 dBTP при перекодировке); -1.0 уходит в +1..+2
 # A6: внутренняя тишина/обрыв >= 2 с ниже -50 дБ вне хвоста (последние 10 с = штатное затухание: ref1 6.5 с, v2 3.4 с)
 SIL_DB, SIL_MIN, TAIL = -50, 2.0, 10.0
 # A15: интегральная громкость финального звука. YouTube нормализует к ~-14 LUFS: тише -16 = трек проигрывает
@@ -459,7 +460,7 @@ def tuning_why(f):
 
 
 def speech_why(f):
-    """A25: звук речевого ролика (edge-tts): громкость MIN_I..MAX_I, true peak <= MAX_TP, нет тишины >= SIL_MIN с
+    """A25: звук речевого ролика (edge-tts): громкость MIN_I..MAX_I, true peak <= SPEECH_TP_MAX, нет тишины >= SIL_MIN с
     ниже SIL_DB (сбой TTS пункта = пустой mp3) вне первых 0.5 с и последней 1 с. Замер 23.10 канала 2 с YouTube
     (7 роликов): I -14.5..-13.9, TP -1.5..-1.0, макс. пауза между фразами 1.52 с."""
     e = ff(f, f"ebur128=peak=true,silencedetect=n={SIL_DB}dB:d={SIL_MIN}")
@@ -470,7 +471,7 @@ def speech_why(f):
     dur = duration(f)
     st = [float(x) for x in re.findall(r"silence_start: (-?[\d.]+)", e)]
     en = [float(x) for x in re.findall(r"silence_end: ([\d.]+)", e)] + [dur] * len(st)
-    why = loud_why(li) + ([f"true peak {tp:+.1f} dBTP > {MAX_TP}: клиппинг"] if tp > MAX_TP else [])
+    why = loud_why(li) + ([f"true peak {tp:+.1f} dBTP > {SPEECH_TP_MAX}: клиппинг"] if tp > SPEECH_TP_MAX else [])
     return why + [f"тишина {b - a:.1f} с на {a:.1f} с (< {SIL_DB} дБ): сбой озвучки" for a, b in zip(st, en)
                   if a > 0.5 and b < dur - 1.0]
 
