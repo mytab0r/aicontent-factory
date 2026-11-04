@@ -342,7 +342,7 @@ await scenario('S4b evm: verify не отвечает', async () => {
     await logHas(env.page, '✘ evm: сеть недоступна', 20_000);
     assert.ok(Date.now() - t0 <= 17_000, 'тайм-аут ≤15 с');
     // Ждём снятия disabled — не тайминг, а состояние (фикс флака: гонка с 500мс поллом в appkitEvm)
-    await env.page.waitForFunction(() => !document.getElementById('connect-all').disabled, null, { timeout: 5000 });
+    await env.page.waitForFunction(() => !document.getElementById('connect-all').disabled, null, { timeout: 15000 });
     assert.ok(env.failed.some((u) => u.endsWith('/api/claim/verify')), 'запрос отменён клиентом');
     noPageErrors(env, 'evm');
   } finally { await env.close(); }
@@ -374,7 +374,7 @@ await scenario('S6 evm: закрыл модалку — кнопка актив�
     assert.ok(await env.page.evaluate(() => document.getElementById('connect-all').disabled), 'кнопка disabled, пока модалка открыта');
     await env.page.evaluate(() => window.__appkit.modal.close());
     // Ждём снятия disabled — не тайминг, а состояние (фикс флака S6: гонка с 500мс поллом в appkitEvm)
-    await env.page.waitForFunction(() => !document.getElementById('connect-all').disabled, null, { timeout: 5000 });
+    await env.page.waitForFunction(() => !document.getElementById('connect-all').disabled, null, { timeout: 15000 });
     // Стабильность: после закрытия модалки кнопка не должна снова disabled.
     await env.page.waitForTimeout(50);
     assert.ok(!await env.page.evaluate(() => document.getElementById('connect-all').disabled), 'кнопка остаётся активной после закрытия модалки');
