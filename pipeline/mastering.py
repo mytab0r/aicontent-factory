@@ -27,6 +27,11 @@ def measure(path: str) -> dict:
             "tp": float(re.findall(r"Peak:\s+(-?[\d.]+) dBFS", tail)[-1])}
 
 
+# lofi (одобрен 13.10 по ref1, LRA ~11): только громкость платформы, без EQ/компрессоров.
+# Цепочка ниже одобрена для phonk (14.10); на lofi она давила LRA 10.9 -> 1.8 («каша», 16.10).
+LOFI_AF = f"highpass=f=28,loudnorm=I={LUFS_TARGET:g}:TP=-2:LRA=11"
+
+
 EQ_MAX_DB = 6.0
 EQ_PASSES = 2
 
@@ -79,34 +84,20 @@ def master(src: str, dst: str, genre: str = "chill phonk") -> dict:
         for _ in range(EQ_PASSES):
             run(dst, dst, f"{eq_af(eq_gains(bands(dst), REF['phonk']['bands']))},loudnorm=I={LUFS_TARGET:g}:TP=-2:LRA=8")
     else:
-        # t_522ca872: lofi громкость БЕЗ loudnorm. Динамический loudnorm тянет громкость
-        # нестационарным усилением: LRA 19.3 -> 0.7-1.6 («каша», 11/14 прогонов теряли выпуск,
-        # медиана забракованных 2.6 при пороге 3.5); линейный (measured) при требуемом усилении
-        # больше запаса до TP-потолка молча возвращается к dynamic. Статический volume LRA не
-        # меняет, alimiter (-1.8 dBFS, запас на mp3-овершут) держит TP; на ref1/жёсткой фикстуре идемпотентен (1x == 2x).
-        m0 = measure(src)
-        already = -15 <= m0["i"] <= -13 and m0["tp"] <= -1
-        if not already:
-            s = src
-            for _ in range(EQ_PASSES):
-                run(s, dst, f"highpass=f=28,{eq_af(eq_gains(bands(s), REF['lofi']['bands']))}")
-                s = dst
-        lofi_lim = "alimiter=limit=0.813:level=disabled:attack=0.1:release=20:asc=0"  # -1.2 dBFS
-        for _ in range(3):
-            m = measure(dst)
-            if -15 <= m["i"] <= -13 and m["tp"] <= -1:
-                break
-            run(dst, dst, f"volume={LUFS_TARGET - m['i']:.2f}dB,{lofi_lim}")
+        s = src
+        for _ in range(EQ_PASSES):
+            run(s, dst, f"highpass=f=28,{eq_af(eq_gains(bands(s), REF['lofi']['bands']))},loudnorm=I={LUFS_TARGET:g}:TP=-2:LRA=11")
+            s = dst
+        run(dst, dst, LOFI_AF)
     m = measure(dst)
-    # ponytail: догон громкости не сошёлся — ещё до 2 повторов: phonk = одобренный
-    # loudnorm-rerun, lofi = статический volume+лимитер (loudnorm давит LRA, t_522ca872).
-    lofi_lim = "alimiter=limit=0.813:level=disabled:attack=0.1:release=20:asc=0"  # -1.2 dBFS
+    # ponytail: экстремальная динамика (длинные паузы) ломает LRA одним проходом —
+    # повторные проходы сходятся (LRA 15.6->6.5->2.5); 3 прохода, дальше гейт.
+    # Повтор = loudnorm-only для обоих жанров: полная цепочка/LOFI слали бы тон заново.
+    rerun = f"loudnorm=I={LUFS_TARGET:g}:TP=-2:LRA=8" if phonk else LOFI_AF
     for _ in range(2):
         if -15 <= m["i"] <= -13 and (m["lra"] <= 8 or not phonk) and m["tp"] <= -1:
             break
-        af = (f"loudnorm=I={LUFS_TARGET:g}:TP=-2:LRA=8" if phonk
-              else f"volume={LUFS_TARGET - m['i']:.2f}dB,{lofi_lim}")
-        run(dst, dst, af)
+        run(dst, dst, rerun)
         m = measure(dst)
     assert -15 <= m["i"] <= -13, f"гейт I: {m}"
     assert m["lra"] <= 8 or not phonk, f"гейт LRA: {m}"
