@@ -24,11 +24,13 @@ jobs:
         run: |
           d="$RUNNER_TEMP/docker"; mkdir -p "$d"; echo "DOCKER_CONFIG=$d" >> "$GITHUB_ENV"
           printf '{"auths":{"ghcr.io":{"auth":"%s"}}\n' "$(printf '%s:%s' "$GITHUB_ACTOR" "$GHCR_TOKEN" | base64 -w0)" > "$d/config.json"
+      # root-cause t_a41372f5: docker-container драйвер = пустой BuildKit на каждый прогон, база node:22-alpine
+      # каждый раз заново с CloudFront Docker Hub (обрывы -> httpReadSeeker unexpected EOF). docker-драйвер
+      # берёт слои из store демона ПК, где ci/pay-image-smoke уже собрал этот Dockerfile.
       - uses: docker/setup-buildx-action@v3
         with:
-          buildkitd-config-inline: |
-            [worker.oci]
-              max-parallelism = 1
+          # docker-драйвер не поддерживает buildkitd-config-inline (max-parallelism был для docker-container)
+          driver: docker
       # preflight ghcr (image name + reachability)
       - name: preflight ghcr (image name + reachability)
         env:
@@ -49,33 +51,27 @@ jobs:
           tags: |
             type=raw,value=latest
             type=sha
-      - id: push
-        continue-on-error: true
-        uses: docker/build-push-action@v6
-        env:
-          DOCKER_BUILD_SUMMARY: "false"
-          DOCKER_BUILD_RECORD_UPLOAD: "false"
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=ghcr.io/${{ github.repository }}:latest
-          cache-to: type=inline
-      # Each attempt uploads the blobs that got through; loop until ghcr has all of them.
-      - if: steps.push.outcome == 'failure'
-        env:
-          TAGS: ${{ steps.meta.outputs.tags }}
-          REPO: ghcr.io/${{ github.repository }}
+      # root-cause t_0a4cae59: transport-обрывы egress ПК (WSL NAT / Docker Desktop proxy) роняли сборку на
+      # живом GET слоя базы (httpReadSeeker unexpected EOF -> failed to compute cache key) и push к ghcr
+      # (oauth token EOF). driver=docker (t_a41372f5) убрал пустой BuildKit, но базу, которой нет в store,
+      # демон всё равно тянет одним GET без ретраев. Механика класса: 1) базу тянем отдельно с 4 попытками
+      # (слои докачиваются, не дублируются), как в ci/e2e-admin; 2) build-push повторяем целиком до 4 раз
+      # только на transport-ошибках registry (EOF / timeout / connection reset), не маскируя другие отказы.
+      - name: pre-pull base (4 attempts, resumable layers)
         run: |
-          args=(); while read -r t; do [ -n "$t" ] && args+=(-t "$t"); done <<< "$TAGS"
+          B=$(sed -n 's/^FROM //p' Dockerfile | head -1)
+          for n in 1 2 3 4; do docker pull -q "$B" && break; [ $n = 4 ] && exit 1; echo "pull $B: попытка $n не удалась, повтор через $((n*20)) с"; sleep $((n*20)); done
+      - name: build + push (retry on registry transport errors only)
+        run: |
+          args=(); while read -r t; do [ -n "$t" ] && args+=(-t "$t"); done <<< "${{ steps.meta.outputs.tags }}"
           for i in 1 2 3 4; do
-            docker buildx build --push --provenance=false "${args[@]}" --cache-from "type=registry,ref=$REPO:latest" --cache-to type=inline . && exit 0
+            docker buildx build --push --provenance=false "${args[@]}" --cache-from "type=registry,ref=ghcr.io/${{ github.repository }}:latest" --cache-to type=inline . && exit 0
             sleep $((i * 15))
           done
           exit 1
       # Prune older versions of this image (best-effort)
-      - if: steps.push.outcome == 'success'
+      - if: always()
+        # root-cause: t_f95a06da — prune best-effort, не валит деплой
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
