@@ -115,10 +115,13 @@ jobs:
           # (см. вывод ниже) — headless-сессия это сделать не может (OAuth consent screen edit).
           YT_ID=$(python3 -c "import json,os; print(json.loads(os.environ['YOUTUBE_TOKEN_JSON']).get('client_id',''))")
           YT_SECRET=$(python3 -c "import json,os; print(json.loads(os.environ['YOUTUBE_TOKEN_JSON']).get('client_secret',''))")
-          for i in 1 2 3; do
+          # root-cause: t_1d4fa058 — Docker Desktop containerd/overlayfs bug on Windows:
+          # layers download but fail commit with "no such file or directory" in snapshotter.
+          # Fix: 5 retries (was 3), 30s delay (was 15s).
+          for i in 1 2 3 4 5; do
             docker pull ghcr.io/gitroomhq/postiz-app:latest && break
-            [ $i = 3 ] && { echo "::error::postiz image pull failed"; exit 1; }
-            sleep 15
+            [ $i = 5 ] && { echo "::error::postiz image pull failed after 5 retries"; exit 1; }
+            sleep 30
           done
           docker run -d --name postiz --restart unless-stopped --network postiz-net -p 5070:5000 \
             -e MAIN_URL="http://localhost:5070" -e FRONTEND_URL="http://localhost:5070" \
