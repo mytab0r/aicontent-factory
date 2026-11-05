@@ -19,8 +19,8 @@ from common import router_post, latest_run_dir
 # (модель, размеры по порядку). flux-1-schnell (Cloudflare) не принимает size вовсе -> None.
 SIZE = "1536x1024"  # горизонталь под 16:9; квадрат 04 обрежет. Эталон формата (используют тесты).
 _DEFAULT_MODELS = [
-    ("cx/gpt-image-1.5", [SIZE, "1024x1024"]),
-    ("cf/@cf/black-forest-labs/flux-1-schnell", [None]),
+    ("cf/@cf/black-forest-labs/flux-1-schnell", [None]),  # primary: gpt-image-1.5 401 invalidated oauth at 9router
+    ("cx/gpt-image-1.5", [SIZE, "1024x1024"]),  # fallback if oauth recovers
 ]
 MODELS = json.loads(os.environ.get("ACF_COVER_MODELS", "[]")) or _DEFAULT_MODELS
 # ponytail: 401/403/404 — без права/модель не найдена на роутере, ретраи только жгут лимиты; 408/5xx/429 — временно/перезагрузка
