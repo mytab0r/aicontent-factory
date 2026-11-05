@@ -43,13 +43,12 @@ jobs:
             echo "::error::PC runner cannot reach https://ghcr.io/v2/ (HTTP $code): egress problem on the self-hosted runner, not the image"; exit 1
           fi
           echo "ghcr reachable (HTTP $code), image $IMAGE ok"
-      - uses: docker/metadata-action@v5
-        id: meta
-        with:
-          images: ghcr.io/${{ github.repository }}
-          tags: |
-            type=raw,value=latest
-            type=sha
+      # t_619efc27: docker/metadata-action не в allowlist scripts/actions_policy.py —
+      # теги/лейблы собираем двумя echo в GITHUB_OUTPUT (тот же результат, без экшена).
+      - id: meta
+        run: |
+          echo "tags=ghcr.io/${{ github.repository }}:latest,ghcr.io/${{ github.repository }}:sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          echo "labels=org.opencontainers.image.revision=${{ github.sha }},org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" >> "$GITHUB_OUTPUT"
       # pre-pull with retry (ci-bypass-lint push-no-prepull)
       - name: pre-pull cache base (retry)
         run: |
