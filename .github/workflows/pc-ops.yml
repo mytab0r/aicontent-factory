@@ -101,6 +101,7 @@ jobs:
         run: |
           set -e
           sh deploy/gpu-pc/disk_gate.sh c 2
+          sh deploy/gpu-pc/disk_gate.sh d 2
           docker rm -f postiz postiz-postgres postiz-redis 2>/dev/null || true
           docker network create postiz-net 2>/dev/null || true
           docker run --rm -v /run/desktop/mnt/host/c/dockerlocal/postiz:/d alpine:3.20 \
@@ -116,7 +117,7 @@ jobs:
           YT_ID=$(python3 -c "import json,os; print(json.loads(os.environ['YOUTUBE_TOKEN_JSON']).get('client_id',''))")
           YT_SECRET=$(python3 -c "import json,os; print(json.loads(os.environ['YOUTUBE_TOKEN_JSON']).get('client_secret',''))")
           for i in 1 2 3; do
-            docker pull ghcr.io/gitroomhq/postiz-app:latest && break
+            docker pull ghcr.io/gitroomhq/postiz-app:v2.25.3 && break
             [ $i = 3 ] && { echo "::error::postiz image pull failed"; exit 1; }
             sleep 15
           done
@@ -129,7 +130,7 @@ jobs:
             -e STORAGE_PROVIDER=local -e UPLOAD_DIRECTORY=/uploads -e NEXT_PUBLIC_UPLOAD_DIRECTORY=/uploads \
             -e YOUTUBE_CLIENT_ID="$YT_ID" -e YOUTUBE_CLIENT_SECRET="$YT_SECRET" \
             -v /run/desktop/mnt/host/c/dockerlocal/postiz/uploads:/uploads \
-            ghcr.io/gitroomhq/postiz-app:latest
+            ghcr.io/gitroomhq/postiz-app:v2.25.3
           for i in $(seq 1 30); do
             sleep 5
             ST=$(docker inspect postiz --format '{{.State.Status}}' 2>/dev/null || true)
