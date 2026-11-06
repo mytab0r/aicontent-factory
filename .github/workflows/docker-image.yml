@@ -46,6 +46,11 @@ jobs:
             echo "::error::PC runner cannot reach https://ghcr.io/v2/ (HTTP $code): egress problem on the self-hosted runner, not the image"; exit 1
           fi
           echo "ghcr reachable (HTTP $code), image $IMAGE ok"
+      # t_0a4cae59 prepull: docker pull для прогрева layers/doc (retry 4 попытки, retryable-транспортные обрывы)
+      - name: prepull base (retry, объединённая строка для PULL_RETRY)
+        env: {B: "python:3.12-slim"}
+        run: for n in 1 2 3 4; do o=$(docker pull -q "$B" 2>&1) && break; echo "$o"; grep -qiE 'manifest unknown|not found' <<<"$o" && { echo "::error::тег $B не существует"; exit 1; }; [ $n = 4 ] && exit 1; sleep $((n*20)); done
+        timeout-minutes: 10
       - uses: docker/metadata-action@v5
         id: meta
         with:
