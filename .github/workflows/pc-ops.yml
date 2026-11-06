@@ -100,8 +100,10 @@ jobs:
           YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
         run: |
           set -e
-          sh deploy/gpu-pc/disk_gate.sh c 2
-          sh deploy/gpu-pc/disk_gate.sh d 2
+          echo "=== disk c ==="; sh deploy/gpu-pc/disk_gate.sh c 2
+          echo "=== disk d (docker_data.vhdx) ==="; sh deploy/gpu-pc/disk_gate.sh d 2
+          echo "=== docker system df ==="; docker system df || true
+          echo "=== docker images postiz (before) ==="; docker images ghcr.io/gitroomhq/postiz-app || true
           docker rm -f postiz postiz-postgres postiz-redis 2>/dev/null || true
           docker network create postiz-net 2>/dev/null || true
           docker run --rm -v /run/desktop/mnt/host/c/dockerlocal/postiz:/d alpine:3.20 \
@@ -117,10 +119,17 @@ jobs:
           YT_ID=$(python3 -c "import json,os; print(json.loads(os.environ['YOUTUBE_TOKEN_JSON']).get('client_id',''))")
           YT_SECRET=$(python3 -c "import json,os; print(json.loads(os.environ['YOUTUBE_TOKEN_JSON']).get('client_secret',''))")
           for i in 1 2 3; do
-            docker pull ghcr.io/gitroomhq/postiz-app:v2.25.3 && break
+            echo "=== pull attempt $i/3 ==="
+            if docker pull ghcr.io/gitroomhq/postiz-app:v2.25.3; then
+              echo "=== pull OK on attempt $i ==="
+              docker images ghcr.io/gitroomhq/postiz-app --format '{{.Repository}}:{{.Tag}} {{.ID}} {{.Size}}'
+              break
+            fi
+            echo "=== pull attempt $i FAILED ==="; docker system df || true; docker system events --since 1h --until 0s 2>/dev/null | tail -20 || true
             [ $i = 3 ] && { echo "::error::postiz image pull failed"; exit 1; }
-            sleep 15
+            sleep 30
           done
+          echo "=== images after pull ==="; docker images ghcr.io/gitroomhq/postiz-app --format '{{.Repository}}:{{.Tag}} {{.ID}} {{.Size}}'
           docker run -d --name postiz --restart unless-stopped --network postiz-net -p 5070:5000 \
             -e MAIN_URL="http://localhost:5070" -e FRONTEND_URL="http://localhost:5070" \
             -e NEXT_PUBLIC_BACKEND_URL="http://localhost:5070/api" -e BACKEND_INTERNAL_URL="http://localhost:3000" \
