@@ -1,0 +1,24 @@
+[
+  {
+    "id": "crypto",
+    "title": "Крипта (свои кошельки, подпись = доказательство владения)",
+    "kind": "wallets"
+  },
+  {
+    "id": "paypal",
+    "title": "PayPal",
+    "fields": [
+      { "key": "client_id", "label": "Client ID", "type": "text" },
+      { "key": "secret", "label": "Secret", "type": "secret" },
+      { "key": "mode", "label": "Режим", "type": "select", "options": ["live", "sandbox"] }
+    ],
+    "check": "paypal_oauth"
+  },
+  {
+    "id": "reown",
+    "title": "Reown (WalletConnect projectId для админки)",
+    "fields": [
+      { "key": "project_id", "label": "Project ID", "type": "text" }
+    ]
+  }
+]

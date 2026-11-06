@@ -1,0 +1,118 @@
+name: daily owning short (S1 ch1)
+# S1 ch1 «Economics of Owning» (@OwningItMath): нарративный Short = скрипт 9router + edge-tts + инфографика.
+# Публикация только при vars.OWNING_PUBLISH == '1' (ставится после вердикта владельца по сэмплу, sample gate).
+# guard: не больше owning_channel.MAX_PER_DAY загрузок в сутки (повтор слота = no-op).
+on:
+  schedule:
+    - cron: "0 15,21 * * *"  # 2 слота/день: US утро и вечер
+  workflow_dispatch:
+    inputs:
+      dryrun:
+        description: "сухой прогон launch-гейта: upload private + автосверка, без гейта и без ротации (t_479b69e6)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: daily-owning
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: [self-hosted, release]
+    timeout-minutes: 30
+    env:
+      ROUTER_BASE_URL: https://9router.pxbt.app/v1
+      ROUTER_API_KEY: ${{ secrets.ROUTER_API_KEY }}
+      CHANNEL: owning
+      # dryrun = private-публикация независимо от OWNING_PUBLISH (публики нет: PUBLISH_PRIVACY=private)
+      PUBLISH: ${{ (inputs.dryrun || vars.OWNING_PUBLISH == '1') && '1' || vars.OWNING_PUBLISH }}
+      PUBLISH_PRIVACY: ${{ inputs.dryrun && 'private' || 'public' }}
+      LOCALIZE: ${{ vars.LOCALIZE }}  # '1' = ES/pt-BR localizations + субтитры (localize.py), иначе no-op
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        timeout-minutes: 5  # t_6758c86f: сетевой шаг не висит до таймаута джобы
+      - name: install deps
+        run: |
+          command -v ffmpeg || { sudo apt-get update -y && sudo apt-get install -y ffmpeg; }
+          uv venv .venv
+          uv pip install --python .venv/bin/python pillow edge-tts google-api-python-client google-auth-oauthlib google-auth-httplib2
+      - name: token
+        env:
+          YT_CH1_TOKEN_JSON: ${{ secrets.YT_CH1_TOKEN_JSON }}
+        run: |
+          mkdir -p .state
+          printf '%s' "$YT_CH1_TOKEN_JSON" > .state/youtube_token.json
+
+      - name: guard (лимит загрузок в сутки)
+        id: guard
+        working-directory: pipeline
+        run: |
+          rc=0; ../.venv/bin/python owning_channel.py guard || rc=$?
+          [ $rc -eq 0 ] && echo "go=1" >> "$GITHUB_OUTPUT"
+          [ $rc -eq 3 ] && echo "go=0" >> "$GITHUB_OUTPUT"
+          [ $rc -eq 0 ] || [ $rc -eq 3 ]  # прочее (токен/API) = красный run, не тихий пропуск
+      - name: 01 idea (script)
+        if: steps.guard.outputs.go == '1'
+        working-directory: pipeline
+        run: ../.venv/bin/python 01_idea.py
+      - name: 04 render (tts + infographic)
+        if: steps.guard.outputs.go == '1'
+        working-directory: pipeline
+        run: ../.venv/bin/python owning_channel.py render
+      - name: spokes (Pinterest/X/блог/TG из того же скрипта, t_705386b0)
+        if: steps.guard.outputs.go == '1'
+        working-directory: pipeline
+        run: ../.venv/bin/python spokes.py
+      # P19: гейт до заливки (целостность, чёрный кадр, формат шортса, обложка). FAIL = не публиковать.
+      - name: quality gate video (FAIL = не публиковать)
+        if: steps.guard.outputs.go == '1'
+        working-directory: pipeline
+        run: ../.venv/bin/python quality_gate.py --video
+      # t_479b69e6: без GO гейта запуска ch1 — выход без upload (рендер/QA остаются, токен не пишется).
+      - name: launch gate (NO-GO = без upload)
+        id: gate
+        if: steps.guard.outputs.go == '1'
+        run: |
+          if [ "$PUBLISH_PRIVACY" = "private" ]; then echo "go=1" >> "$GITHUB_OUTPUT"; echo "dryrun: private upload, гейт не нужен"
+          else
+            # t_acc4ee1c: транскрипты критика живут в томе hermes-data (как recheck-blockers), не на раннере.
+            # Сбой копирования = транскрипта нет = NO-GO (безопасно).
+            export LAUNCH_GATE_LIVE="$RUNNER_TEMP/live"; mkdir -p "$LAUNCH_GATE_LIVE"
+            for d in $(grep -o 'deleg_[0-9a-f]\{8\}' reports/products/us-youtube-grid.launch.md | sort -u); do
+              mkdir -p "$LAUNCH_GATE_LIVE/$d"
+              docker run --rm --user 10000:10000 -v hermes-data:/opt/data:ro python:3.12-slim \
+                cat "/opt/data/cache/delegation/live/$d/task-0.log" > "$LAUNCH_GATE_LIVE/$d/task-0.log" || rm -rf "$LAUNCH_GATE_LIVE/$d"
+            done
+            if python3 scripts/launch_gate.py us-youtube-grid; then echo "go=1" >> "$GITHUB_OUTPUT"
+            else echo "::warning::launch gate NO-GO: upload ch1 пропущен (reports/products/us-youtube-grid.launch.md)"; fi
+          fi
+
+      - name: 05 publish (только после launch gate + sample gate)
+        if: steps.gate.outputs.go == '1' && env.PUBLISH == '1'
+        working-directory: pipeline
+        env:
+          PRIVACY: ${{ env.PUBLISH_PRIVACY }}
+        run: ../.venv/bin/python 05_publish.py
+      - name: verify dryrun (title/privacy/длина)
+        if: steps.gate.outputs.go == '1' && inputs.dryrun && env.PUBLISH == '1'
+        working-directory: pipeline
+        env:
+          PRIVACY: ${{ env.PUBLISH_PRIVACY }}
+        run: ../.venv/bin/python 05_publish.py --verify
+      - name: commit rotation state
+        if: steps.guard.outputs.go == '1' && !inputs.dryrun
+        run: |
+          git config user.name "aicontent-factory-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add -f .state/owning_idx.txt
+          git diff --cached --quiet || git commit -m "chore: advance owning rotation [skip ci]"
+          git pull --rebase -q && git push || true  # root-cause: t_f95a06da
+      # t_1011874c: upload-artifact убран — артефакт никто не скачивал (результат в YouTube/TG/логе шага),
+      # а каждая загрузка копила GB-часы общей квоты storage аккаунта (500MB x часы месяца).
+      - name: cleanup token
+        if: always()
+        run: rm -f .state/youtube_token.json

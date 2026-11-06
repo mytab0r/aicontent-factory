@@ -40,7 +40,22 @@ def test_alert_on_failure_exists():
     assert re.search(r"- name: TG alert on failure.*?\n        if: failure\(\)", WF, re.S), "нет TG alert на failure()"
 
 
+UPLOAD_MAX_MIN = 29  # замер 05 publish (докстринг выше): аплоад часа до 28.9 мин
+
+
+def test_claim_wait_fits_publish_timeout():
+    """25.10: claim_gate ждал CLAIM_TIMEOUT_SEC=5400 (90 мин) внутри шага с timeout 60 -> публикация
+    не могла завершиться ни разу, ролик оставался unlisted. Ожидание + аплоад <= timeout шага."""
+    blk = re.search(r"- name: 05 publish.*?(?=\n      - name:)", WF, re.S).group(0)
+    m = re.search(r'CLAIM_TIMEOUT_SEC: "?(\d+)', blk)
+    claim_min = int(m.group(1)) / 60 if m else 5400 / 60  # дефолт claim_gate.py
+    st = step_timeouts()
+    step = st[[n for n in st if n.startswith("05 publish")][0]]
+    assert UPLOAD_MAX_MIN + claim_min + 5 <= step, f"claim {claim_min} мин + аплоад {UPLOAD_MAX_MIN} > timeout шага {step}"
+
+
 if __name__ == "__main__":
     test_every_work_step_has_timeout()
     test_alert_on_failure_exists()
+    test_claim_wait_fits_publish_timeout()
     print("ok")

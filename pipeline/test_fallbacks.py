@@ -78,6 +78,35 @@ def test_idea_main_survives_router_down():
         assert (Path(d) / "idea.json").exists()
 
 
+def test_dead_models_removed_from_chains():
+    """t_b87507e0: glm (404 нет кредов) и cx/gpt-5.5 (400 unsupported) мертвы на 9router — не в цепочках."""
+    idea_mod = load("01_idea.py")
+    loc_mod = load("localize.py")
+    for chain in (idea_mod.MODELS, loc_mod.MODELS):
+        assert "glm/glm-5.3-flash" not in chain, chain
+        assert "cx/gpt-5.5" not in chain, chain
+
+
+def test_llm_idea_falls_through_model_chain():
+    """t_b87507e0: probe мёртвой модели (404) -> сразу следующая; генерация только у живой."""
+    idea_mod = load("01_idea.py")
+    calls = []
+
+    def fake_router_post(path, payload, **kw):
+        calls.append((payload["model"], payload.get("max_tokens")))
+        if payload["model"] == idea_mod.MODELS[0]:
+            raise RuntimeError("9router HTTP 404: model_not_found")
+        return {"choices": [{"message": {"content": '{"ok": true}'}}]}
+
+    idea_mod.router_post = fake_router_post
+    idea_mod.MODELS = ["dead-model", "live-model"]
+    out, err = idea_mod.llm_idea("prompt")
+    assert err is None and out == {"ok": True}, (out, err)
+    # мёртвая не получает полный запрос: только probe (16 токенов), затем probe+генерация живой
+    assert [c for c in calls if c[0] == "dead-model"] == [("dead-model", 16)], calls
+    assert calls[-2:] == [("live-model", 16), ("live-model", 1500)], calls
+
+
 def test_fallback_cover_png():
     cover = load("02_cover.py")
     from PIL import Image
@@ -112,7 +141,7 @@ def test_ace_local_down_falls_back_to_space():
 
 
 def test_frame_full_bleed_no_black_bars():
-    """Обложка любого формата заполняет кадр 1280x720 целиком (без чёрных полей)."""
+    """Обложка любого формата заполняет кадр 1920x1080 целиком (без чёрных полей; V8 25.10)."""
     from PIL import Image
     asm = load("04_assemble.py")
     with tempfile.TemporaryDirectory() as d:
@@ -120,8 +149,8 @@ def test_frame_full_bleed_no_black_bars():
         Image.new("RGB", (1024, 1024), (200, 120, 60)).save(src)
         asm.burn_overlay(src, out)
         im = Image.open(out).convert("RGB")
-        assert im.size == (1280, 720), im.size
-        for xy in [(0, 0), (1279, 0), (0, 360), (1279, 360), (640, 5)]:
+        assert im.size == (1920, 1080), im.size
+        for xy in [(0, 0), (1919, 0), (0, 540), (1919, 540), (960, 5)]:
             assert im.getpixel(xy) != (0, 0, 0), (xy, im.getpixel(xy))
 
 

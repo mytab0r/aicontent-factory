@@ -1,0 +1,283 @@
+name: A/B lofi 64-72 BPM quality test
+
+on:
+  workflow_dispatch:
+    inputs:
+      n:
+        description: "variants count"
+        default: "4"
+        type: string
+      seg_sec:
+        description: "segment length, s"
+        default: "180"
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: ab-lofi-bpm
+  cancel-in-progress: false
+
+jobs:
+  samples:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 180
+    env:
+      ACE15_ENDPOINT: http://ace-step:8001
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+
+      - uses: astral-sh/setup-uv@v3
+        timeout-minutes: 5
+        with:
+          cache-local-path: /tmp/acf-uv-cache
+
+      - name: install deps
+        run: |
+          command -v ffmpeg || { sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg; }
+          uv venv .venv
+          uv pip install --python .venv/bin/python pillow gradio_client numpy yt-dlp librosa
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+
+      - name: reference audio (cache sera)
+        run: |
+          mkdir -p /tmp/acf-ref
+          [ -s /tmp/acf-ref/sera.wav ] && exit 0
+          .venv/bin/yt-dlp -q -f bestaudio -o '/tmp/acf-ref/raw1.%(ext)s' https://youtu.be/CYZeAfaj3pc
+          ffmpeg -loglevel error -y -ss 30 -t 90 -i /tmp/acf-ref/raw1.* -ac 2 -ar 48000 /tmp/acf-ref/sera.wav
+
+      - name: ACE-Step up (start only, wait health)
+        run: |
+          docker start ace-step >/dev/null 2>&1 || true
+          for i in $(seq 1 100); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step 2>/dev/null)" = healthy ] && { echo "ace-step healthy"; exit 0; }
+            sleep 6
+          done
+          echo "::error::ace-step не healthy за 10 мин: $(docker inspect -f '{{.State.Status}}' ace-step 2>&1)"; docker logs --tail 80 ace-step 2>&1 || true; exit 1
+
+      - name: generate 4 variants x 3 segments
+        working-directory: pipeline
+        run: |
+          PATH="$PWD/../.venv/bin:$PATH" ../.venv/bin/python - <<'PY'
+          import json, os, time, subprocess, tempfile
+          from pathlib import Path
+          import sys
+          import numpy as np
+          sys.path.insert(0, str(Path.cwd()))
+
+          import importlib.util
+          spec = importlib.util.spec_from_file_location("music", "03_music.py")
+          m = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(m)
+          from quality_gate import ce_windows_batch, objective, MIN_CE
+
+          B = os.environ["ACE15_ENDPOINT"]
+          import urllib.request
+          def post(path, body, timeout=600):
+              r = urllib.request.Request(B+path, json.dumps(body).encode(), {"Content-Type":"application/json"})
+              return json.load(urllib.request.urlopen(r, timeout=timeout))
+          def post_file(path, body, field, file_path):
+              import subprocess as sp
+              args = []
+              for k, v in body.items():
+                  args += ["-F", f"{k}={str(v).lower() if isinstance(v,bool) else v}"]
+              out = sp.run(["curl","-sf","-m","120","-X","POST",B+path,"-F",f"{field}=@{file_path}"]+args,capture_output=True,text=True,timeout=600,check=True).stdout
+              return json.loads(out)
+
+          ref = "/tmp/acf-ref/sera.wav"
+          prompt_base = "dreamy lofi chillout instrumental, bright lush synth pads, sparkling bells and plucks, soft brushed drums, warm bassline, gentle swing, polished clean mix, wide stereo, serene and bright, no vocals"
+
+          # 4 variants as specified in task
+          variants = [
+            # 1. turbo inference_steps=20 (control)
+            {"name": "V1_turbo_20steps", "model": None, "extra": {"inference_steps": 20, "shift": None, "guidance_scale": None, "use_adg": None, "audio_format": "mp3"}},
+            # 2. base model, 50 steps, use_adg, shift=3
+            {"name": "V2_base_50_adg_shift3", "model": "acestep-v15-base", "extra": {"inference_steps": 50, "shift": 3.0, "guidance_scale": 7.0, "use_adg": True, "audio_format": "mp3"}},
+            # 3. wav instead of mp3 before mastering
+            {"name": "V3_turbo_wav", "model": None, "extra": {"inference_steps": 20, "shift": None, "guidance_scale": None, "use_adg": None, "audio_format": "wav"}},
+            # 4. batch_size=4, best by CE
+            {"name": "V4_turbo_batch4", "model": None, "extra": {"inference_steps": 20, "shift": None, "guidance_scale": None, "use_adg": None, "audio_format": "mp3", "batch_size": 4}},
+          ]
+
+          run_dir = Path("../runs") / f"ab_lofi_{int(time.time())}"
+          run_dir.mkdir(parents=True, exist_ok=True)
+
+          # Write manifest incrementally - start with empty array so it exists even on early failure
+          manifest = run_dir / "manifest.json"
+          manifest.write_text("[]", encoding="utf-8")
+
+          rows = []
+          seed_base = 10000
+
+          for vi, v in enumerate(variants):
+            seg_times = []
+            seg_ces = []
+            seg_bpms = []
+
+            for si in range(3):  # 3 segments per variant
+              seed = seed_base + vi * 100 + si * 10
+              duration = int(os.environ.get("SEG_SEC", "180"))
+              out_path = run_dir / f"{v['name']}_seg{si+1}.mp3"
+
+              body = {
+                "prompt": f"{prompt_base}, 68 BPM, F major",
+                "lyrics": "[Instrumental]",
+                "audio_duration": duration,
+                "bpm": 68,
+                "key_scale": "F major",
+                "time_signature": "4",
+                "thinking": True,
+                "use_random_seed": False,
+                "seed": seed,
+              }
+
+              # Apply variant-specific params
+              for k, val in v["extra"].items():
+                  if val is not None:
+                      body[k] = val
+
+              if v["model"]:
+                  body["model"] = v["model"]
+
+              t0 = time.time()
+              if Path(ref).is_file():
+                  tid = post_file("/release_task", body, "reference_audio", ref)["data"]["task_id"]
+              else:
+                  tid = post("/release_task", body)["data"]["task_id"]
+
+              # poll
+              while True:
+                  time.sleep(5)
+                  d = post("/query_result", {"task_id_list": [tid]})["data"][0]
+                  if d["status"] != 0:
+                      break
+                  if time.time() - t0 > 900:
+                      raise RuntimeError(f"{v['name']} seg{si+1} timeout")
+
+              gen_time = time.time() - t0
+
+              if d["status"] != 1:
+                  print(f"{v['name']} seg{si+1} FAILED: {d.get('result')[:200]}")
+                  rows.append({"variant": v["name"], "segment": si+1, "error": str(d.get('result'))[:200]})
+                  # Update manifest with error row
+                  manifest.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+                  continue
+
+              item = json.loads(d["result"])[0]
+              urllib.request.urlretrieve(B + item["file"], str(out_path))
+
+              # Mastering (lofi genre)
+              import mastering
+              mastering.master(str(out_path), str(out_path), genre="anime lofi")
+
+              # Measure BPM - robust handling for librosa version differences
+              import librosa
+              y, sr = librosa.load(str(out_path), sr=None)
+              tempo_result = librosa.beat.beat_track(y=y, sr=sr)
+              tempo = np.asarray(tempo_result[0]).flatten()[0]
+              bpm = float(tempo)
+
+              # CE score (min of windows)
+              ce = ce_windows_batch([str(out_path)])[0]
+              ce_min = min(ce)
+
+              # Objective metrics
+              why, metrics = objective(str(out_path), "anime lofi")
+              gate_ok = not why and ce_min >= MIN_CE
+
+              seg_times.append(gen_time)
+              seg_ces.append(ce_min)
+              seg_bpms.append(bpm)
+
+              rows.append({
+                "variant": v["name"],
+                "segment": si+1,
+                "seed": seed,
+                "gen_time_sec": round(gen_time, 1),
+                "bpm": round(bpm, 1),
+                "ce_min": round(ce_min, 2),
+                "gate_ok": gate_ok,
+                "why": why,
+                "metrics": metrics,
+                "file": out_path.name
+              })
+              print(f"{v['name']} seg{si+1}: {gen_time:.1f}s, BPM={bpm:.1f}, CE={ce_min:.2f}, gate={'PASS' if gate_ok else 'FAIL'}", flush=True)
+
+              # Update manifest after each successful segment
+              manifest.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+
+          # Summary table
+          print("\n=== SUMMARY ===")
+          for v in variants:
+            vrows = [r for r in rows if r.get("variant") == v["name"] and "error" not in r]
+            if vrows:
+              avg_time = sum(r["gen_time_sec"] for r in vrows) / len(vrows)
+              avg_bpm = sum(r["bpm"] for r in vrows) / len(vrows)
+              avg_ce = sum(r["ce_min"] for r in vrows) / len(vrows)
+              all_gate = all(r["gate_ok"] for r in vrows)
+              print(f"{v['name']}: avg_time={avg_time:.1f}s avg_bpm={avg_bpm:.1f} avg_ce={avg_ce:.2f} gate_all={all_gate}")
+
+          PY
+
+      - name: upload samples to C:\dockerlocal\acf-out\<run_id>\\
+        if: always()
+        run: sh deploy/gpu-pc/acf_out.sh put ${{ github.run_id }} runs/ab_*/*.mp3 runs/ab_*/manifest.json
+
+      - name: deliver to Telegram
+        if: always()
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          TG_THREAD_ID: ${{ secrets.TG_THREAD_ID }}
+        run: |
+          set +e
+          TEXT="A/B lofi 64-72 BPM: 4 варианта × 3 сегмента. Жду вердикт владельца."
+          if [ -z "${TG_BOT_TOKEN}" ]; then echo "no TG token" >> "${GITHUB_STEP_SUMMARY}"; fi
+          sent=0
+          if [ -n "${TG_BOT_TOKEN}" ]; then
+            code=$(curl -sS -m 20 -o /dev/null -w "%{http_code}" "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" -d chat_id="${TG_CHAT_ID}" -d message_thread_id="${TG_THREAD_ID}" -d text="${TEXT}")
+            [ "$code" = "200" ] && sent=1
+          fi
+          {
+            echo "## A/B delivery status"
+            echo "tg_sent=$sent"
+            for f in runs/ab_*/*.mp3; do
+              [ -f "$f" ] || continue
+              if [ "$sent" = "1" ]; then
+                curl -sS -m 120 "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendAudio" -F chat_id="${TG_CHAT_ID}" -F message_thread_id="${TG_THREAD_ID}" -F audio="@${f}" >/dev/null && echo "sent_tg: ${f}" || echo "send fail: ${f}"
+              else
+                resp=$(curl -sS -m 120 -F "file=@${f}" https://tmpfiles.org/api/v1/upload)
+                url=$(echo "$resp" | grep -o "https://tmpfiles.org/[^\\\"\\\\ ]*" | head -1)
+                echo "url: ${f} -> ${url}"
+              fi
+            done
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: save report as artifact (fallback to branch)
+        if: always()
+        run: |
+          D=$(ls -d runs/ab_* 2>/dev/null | tail -1)
+          [ -z "$D" ] && { echo "no ab dir"; exit 0; }
+          [ ! -f "$D/manifest.json" ] && { echo "manifest.json missing in $D"; exit 0; }
+          git config user.email "bot@users.noreply.github.com"
+          git config user.name "acf-bot"
+          git checkout -B delivery/ab-lofi-bpm
+          mkdir -p samples/ab-lofi-bpm
+          cp "$D"/*.mp3 "$D"/manifest.json samples/ab-lofi-bpm/ 2>/dev/null || true
+          # Create summary CSV
+          python3 -c "
+          import json, csv
+          with open('$D/manifest.json') as f: rows=json.load(f)
+          with open('samples/ab-lofi-bpm/summary.csv','w') as f:
+            w=csv.writer(f); w.writerow(['variant','segment','seed','gen_time_sec','bpm','ce_min','gate_ok','why'])
+            for r in rows:
+              if 'error' not in r:
+                w.writerow([r['variant'],r['segment'],r['seed'],r['gen_time_sec'],r['bpm'],r['ce_min'],r['gate_ok'],r['why']])
+          "
+          git add -f samples
+          git commit -m "ab-lofi-bpm samples $(date -u +%Y%m%d_%H%M%S)"
+          for i in 1 2 3; do git push -q origin delivery/ab-lofi-bpm && { echo "PUSHED"; break; }; sleep 5; done

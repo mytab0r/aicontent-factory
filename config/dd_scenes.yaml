@@ -1,0 +1,28 @@
+# D&D / fantasy ambience: сцены для ротации (DECISIONS.md п.8, white-space ресёрч).
+# music_prompt уходит в ACE-Step (03_music), cover_prompt — в image-gen (02_cover),
+# title_scene — в LLM-заголовок (01_idea). Сцены = анти-шаблонное разнообразие:
+# каждая уникальна до полного цикла ротации (dd_channel.next_scene).
+- name: cozy tavern
+  music_prompt: "medieval tavern ambience, warm lute and recorder melodies, gentle hurdy-gurdy drone, crackling fireplace texture, fiddle jig phrases, instrumental, no vocals, cozy fantasy, tabletop RPG session background"
+  cover_prompt: "cozy medieval fantasy tavern interior painting, warm fireplace glow, wooden beams, mugs and lanterns, no people close-up, no text"
+  title_scene: "Cozy Tavern"
+- name: boss battle
+  music_prompt: "epic fantasy boss battle music, driving war drums, low brass ostinato, tense string ostinato, orchestral percussion hits, choiral synth pads, instrumental, no vocals, dark heroic, tabletop RPG combat encounter background"
+  cover_prompt: "dark fantasy dungeon lair painting, glowing eyes in shadow, dramatic torch light, treasure hoard silhouettes, no text"
+  title_scene: "Boss Battle"
+- name: wilderness camp
+  music_prompt: "peaceful fantasy wilderness camp ambience, soft wooden flute melodies, gentle harp arpeggios, night crickets texture, crackling campfire, airy wind pads, instrumental, no vocals, restful, adventurers resting between quests"
+  cover_prompt: "fantasy forest campsite at night painting, tent and campfire glow, starry sky through trees, no people close-up, no text"
+  title_scene: "Wilderness Camp"
+- name: ancient library
+  music_prompt: "mystical ancient library ambience, soft celesta and music box phrases, warm string drones, quiet harp interludes, soft room tone, instrumental, no vocals, scholarly arcane calm, wizard study background"
+  cover_prompt: "ancient magical library painting, towering shelves, floating candles, arcane glow, spiral staircase, no people close-up, no text"
+  title_scene: "Ancient Library"
+- name: haunted crypt
+  music_prompt: "eerie haunted crypt ambience, dark bell drones, sparse detuned piano notes, cavernous reverb, ghostly choir pad, dripping water texture, instrumental, no vocals, gothic mystery, dungeon crawl background"
+  cover_prompt: "gothic crypt interior painting, sarcophagi and cobwebs, cold blue moonlight through broken ceiling, no text"
+  title_scene: "Haunted Crypt"
+- name: elven forest grove
+  music_prompt: "elven forest grove ambience, ethereal synth choir textures, silver harp glissandi, birdsong, soft wind chimes, flowing stream, instrumental, no vocals, luminous serene fantasy, high elf realm background"
+  cover_prompt: "luminous elven forest grove painting, giant ancient trees, soft green-gold light shafts, stone arches with vines, no people close-up, no text"
+  title_scene: "Elven Grove"

@@ -192,6 +192,62 @@ def reach_ctr(at, job_id) -> dict:
         return parse_reach_csv(r.read().decode("utf-8", "replace"))
 
 
+def aggregate_reach(texts, since) -> dict:
+    """CSV дневных reach-отчётов -> {video_id: (показы, ctr)} за окно с даты since (YYYYMMDD или YYYY-MM-DD).
+
+    Показы суммируются; CTR = сумма кликов (показы*ctr по дню) / сумма показов, в единицах CSV."""
+    since = since.replace("-", "")
+    imp, clk = {}, {}
+    for text in texts:
+        rows = csv.reader(io.StringIO(text))
+        idx = {name: i for i, name in enumerate(next(rows, []))}
+        if "video_id" not in idx:
+            continue
+        ivid, iv, ic = idx["video_id"], idx["video_thumbnail_impressions"], idx["video_thumbnail_impressions_ctr"]
+        it = idx.get("date", idx.get("time"))
+        for r in rows:
+            if len(r) <= max(ivid, iv, ic) or not r[ivid]:
+                continue
+            if it is not None and r[it].replace("-", "")[:8] < since:
+                continue
+            n = float(r[iv] or 0)
+            imp[r[ivid]] = imp.get(r[ivid], 0.0) + n
+            clk[r[ivid]] = clk.get(r[ivid], 0.0) + n * float(r[ic] or 0)
+    return {v: (n, clk[v] / n if n else None) for v, n in imp.items()}
+
+
+def latest_per_day(reps) -> list:
+    """Backfill перевыпускает отчёт за тот же день: берём самый свежий createTime на каждый startTime."""
+    best = {}
+    for r in reps:
+        cur = best.get(r["startTime"])
+        if cur is None or r.get("createTime", "") > cur.get("createTime", ""):
+            best[r["startTime"]] = r
+    return [best[k] for k in sorted(best)]
+
+
+def reach_window(at, job_id, days=28) -> dict:
+    """Показы и CTR по видео за последние days дней из суточных CSV job'а. Пусто = отчёты ещё не выгружены
+    (новый job: первые данные через 24-48 ч, история до 30 дней назад приходит backfill'ом)."""
+    start = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days)
+    reps, token = [], None
+    while True:
+        q = {"startTimeAtOrAfter": start.strftime("%Y-%m-%dT00:00:00Z")}
+        if token:
+            q["pageToken"] = token
+        page = api(REPTR + f"jobs/{job_id}/reports?" + urllib.parse.urlencode(q), at)
+        reps += page.get("reports") or []
+        token = page.get("nextPageToken")
+        if not token:
+            break
+    texts = []
+    for r in latest_per_day(reps):
+        req = urllib.request.Request(r["downloadUrl"], headers={"Authorization": f"Bearer {at}"})
+        with urllib.request.urlopen(req, timeout=60) as f:
+            texts.append(f.read().decode("utf-8", "replace"))
+    return aggregate_reach(texts, start.strftime("%Y%m%d"))
+
+
 def collect(at):
     vids = uploads(at)
     if not vids:
@@ -204,8 +260,10 @@ def collect(at):
         if not ctr:
             ctr_note = "CTR н/д: reach-отчёт YouTube ещё не сформирован (суточная выгрузка, задержка до 2 дней)"
     except Exception as e:  # noqa: BLE001 — любая ошибка reach = одна русская строка, без сырого текста
-        print("reach unavailable:", type(e).__name__, e, file=sys.stderr)
-        ctr_note = "CTR н/д: нет доступа к reach-отчёту до перевыпуска токена YouTube"
+        # t_f807dc99: текст Google из тела 403 (API выключен / нет scope / нет канала) — без него причина не видна
+        why = _http_err(e) if isinstance(e, urllib.error.HTTPError) else repr(e)
+        print("reach unavailable:", getattr(e, "url", ""), why, file=sys.stderr)
+        ctr_note = "CTR н/д: reach-отчёт YouTube недоступен (причина в логе CI)"
     for v in vids:
         v["retention"], v["ctr"] = ret.get(v["id"]), ctr.get(v["id"])
     return vids, ctr_note

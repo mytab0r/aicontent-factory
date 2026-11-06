@@ -1,0 +1,29 @@
+
+name: ace-step diag (read-only)
+on:
+  workflow_dispatch:
+jobs:
+  diag:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 20
+    steps:
+      - name: bank audit (sha + ffprobe both sides)
+        run: |
+          set -e
+          for g in anime-lofi chill-phonk; do
+            d=/app/output/bank/$g
+            echo "== $g"
+            docker exec ace-step sh -c "ls $d/*.mp3 2>/dev/null" | while read -r f; do
+              n=$(basename "$f")
+              csha=$(docker exec ace-step sha256sum "$f" | cut -d" " -f1)
+              cdur=$(docker exec ace-step sh -c "ffprobe -v error -show_entries format=duration -of csv=p=0 \"$f\" 2>&1 | head -1")
+              rm -f /tmp/audit.mp3; docker cp "ace-step:$f" /tmp/audit.mp3 >/dev/null 2>&1 || true
+              rsha=$(sha256sum /tmp/audit.mp3 2>/dev/null | cut -d" " -f1)
+              rdur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 /tmp/audit.mp3 2>&1 | head -1)
+              rsize=$(stat -c %s /tmp/audit.mp3 2>/dev/null || echo 0)
+              csize=$(docker exec ace-step stat -c %s "$f")
+              st=OK; [ "$csha" != "$rsha" ] && st=SHA_MISMATCH
+              [ "$csize" != "$rsize" ] && st="$st SIZE_MISMATCH"
+              echo "$st $n csize=$csize rsize=$rsize cdur=$cdur rdur=$rdur"
+            done
+          done

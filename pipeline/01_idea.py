@@ -9,11 +9,13 @@ from datetime import date
 from pathlib import Path
 
 import dd_channel
-from common import STATE_DIR, rotate, router_post, next_mood, new_run_dir
+from common import STATE_DIR, rotate, router_post, next_mood, new_run_dir, model_alive
 from watchdog import GENRE_IN_TITLE
 
-# ponytail: фолбэк по списку; квота gemini кончается -> следующая модель
-MODELS = ["gemini/gemini-3.8-flash", "auto-worker-combo", "cx/gpt-5.5"]
+# ponytail: фолбэк по списку; квота gemini кончается -> следующая модель.
+# t_b87507e0 (30.10): glm без кредов (404) и cx/gpt-5.5 (400 unsupported) мертвы на 9router —
+# убраны из цепочки; auto-cheap-combo добавлен живым вторым фолбэком (проверено прямым запросом).
+MODELS = ["gemini/gemini-3.8-flash", "auto-worker-combo", "auto-cheap-combo"]
 
 # Детерминированный фолбэк, если все LLM недоступны: сцены ротируются через
 # .state/fallback_idx.txt, чтобы заголовки не повторялись (anti-template).
@@ -197,8 +199,11 @@ def owning_idea() -> None:
     import owning_channel as oc
     plan = oc.next_plan(STATE_DIR)
     prompt, err = oc.idea_prompt(plan), None
-    # glm первым: 18.10 из 9router валидный JSON скрипта дал только он (gemini 429, cx 400, combo битый JSON)
-    for model in ["glm/glm-5.3-flash", *MODELS]:
+    # t_b87507e0 (30.10): glm убран из цепочки — нет активных кредов на 9router (404 model_not_found).
+    for model in MODELS:
+        if not model_alive(model, router_post):  # t_b87507e0: мёртвая (404/400) / лежащая (5xx) -> следующая
+            err = RuntimeError(f"{model}: probe failed (404/400/5xx)")
+            continue
         try:
             # 4000: reasoning-модели тратят бюджет до ответа (при 1500 content пустой); json_object чинит битый JSON combo
             resp = router_post("/chat/completions", {"model": model, "stream": False, "max_tokens": 4000,
@@ -221,6 +226,9 @@ def llm_idea(prompt: str):
     """(idea | None, ошибка): модели по очереди, ```json-обёртка срезается."""
     resp, err = None, None
     for model in MODELS:
+        if not model_alive(model, router_post):  # t_b87507e0: мёртвая (404/400) / лежащая (5xx) -> следующая
+            err = RuntimeError(f"{model}: probe failed (404/400/5xx)")
+            continue
         try:
             resp = router_post("/chat/completions", {
                 "model": model,

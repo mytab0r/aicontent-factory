@@ -1,0 +1,103 @@
+name: oneoff-loop-generate
+# Разовый рендер loop-клипа Wan2.2 FLF2V на ПК (self-hosted runner) + upscale
+# + encode + seam check + тайминги (бюджет E <= 900с, spec-seamless-loop.md §5).
+# Файлы -> C:\dockerlocal\acf-out\<run_id> (t_265d0147): runs/loopgen/ (loop.mp4, отчёты, тайминги, кадры).
+# Финальный concat 1ч делает сервер (loop_build.py final) — он дешёвый (-c copy).
+on:
+  workflow_dispatch:
+    inputs:
+      image_name:
+        description: "run artifact name prefix"
+        default: "loop"
+# новый пуш в ветку эксперимента заменяет старый прогон, а не встаёт в очередь
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  loop:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        timeout-minutes: 5  # t_6758c86f: сетевой шаг не висит до таймаута джобы
+      - name: deps
+        run: |
+          uv venv .venv
+          uv pip install --python .venv/bin/python numpy
+      - name: comfy reachable
+        run: |
+          # comfyui может отсутствовать (janitor удалил контейнер) — пересоздаём из образа
+          if [ -z "$(docker ps -q --filter name=wan22)" ]; then
+            echo "comfyui нет — пересоздаю из comfyui-wan22:local"
+            # t_40bfcd35 R2: веса/выходы — bind на C:\dockerlocal\wan22 (не docker-том на D:)
+            NET=$(docker network ls --format '{{.Name}}' | grep -v '^bridge$\|^host$\|^none$' | while read n; do docker network inspect "$n" --format '{{range .Containers}}{{printf "%s\n" .Name}}{{end}}' | grep -qx 'gh-runner-aicontent-factory' && echo "$n" && break; done)
+            docker run --rm -i -v /run/desktop/mnt/host/c/dockerlocal/wan22/models:/models alpine:3.20 \
+              sh -c 'cat > /models/extra_model_paths.yaml' < deploy/gpu-pc/comfyui/extra_model_paths.yaml
+            docker run -d --name wan22 --gpus all --network "$NET" --network-alias comfyui \
+              -v /run/desktop/mnt/host/c/dockerlocal/wan22/models:/models -v /run/desktop/mnt/host/c/dockerlocal/wan22/output:/app/output -v /run/desktop/mnt/host/c/dockerlocal/wan22/input:/app/input \
+              comfyui-wan22:local
+            for i in $(seq 1 60); do
+              sleep 5
+              ST=$(docker inspect wan22 --format '{{.State.Status}} exit={{.State.ExitCode}}' 2>/dev/null || true)
+              case "$ST" in exited*|dead*) echo "comfyui died:"; docker logs --tail 40 wan22 2>&1; exit 1;; esac
+              if curl -fsS -m 5 "http://$(docker inspect wan22 --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 2>/dev/null):8188/system_stats" >/dev/null 2>&1; then
+                echo "comfyui ready"; break
+              fi
+            done
+            # диагностика: что ComfyUI реально видит после свежего recreate
+            OIP=$(docker inspect wan22 --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
+            echo "=== /models на volume ==="
+            docker run --rm -v /run/desktop/mnt/host/c/dockerlocal/wan22/models:/models:ro alpine:3.20 find /models -maxdepth 2 -type f | sort
+            echo "=== object_info списки ==="
+            curl -s -m 20 "http://$OIP:8188/object_info" | docker run --rm -i python:3.12-slim python -c "import json,sys; oi=json.load(sys.stdin); g=lambda c,k: oi.get(c,{}).get('input',{}).get('required',{}).get(k,[[],{}])[0]; print('OBJDUMP unet:',g('UNETLoader','unet_name')); print('OBJDUMP clip:',g('CLIPLoader','clip_name')); print('OBJDUMP vae:',g('VAELoader','vae_name')); print('OBJDUMP lora:',g('LoraLoaderModelOnly','lora_name'))"
+          fi
+          # порт из runner-контейнера напрямую тоже может быть не виден — пробуем оба пути
+          CID=$(docker ps --filter name=wan22 --format '{{.ID}}' | head -1)
+          IP=$(docker inspect "$CID" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
+          echo "comfyui IP: $IP"
+          echo "COMFY_IP=$IP" >> "$GITHUB_ENV"
+          curl -s -m 10 "http://$IP:8188/system_stats" || exit 1
+      - name: generate + upscale (timed)
+        run: |
+          mkdir -p runs/loopgen/raw runs/loopgen/upscaled
+          # тестовая картинка: 832x480 серый градиент с шумом (синтетика, без 02_cover)
+          .venv/bin/python - <<'PY'
+          import zlib, struct, random
+          random.seed(7)
+          w, h = 832, 480
+          rows = []
+          for y in range(h):
+              row = bytearray([0])
+              for x in range(w):
+                  v = 128 + int(40 * ((x + y) % 256) / 256) + random.randint(-6, 6)
+                  row += bytes([max(0, min(255, v)), v // 2 + 64, v // 3 + 85])
+              rows.append(bytes(row))
+          raw = b"".join(rows)
+          def chunk(tag, data):
+              c = struct.pack(">I", len(data)) + tag + data
+              return c + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+          png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+                 + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+          open("runs/loopgen/raw/source.png", "wb").write(png)
+          print("source.png written", len(png))
+          PY
+          echo "=== step1 generate (ComfyUI Wan2.2 FLF2V) ===" | tee runs/loopgen/steps.log
+          T0=$(date +%s)
+          .venv/bin/python pipeline/loop_generate.py --image runs/loopgen/raw/source.png \
+              --out-dir runs/loopgen/raw --endpoint "http://$COMFY_IP:8188" --attempts 8 --seed 42
+          echo "generate_elapsed_s=$(( $(date +%s) - T0 ))" | tee -a runs/loopgen/steps.log
+          echo "=== step3 upscale 832x480 -> 1920x1080 (lanczos) ===" | tee -a runs/loopgen/steps.log
+          T0=$(date +%s)
+          ffmpeg -y -v error -framerate 24 -i runs/loopgen/raw/%05d.png \
+              -vf "scale=1920:1080:flags=lanczos" -pix_fmt yuv420p \
+              -start_number 0 runs/loopgen/upscaled/%05d.png
+          echo "upscale_elapsed_s=$(( $(date +%s) - T0 ))" | tee -a runs/loopgen/steps.log
+      - name: encode loop.mp4 + seam check (closed GOP)
+        run: |
+          set -o pipefail
+          .venv/bin/python pipeline/loop_build.py encode runs/loopgen/upscaled runs/loopgen/loop.mp4 --fps 24 \
+            2>&1 | tee runs/loopgen/encode_seam.log
+      - name: upload loopgen files -> C:\dockerlocal\acf-out\<run_id>\ (t_265d0147)
+        if: always()
+        run: sh deploy/gpu-pc/acf_out.sh put ${{ github.run_id }} runs/loopgen/loop.mp4 runs/loopgen/*.log runs/loopgen/*.json runs/loopgen/raw/generate_meta.json runs/loopgen/raw/00000.png runs/loopgen/raw/00080.png

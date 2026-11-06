@@ -17,6 +17,7 @@
 import datetime as dt
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 POOL = [
@@ -46,14 +47,14 @@ REF_DIR = Path(__file__).resolve().parent.parent / ".state" / "refpool"
 # берёт bpm/key из текста промпта -> вариант воспроизводит одобренный звук.
 # 10 и 2 взаимно просты -> пара (эталон, промпт) не повторяется 20 дней.
 PROMPT_VARIANTS = [
-    # ab_1: seed 9007 -> bpm 89, F major (эталон U00146agWgg)
+    # ab_1: seed 9007 -> bpm 89, F major (эталон U00146agWgg); 25.10 владелец: 89 «слишком энергично» -> 70
     "dreamy lofi chillout instrumental, mellow electric piano chords, glockenspiel highlights, "
     "soft brushed drums, warm bassline, gentle swing, polished clean mix, "
-    "wide stereo, serene and bright, 89 BPM, F major, no vocals",
-    # ab_3: seed 9021 -> bpm 82, D major (эталон qS1wrF4XHtc)
+    "wide stereo, serene and bright, 70 BPM, F major, no vocals",
+    # ab_3: seed 9021 -> bpm 82, D major (эталон qS1wrF4XHtc); 25.10 -> 68
     "dreamy lofi chillout instrumental, glassy synth pads with celesta melody, "
     "light fingerstyle guitar accents, mellow laid back drums, round bass, "
-    "polished airy mix, wide stereo, heartwarming, 82 BPM, D major, no vocals",
+    "polished airy mix, wide stereo, heartwarming, 68 BPM, D major, no vocals",
 ]
 
 
@@ -108,7 +109,10 @@ def ensure_ref(entry=None, out_dir=None) -> Path:
     raw_prefix = out_dir / ("raw_%s" % entry["yt_id"])
     if not list(out_dir.glob(raw_prefix.name + ".*")):
         url = "https://www.youtube.com/watch?v=" + entry["yt_id"]
-        subprocess.run(["yt-dlp", "-q", "-f", "bestaudio", "-o", raw_prefix.name + ".%(ext)s", url],
+        # модуль того же интерпретатора, что исполняет pipeline: на раннере
+        # бинарника yt-dlp в PATH нет (run 39391131570, FileNotFoundError)
+        subprocess.run([sys.executable, "-m", "yt_dlp", "-q", "-f", "bestaudio",
+                        "-o", raw_prefix.name + ".%(ext)s", url],
                        check=True, capture_output=True, cwd=str(out_dir))
     raw = next(iter(out_dir.glob(raw_prefix.name + ".*")))
     subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-ss", str(REF_START_SEC),

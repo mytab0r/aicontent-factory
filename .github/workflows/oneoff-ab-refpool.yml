@@ -1,0 +1,105 @@
+name: G1zm0 A/B refpool samples
+
+on:
+  workflow_dispatch:
+    inputs:
+      n:
+        description: "how many variants (refs)"
+        default: "4"
+      seg_sec:
+        description: "segment length, s"
+        default: "60"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ab-refpool
+  cancel-in-progress: false
+
+jobs:
+  samples:
+    runs-on: [self-hosted, release]
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+
+      - uses: astral-sh/setup-uv@v3
+        timeout-minutes: 5  # t_6758c86f: сетевой шаг не висит до таймаута джобы
+
+      - name: install deps
+        run: |
+          command -v ffmpeg || { sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg; }
+          uv venv .venv
+          uv pip install --python .venv/bin/python pillow gradio_client numpy yt-dlp
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"  # refpool.py зовёт bare yt-dlp через subprocess
+
+      - name: reference pool (download missing refs)
+        run: |
+          mkdir -p /tmp/acf-refpool
+          cd pipeline && ../.venv/bin/python refpool.py --ensure && for e in $(../.venv/bin/python - <<'PY'
+          import refpool
+          print(" ".join(x[0] for x in refpool.POOL))
+          PY
+          ); do ../.venv/bin/python -c "import refpool,sys; refpool.ensure_ref({'yt_id':sys.argv[1]})" "$e"; done
+
+      - name: A/B candidates (4 refs, no publish)
+        working-directory: pipeline
+        env:
+          ACE15_ENDPOINT: http://ace-step:8001  # ACE-Step 1.5 REST на ПК (comfynet)
+        run: |
+          ../.venv/bin/python ab_samples.py --n "${{ inputs.n || 4 }}" --seg-sec "${{ inputs.seg_sec || 60 }}" --out ../runs/ab_$(date -u +%Y%m%d_%H%M%S)
+
+      - name: upload A/B files -> C:\dockerlocal\acf-out\<run_id>\ (t_265d0147)
+        if: always()  # и упавший прогон оставляет файлы на C:
+        run: sh deploy/gpu-pc/acf_out.sh put ${{ github.run_id }} runs/ab_*/ab_*.mp3 runs/ab_*/manifest.json runs/ab_*/ab_LOCK.json
+
+      - name: deliver via git branch (durable fallback, мимо artifacts/tmpfiles)
+        if: ${{ always() }}
+        run: |
+          set +e
+          D=$(ls -d runs/ab_* 2>/dev/null | tail -1)
+          [ -z "$D" ] && { echo "no ab dir"; exit 0; }
+          git config user.email "bot@users.noreply.github.com"
+          git config user.name "acf-bot"
+          git checkout -B delivery/ab-refpool
+          mkdir -p samples
+          cp "$D"/ab_*.mp3 "$D"/manifest.json samples/ 2>/dev/null
+          git add -f samples
+          git commit -m "ab samples $(date -u +%Y%m%d_%H%M%S)"
+          for i in 1 2 3; do git push -q --force origin delivery/ab-refpool && { echo "PUSHED to delivery/ab-refpool"; break; }; sleep 5; done
+          ls -la samples/
+          echo "branch: delivery/ab-refpool" >> "${GITHUB_STEP_SUMMARY}"
+          exit 0
+
+      - name: deliver to Telegram or tmpfiles URLs in step summary
+        if: ${{ always() }}
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          TG_THREAD_ID: ${{ secrets.TG_THREAD_ID }}
+        run: |
+          set +e
+          TEXT="A/B G1zm0: 4 varianta na raznyh etalonah pulka - vyberi luchshij. Publikaciya zablokirovana do tvoego verdikta."
+          if [ -z "${TG_BOT_TOKEN}" ]; then echo "no TG token" >> "${GITHUB_STEP_SUMMARY}"; fi
+          sent=0
+          if [ -n "${TG_BOT_TOKEN}" ]; then
+            code=$(curl -sS -m 20 -o /dev/null -w "%{http_code}" "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" -d chat_id="${TG_CHAT_ID}" -d message_thread_id="${TG_THREAD_ID}" -d text="${TEXT}")
+            [ "$code" = "200" ] && sent=1
+          fi
+          {
+            echo "## A/B delivery status"
+            echo "tg_sent=$sent"
+            for f in runs/ab_*/ab_*.mp3; do
+              [ -f "$f" ] || continue
+              if [ "$sent" = "1" ]; then
+                curl -sS -m 120 "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendAudio" -F chat_id="${TG_CHAT_ID}" -F message_thread_id="${TG_THREAD_ID}" -F audio="@${f}" >/dev/null && echo "sent_tg: ${f}" || echo "send fail: ${f}"
+              else
+                resp=$(curl -sS -m 120 -F "file=@${f}" https://tmpfiles.org/api/v1/upload)
+                url=$(echo "$resp" | grep -o "https://tmpfiles.org/[^\"\\ ]*" | head -1)
+                echo "url: ${f} -> ${url}"
+              fi
+            done
+          } >> "${GITHUB_STEP_SUMMARY}"

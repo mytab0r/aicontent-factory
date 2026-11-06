@@ -1,0 +1,118 @@
+name: oneoff-generate-samples
+on:
+  workflow_dispatch: {}
+
+# новый пуш в ветку эксперимента заменяет старый прогон, а не встаёт в очередь
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  generate:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        timeout-minutes: 5  # t_6758c86f: сетевой шаг не висит до таймаута джобы
+      - name: deps
+        run: |
+          uv venv .venv
+          uv pip install --python .venv/bin/python gradio_client
+      - name: generate candidate + major-variant samples (quota-retry loop)
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          mkdir -p samples_candidates
+          .venv/bin/python - <<'PY'
+          import os, time, shutil
+          from gradio_client import Client
+
+          SPACE = "ACE-Step/ACE-Step"
+          client = Client(SPACE, token=os.environ.get("HF_TOKEN") or None)
+
+          def gen(name, prompt, duration=30):
+              print(f"-> {name}", flush=True)
+              result = client.predict(
+                  audio_duration=float(duration),
+                  prompt=prompt,
+                  lyrics="[instrumental]",
+                  infer_step=27,
+                  guidance_scale=15.0,
+                  scheduler_type="euler",
+                  cfg_type="apg",
+                  omega_scale=10.0,
+                  manual_seeds=None,
+                  guidance_interval=0.5,
+                  guidance_interval_decay=0.0,
+                  min_guidance_scale=3.0,
+                  use_erg_tag=True,
+                  use_erg_lyric=False,
+                  use_erg_diffusion=True,
+                  oss_steps=None,
+                  guidance_scale_text=0.0,
+                  guidance_scale_lyric=0.0,
+                  audio2audio_enable=False,
+                  ref_audio_strength=0.5,
+                  ref_audio_input=None,
+                  lora_name_or_path="none",
+                  api_name="/__call__",
+              )
+              shutil.copy(result[0], f"samples_candidates/{name}.mp3")
+              print(f"   saved samples_candidates/{name}.mp3", flush=True)
+
+          TRACKS = {
+              "nature_ambient": (
+                  "nature ambient soundscape, soft sustained pads, distant birdsong, "
+                  "gentle flowing water texture, no drums, no percussion, minimal "
+                  "variation designed to loop seamlessly, warm airy, slow and "
+                  "unhurried, instrumental, no vocals, relaxing"
+              ),
+              "meditation_healing": (
+                  "meditation and healing music, slow solo piano phrases with long "
+                  "decay, soft string pad underneath, 60 BPM, no drums, no vocals, "
+                  "spacious reverb, calm and grounding, gentle, instrumental"
+              ),
+              "easy_listening_piano": (
+                  "easy listening solo piano, warm and gentle melodic phrases, light "
+                  "rubato, soft room reverb, no drums, no vocals, 65 BPM, relaxed, "
+                  "comforting, instrumental"
+              ),
+              "sleep_ambient": (
+                  "deep sleep ambient, very slow evolving drone pad, no percussion, "
+                  "no sudden dynamic changes, extremely minimal variation designed to "
+                  "loop seamlessly, soft low frequencies, instrumental, no vocals, "
+                  "hypnotic and slow"
+              ),
+              "anime_lofi_MAJOR_test": (
+                  "anime lofi, soft rhodes piano melody, gentle boom bap drums with "
+                  "swing, warm bassline, vinyl noise, tape hiss, C# major, 82 BPM, "
+                  "instrumental, no vocals, cozy, nostalgic, study beats, Lofi Girl style"
+              ),
+          }
+
+          # Retry loop: ZeroGPU quota may be exhausted until ~04:00 UTC
+          # (yesterday's 4 samples consumed it 03:55-03:59). Wait and retry.
+          deadline = time.time() + 5.2 * 3600
+          remaining = dict(TRACKS)
+          while remaining and time.time() < deadline:
+              for name, prompt in list(remaining.items()):
+                  try:
+                      gen(name, prompt)
+                      del remaining[name]
+                  except Exception as e:
+                      msg = str(e)
+                      if "quota" in msg.lower() or "GPU" in msg:
+                          print(f"QUOTA {name}, will retry", flush=True)
+                      else:
+                          print(f"FAILED {name}: {msg}", flush=True)
+                          del remaining[name]  # permanent error, don't spin
+                  time.sleep(60)
+              if remaining:
+                  print(f"remaining: {list(remaining)}", flush=True)
+                  time.sleep(240)  # cooldown between passes
+          if remaining:
+              print(f"GAVE UP on: {list(remaining)}", flush=True)
+          PY
+      - name: candidate-samples -> C:\dockerlocal\acf-out\<run_id>\ (t_265d0147)
+        if: always()  # и упавший прогон оставляет файлы на C:
+        run: sh deploy/gpu-pc/acf_out.sh put ${{ github.run_id }} samples_candidates/*.mp3

@@ -1,0 +1,35 @@
+name: janitor-sync
+# t: host-файл janitor.sh на ПК (C:\\Users\\magic\\hermes-ops\\janitor) вне репо; его recreate ace-step
+# шёл без UV_NO_SYNC и гонка с workflow ломала выпуск (25.10). Эталон живёт в репо (deploy/gpu-pc/janitor.sh),
+# этот workflow (вручную) синхронизирует host-копию и перезапускает docker-janitor.
+on:
+  workflow_dispatch:
+
+jobs:
+  sync:
+    # t_5cdbb967: release, не pc/ci — pc занят часовыми bank fill, ci очередью PR; release простаивает
+    # между выпусками (все раннеры видят docker.sock хоста). Свап самого release-раннера janitor делает
+    # только без Runner.Worker, т.е. после завершения этой джобы.
+    runs-on: [self-hosted, release]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: sync host janitor.sh + restart docker-janitor
+        run: |
+          set -e
+          JANITOR_DIR=C:/Users/magic/hermes-ops/janitor
+          # run 40132476922: $GITHUB_WORKSPACE живёт в томе раннера, не на хосте -> bind давал пустой /src.
+          # Файл идёт через stdin (docker run -i), хостовый путь нужен только для /j.
+          docker run --rm -i -v "$JANITOR_DIR:/j" alpine \
+            sh -c 'cat > /j/janitor.sh && chmod +x /j/janitor.sh && grep -c UV_NO_SYNC=1 /j/janitor.sh && grep -c purge_crashes /j/janitor.sh' < deploy/gpu-pc/janitor.sh
+          # t_5cdbb967 (ротация /tmp и томов uv-cache/xlv): после ребута ПК docker-janitor пропадает
+          # (создавался вручную вне репо) — поднимаем заново, иначе purge_tmp не крутится.
+          if ! docker inspect docker-janitor >/dev/null 2>&1; then
+            docker run -d --name docker-janitor --restart unless-stopped \
+              -v /var/run/docker.sock:/var/run/docker.sock -v "$JANITOR_DIR:/j" \
+              docker:cli sh /j/janitor.sh
+          fi
+          docker restart docker-janitor
+          sleep 3
+          docker logs --tail 3 docker-janitor 2>&1 || true
+          grep -c "UV_NO_SYNC=1" "$GITHUB_WORKSPACE/deploy/gpu-pc/janitor.sh"

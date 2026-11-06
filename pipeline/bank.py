@@ -21,6 +21,9 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 BANK_ROOT = "/app/output/bank"
 CAP_FILES = 400  # ~4 МБ/сегмент -> ~1.6 ГБ, ниже лимита 15 ГБ спецификации
+RELEASE_SEG = 20  # t_1f53095a R3: 1 выпуск = час = 20 x 180 с
+TARGET_RELEASES = 2  # цель банка: >= 2 выпуска вперёд (40 сегментов)
+BANK_LIMIT_KB = 15 * 1048576  # лимит банка 15 ГБ (все жанры, du -sk BANK_ROOT)
 MARGIN = 4  # запас сегментов в группе сверх need: рваный cp бьёт пачкой — всплеск из 3 битых (39924822702) не должен обнулять выпуск
 
 
@@ -32,7 +35,8 @@ def slug(genre: str) -> str:
     return genre.replace(" ", "-")
 
 
-def fill(target, have, make, put, busy, log=print, max_iter=40, max_consecutive_fail=3, deadline=None):
+def fill(target, have, make, put, busy, log=print, max_iter=40, max_consecutive_fail=3, deadline=None,
+         guard=None):
     """Наполнить банк до target. make(i) -> путь прошедшего гейт сегмента или None (брак).
     busy() = выпуск идёт/в очереди -> выход. Сбой генерации при занятом GPU = уступили, без ошибки.
     Сбой без выпуска (run 39884870081: oneMKL transient 0/21 на 39/40) = повтор, прогон роняем
@@ -48,6 +52,10 @@ def fill(target, have, make, put, busy, log=print, max_iter=40, max_consecutive_
             break
         if busy():
             log(f"банк: выпуск в работе — уступаю GPU (в банке {n})")
+            break
+        why = guard() if guard else None  # t_1f53095a R3: лимит 15 ГБ / пол C: — до генерации, не после
+        if why:
+            log(f"банк: стоп — {why} (в банке {n})")
             break
         try:
             p = make(i)
@@ -71,8 +79,109 @@ def fill(target, have, make, put, busy, log=print, max_iter=40, max_consecutive_
     return n
 
 
+def reserve_level(n: int) -> str:
+    """t_1f53095a R3: n = свободные совместимые сегменты. empty = выпуск пропустит слот (< MIN_SEG)."""
+    from bank_release import MIN_SEG
+    if n < MIN_SEG:
+        return "empty"
+    if n < RELEASE_SEG:
+        return "low"
+    if n < RELEASE_SEG * TARGET_RELEASES:
+        return "below_target"
+    return "ok"
+
+
+def status_line(genre: str, n: int) -> str:
+    lvl = reserve_level(n)
+    s = f"банк {genre}: {n} сегм. = {n / RELEASE_SEG:.1f} выпуска (цель {TARGET_RELEASES})"
+    if lvl in ("low", "empty"):
+        s += " — меньше 1 выпуска, генератор в приоритет"
+        if lvl == "empty":
+            s += "; слот выпуска будет пропущен"
+    return s
+
+
+def guard_reason(bank_kb: int, disk_rc: int):
+    """None = писать можно. bank_kb = du банка, disk_rc = код disk_gate.sh c (единый пол C:)."""
+    if bank_kb >= BANK_LIMIT_KB:
+        return f"банк {bank_kb / 1048576:.1f} ГБ >= лимита {BANK_LIMIT_KB // 1048576} ГБ"
+    if disk_rc != 0:
+        return "на C: ниже пола disk_floors.env (disk_gate.sh c)"
+    return None
+
+
+def disk_gate_rc(need_gb: int = 1) -> int:
+    gate = HERE.parent / "deploy/gpu-pc/disk_gate.sh"
+    return subprocess.run(["sh", str(gate), "c", str(need_gb)]).returncode
+
+
+def bank_kb(docker_sh=None) -> int:
+    out = (docker_sh or _docker)("exec", "ace-step", "sh", "-c", f"du -sk {BANK_ROOT} 2>/dev/null || echo 0")
+    return int((out.split() or ["0"])[0])
+
+
+def reserve_count(counts: dict) -> int:
+    """Сколько сегментов выпуск реально наберёт: крупнейшая группа + совместимые с ней (как pick).
+    ponytail: сумма по совместимым соседям, без учёта битых при take; точнее = прогнать pick()."""
+    from bank_release import _keys_related
+    return max((sum(c for k2, c in counts.items() if _keys_related(k, k2)) for k in counts), default=0)
+
+
+def reserve_check(counts_by_genre: dict, send, dispatch) -> list:
+    """Часовой отчёт: строка на жанр. < 1 выпуска = TG-алерт + dispatch bank-fill (генератор в приоритет)."""
+    lines = [status_line(g, n) for g, n in counts_by_genre.items()]
+    low = [status_line(g, n) for g, n in counts_by_genre.items() if reserve_level(n) in ("low", "empty")]
+    for line in lines:
+        print(line)
+    if low:
+        send("⚠️ " + "\n".join(low))
+        dispatch()
+    return lines
+
+
+def dispatch_fill(repo=None, token=None) -> None:
+    """Поднять генератор: bank-fill сейчас, если он не идёт и не ждёт (concurrency затёр бы pending)."""
+    repo = repo or os.environ["GITHUB_REPOSITORY"]
+    token = token or os.environ["GH_TOKEN"]
+    h = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
+    base = f"https://api.github.com/repos/{repo}/actions/workflows/bank-fill.yml"
+    for st in ("in_progress", "queued", "pending", "waiting"):
+        with urllib.request.urlopen(urllib.request.Request(f"{base}/runs?status={st}&per_page=1", headers=h),
+                                    timeout=30) as r:
+            if json.load(r).get("total_count", 0):
+                print(f"bank-fill уже {st} — новый не ставлю")
+                return
+    req = urllib.request.Request(f"{base}/dispatches", method="POST", headers=h,
+                                 data=json.dumps({"ref": os.environ.get("GITHUB_REF_NAME", "master")}).encode())
+    urllib.request.urlopen(req, timeout=30).close()
+    print("bank-fill запущен вне расписания (запас < 1 выпуска)")
+
+
+def reserve_main() -> int:
+    from common import tg_send
+    counts = {}
+    for g in ("anime lofi", "chill phonk"):
+        try:
+            counts[g] = reserve_count(group_counts(g, _docker))
+        except Exception as e:
+            print(f"bank {g}: не прочитан ({type(e).__name__}: {e})")
+            counts[g] = 0
+    reserve_check(counts, tg_send, dispatch_fill)
+    try:
+        print(f"банк на диске: {bank_kb() / 1048576:.2f} ГБ из {BANK_LIMIT_KB // 1048576}")
+    except Exception as e:
+        print(f"du банка: {type(e).__name__}")
+    return 0
+
+
 def _sh(*a):
     return subprocess.run(list(a), check=True, capture_output=True, text=True).stdout
+
+
+def _docker(*a):
+    """docker_sh для put_verified/group_counts: 26.10 голый _sh отдавал `cp ... ace-step:...`
+    локальному cp (exit 1) — принятые гейтом сегменты не попадали в банк."""
+    return _sh("docker", *a)
 
 
 def release_busy(repo=None, token=None, sleep=time.sleep, tries=3) -> bool:
@@ -118,68 +227,81 @@ def guarded_scores(paths, busy, batch):
     return batch(paths)
 
 
-def stats_record(genre: str, prompt: str, seed: int, ok: bool, why: str = "", docker_sh=None) -> None:
-    """t_ba72c7aa R4: статистика отказов по промптам/сидам в stats.jsonl рядом с банком."""
-    import json as _json
-    import time as _time
-    row = _json.dumps({"prompt": prompt, "seed": seed, "ok": bool(ok), "why": why,
-                       "ts": int(_time.time())}, ensure_ascii=False).replace("'", "'\''")
-    d = f"{BANK_ROOT}/{slug(genre)}"
-    cmd = f"echo '{row}' >> {d}/stats.jsonl"
-    if docker_sh is not None:
-        docker_sh("exec", "ace-step", "sh", "-c", cmd)
-    else:
-        _sh("docker", "exec", "ace-step", "sh", "-c", cmd)
+STATS_DAYS = 30  # t_fed47d5f R4: окно статистики брака
+STATS_MAX_FAIL = 0.5  # брак > 50% кандидатов промпта за окно = промпт выключен
+STATS_MIN_N = 6  # меньше кандидатов в окне = данных мало, промпт включён
 
 
-def _stats_rows(lines):
-    for x in lines:
-        try:
-            r = json.loads(x)
-            if isinstance(r, dict):
-                yield r
-        except Exception:
-            continue
+def stats_path(genre: str) -> str:
+    """stats.json рядом с сегментами: выпуск берёт только *.mp3 (bank_release.entries), файл ему невидим."""
+    return f"{BANK_ROOT}/{slug(genre)}/stats.json"
 
 
-def fail_rate(stats_lines: list, prompt: str, window: int = 20):
-    """Доля брака среди последних window записей промпта; None = данных нет."""
-    rows = [r for r in _stats_rows(stats_lines) if r.get("prompt") == prompt][-window:]
-    if not rows:
-        return None
-    return sum(1 for r in rows if not r.get("ok")) / len(rows)
-
-
-def prompt_enabled(stats_lines: list, prompt: str, window: int = 20, max_fail: float = 0.5,
-                   min_n: int = 6) -> bool:
-    """R4: доля брака > max_fail на окне = промпт выключен; мало данных = включен."""
-    rows = [r for r in _stats_rows(stats_lines) if r.get("prompt") == prompt][-window:]
-    if len(rows) < min_n:
-        return True
-    return fail_rate(stats_lines, prompt, window) <= max_fail
-
-
-def pick_prompt(enabled=lambda lines, p: True) -> str:
-    """R4: выбор промпта генерации: первый включённый из вариантов дня; все выключены ->
-    fallback на pick() без фильтра (генерация не останавливается)."""
-    import refpool
-    pair = refpool.pick()
-    lines = []
-    d = f"{BANK_ROOT}/{slug(os.environ.get('GENRE', 'anime lofi'))}"
+def _ts(r) -> float:
     try:
-        lines = _sh("docker", "exec", "ace-step", "sh", "-c",
-                    f"cat {d}/stats.jsonl 2>/dev/null || true").splitlines()
-    except Exception:
-        pass
-    if not enabled(lines, pair["prompt"]):
-        start = refpool.PROMPT_VARIANTS.index(pair["prompt"]) if pair["prompt"] in refpool.PROMPT_VARIANTS else 0
-        for k in range(1, len(refpool.PROMPT_VARIANTS)):
-            cand = refpool.PROMPT_VARIANTS[(start + k) % len(refpool.PROMPT_VARIANTS)]
-            if enabled(lines, cand):
-                print(f"bank: промпт дня выключен статистикой брака, беру вариант {k}")
-                return cand
-        print("bank: все варианты выключены статистикой — fallback промпт дня без фильтра")
-    return pair["prompt"]
+        return float(r.get("ts", 0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def stats_load(genre, docker_sh):
+    """Строки статистики [{prompt, seed, src, ok, why, ts}]. exec недоступен = None (не перезаписывать
+    файл вслепую: потеря истории); битый/пустой JSON = [] (начинаем заново)."""
+    try:
+        raw = docker_sh("exec", "ace-step", "sh", "-c", f"cat {stats_path(genre)} 2>/dev/null || true")
+    except Exception as e:
+        print(f"bank: stats.json не прочитан ({type(e).__name__}: {e})")
+        return None
+    try:
+        rows = json.loads(raw or "[]")
+    except ValueError:
+        print("bank: stats.json битый — статистика начата заново")
+        return []
+    return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+
+
+def stats_flush(genre, rows, docker_sh, now=None) -> bool:
+    """Дописать строки сегмента в stats.json (после КАЖДОГО сегмента), старше STATS_DAYS выкинуть.
+    Запись атомарная: локальный tmp -> docker cp .part -> mv. Писатель один (bank-fill concurrency)."""
+    now = now or time.time()
+    old = stats_load(genre, docker_sh)
+    if old is None:
+        return False
+    keep = [r for r in old + list(rows) if now - _ts(r) < STATS_DAYS * 86400]
+    fd, tmp = tempfile.mkstemp(suffix=".json")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(keep, f, ensure_ascii=False)
+        dst = stats_path(genre)
+        docker_sh("cp", tmp, f"ace-step:{dst}.part")
+        docker_sh("exec", "ace-step", "mv", f"{dst}.part", dst)
+        return True
+    finally:
+        os.unlink(tmp)
+
+
+def fail_rate(rows, prompt, now=None, days=STATS_DAYS):
+    """(доля брака, n) кандидатов промпта за последние days дней; n == 0 -> (None, 0)."""
+    now = now or time.time()
+    win = [r for r in rows if r.get("prompt") == prompt and now - _ts(r) < days * 86400]
+    if not win:
+        return None, 0
+    return sum(1 for r in win if not r.get("ok")) / len(win), len(win)
+
+
+def prompt_enabled(rows, prompt, now=None, max_fail=STATS_MAX_FAIL, min_n=STATS_MIN_N) -> bool:
+    """R4: брак > max_fail за 30 дней = промпт выключен; меньше min_n кандидатов = включён."""
+    rate, n = fail_rate(rows, prompt, now)
+    return n < min_n or rate <= max_fail
+
+
+def enabled_variants(variants, rows, now=None):
+    """Варианты без выключенных статистикой; выключены все -> все (генерация не останавливается)."""
+    on = [v for v in variants if prompt_enabled(rows, v, now)]
+    if len(on) < len(variants):
+        print(f"bank: статистика брака выключила {len(variants) - len(on)} из {len(variants)} промптов"
+              + ("" if on else " — выключены все, беру без фильтра"))
+    return on or list(variants)
 
 
 def choose_prompt(variants, counts, need, day_prompt, key):
@@ -233,6 +355,11 @@ def _sha_container(d, name, docker_sh):
 
 
 def put_verified(p, genre, name, meta, docker_sh, tries=2) -> bool:
+    from bank_release import MAX_SWING_DB, internal_swing
+    lo, hi = internal_swing(p)
+    if hi - lo > MAX_SWING_DB:
+        print(f"::warning::банк {genre}: {name} отклонён (внутренний провал {hi - lo:.1f} дБ > {MAX_SWING_DB})")
+        return False
     """docker cp на ПК бывает рваный в ОБЕ стороны (23.10: два слота по 5 битых из группы =>
     nobank при MARGIN 4). json+mp3 кладутся во временное имя (.part), sha256 контейнера
     сверяется с локальным, затем атомарный mv; не сошлось после ретраев - сегмент НЕ в банк
@@ -259,7 +386,7 @@ def put_verified(p, genre, name, meta, docker_sh, tries=2) -> bool:
                 docker_sh("exec", "ace-step", "mv", f"{d}/{remote}.part", f"{d}/{remote}")
             return True
         except Exception as e:
-            print(f"bank: put {type(e).__name__}: {e} - сегмент пропущен")
+            print(f"bank: put {type(e).__name__}: {e} stderr={getattr(e, 'stderr', '')!r} - сегмент пропущен")  # 26.10: phonk cp exit 1 без причины
             return False
     finally:
         local_json.unlink(missing_ok=True)
@@ -277,7 +404,8 @@ def group_counts(genre, docker_sh, now=None):
     out = {}
     d = br.bank_dir(genre)
     bad = []  # 24.10: битые учитывались в группах -> fill кормил «полную» группу, а take() её же карантинил (круговое голодание F major, t_ba72c7aa)
-    for e in br.entries(genre, docker_sh=docker_sh):
+    # 26.10: быстрые lofi (>LOFI_MAX_BPM) выпуск не берёт -> в группы не считаем, иначе банк «полон» и fill стоит
+    for e in br.energy_ok(br.entries(genre, docker_sh=docker_sh), genre):
         n = e["name"]
         if n in skip:
             continue
@@ -320,13 +448,19 @@ def main():
     prompt, ref = music.GENRE_PROMPTS[genre], os.environ.get("ACE15_REF_AUDIO") or None
     seed = random.randrange(2**31)
     need = -(-int(os.environ.get("TRACK_DURATION_SEC", "3600")) // 180)
+    stats = stats_load(genre, _docker) or []  # R4: читаем ДО выбора промпта сегмента
     if genre != "anime lofi":  # refpool = семейство ab_1/ab_3 + эталоны только для lofi; phonk одобрен noref
         try:
-            counts = group_counts(genre, lambda *a: _sh("docker", *a))
+            counts = group_counts(genre, _docker)
         except Exception as e:
             print(f"bank: группы не прочитаны ({type(e).__name__}: {e})")
             counts = {}
-        prompt = pin_prompt(prompt, counts, need + MARGIN, seed)
+        base = prompt
+        prompt = pin_prompt(base, counts, need + MARGIN, seed)
+        if not prompt_enabled(stats, prompt):  # R4: группа выключена браком -> пара из seed
+            alt = pin_prompt(base, {}, need + MARGIN, seed)
+            print(f"bank: промпт ...{prompt[-24:]} выключен статистикой брака -> ...{alt[-24:]}")
+            prompt = alt
         target = effective_target(target, have(), counts, need)
         print(f"bank {genre}: группы {counts} -> промпт ...{prompt[-24:]}, цель {target}")
     try:
@@ -334,15 +468,17 @@ def main():
             raise LookupError("refpool только для anime lofi")
         import refpool
         pair = refpool.pick()
+        variants = enabled_variants(refpool.PROMPT_VARIANTS, stats)  # R4: выключенные браком не берём
+        day = pair["prompt"] if pair["prompt"] in variants else variants[0]
         try:
-            counts = group_counts(genre, lambda *a: _sh("docker", *a))
-            prompt = choose_prompt(refpool.PROMPT_VARIANTS, counts, need + MARGIN, pair["prompt"],
+            counts = group_counts(genre, _docker)
+            prompt = choose_prompt(variants, counts, need + MARGIN, day,
                                    lambda v: (music.prompt_bpm(v), music.prompt_key(v)))
             target = effective_target(target, have(), counts, need)
             print(f"bank: группы {counts}, нужно {need}+{MARGIN} -> промпт {prompt[-30:]}, цель {target}")
         except Exception as e:  # листинг банка недоступен -> промпт дня
             print(f"bank: группы не прочитаны ({type(e).__name__}: {e}); промпт дня")
-            prompt = pair["prompt"]
+            prompt = day
         refpool.ensure_ref(pair)
         ref = pair["ref_path"]
     except LookupError:
@@ -355,23 +491,51 @@ def main():
     def scores(paths):
         return guarded_scores(paths, release_busy, ce_windows_batch)
 
-    gen = music.gated_gen(music.mix_raw(run_dir, prompt, seed, ref, genre),
-                          scores, lambda p: objective(p, genre)[0], attempts=3, extra=2)
+    pending = []  # R4: исходы кандидатов текущего сегмента
+
+    def record(p, ok, why):
+        pending.append({"prompt": prompt, "seed": seed, "src": Path(p).name, "ok": bool(ok),
+                        "why": why, "ts": int(time.time())})
+
+    gated = music.gated_gen(music.mix_raw(run_dir, prompt, seed, ref, genre),
+                            scores, lambda p: objective(p, genre)[0], attempts=3, extra=2, record=record)
+
+    def gen(i):
+        """Сегмент + stats.json после него. Сбой записи статистики банк не роняет.
+        ponytail: промпт фиксирован на прогон (<=150 мин), выключение подхватит следующий прогон."""
+        try:
+            return gated(i)
+        finally:
+            if pending:
+                try:
+                    stats_flush(genre, pending, _docker)
+                except Exception as e:
+                    print(f"::warning::bank: stats.json не записан ({type(e).__name__}: {e})")
+                pending.clear()
 
     def put(p):
         name = f"{int(time.time())}_{seed}_{Path(p).stem}"
         meta = {"genre": genre, "prompt": prompt, "ref": ref, "seed": seed,
                 "src": Path(p).name, "ts": int(time.time())}
         # sha256 после cp (put_verified): рваный docker cp не попадает в банк (23.10)
-        ok = put_verified(p, genre, name + ".mp3", meta, _sh)
+        ok = put_verified(p, genre, name + ".mp3", meta, _docker)
         Path(p).unlink(missing_ok=True)
         return ok
 
     dmin = float(os.environ.get("BANK_DEADLINE_MIN", "0") or 0)
     deadline = time.monotonic() + dmin * 60 if dmin else None
-    n = fill(target, have, gen, put, release_busy, deadline=deadline)
+    def guard():
+        try:
+            kb = bank_kb()
+        except Exception:
+            kb = 0  # du недоступен: лимит не проверить, пол C: проверяется всё равно
+        return guard_reason(kb, disk_gate_rc())
+
+    n = fill(target, have, gen, put, release_busy, deadline=deadline, guard=guard)
     print(f"банк {genre}: {n} сегментов (цель {target})")
 
 
 if __name__ == "__main__":
+    if "--reserve" in sys.argv:
+        sys.exit(reserve_main())
     main()

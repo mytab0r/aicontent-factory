@@ -1,3 +1,4 @@
+import json
 #!/usr/bin/env python3
 """Self-check канала S1 ch1 «Economics of Owning» (@OwningItMath): ротация, скрипт, метаданные.
 Запуск: python3 pipeline/test_owning.py (без сети, без ffmpeg/TTS)."""
@@ -70,6 +71,71 @@ def test_validate_script():
         raise AssertionError(">60с речи для Shorts должно отклоняться")
     except ValueError:
         pass
+
+
+def test_validate_script_factchecks_us_ranges():
+    """t_acc4ee1c (условие GO критика №5): цифра вне min/max US-диапазона темы = скрипт отклонён."""
+    def rejects(s):
+        try:
+            oc.validate_script(s)
+        except ValueError:
+            return True
+        return False
+    beats = lambda: [dict(x) for x in GOOD["beats"]]
+    # vending route с build cost $4M — машины стоят $2-8K, маршрут не тянет на миллионы
+    assert rejects(dict(GOOD, title="The Economics of Owning a Vending Route", beats=beats())), "vending $4M"
+    # маржа 90% у дайнера — вне US-диапазона общепита
+    d = beats()
+    d[0]["big"], d[4]["big"] = "$300K", "90%"
+    assert rejects(dict(GOOD, title="The Economics of Owning a Small-Town Diner", beats=d)), "diner 90%"
+    # сумма выше потолка темы в озвучке (food truck $40M) — отклоняется даже без capex-метки
+    f = beats()
+    f[0]["big"] = "$150K"
+    f[2]["say"] = "That adds up to $40 million a year."
+    assert rejects(dict(GOOD, title="The Economics of Owning a Food Truck", beats=f)), "food truck $40M"
+    # тема не распознана = фактчек невозможен = отклонить, не пропускать молча
+    assert rejects(dict(GOOD, title="The Economics of Owning a Spaceport")), "неизвестная тема"
+    # реалистичный car wash ($4M тоннель, 25% маржа) проходит
+    assert not rejects(dict(GOOD, beats=beats())), "реалистичный car wash"
+    for t in oc.TOPICS:
+        assert t in oc.US_RANGES, f"нет US-диапазона для темы {t}"
+
+
+def test_publish_adds_owning_to_playlist():
+    """t_acc4ee1c (условие GO): выпуск Owning после заливки попадает в плейлист The Economics of Owning."""
+    import importlib.util, tempfile, types
+    from pathlib import Path as P
+    spec = importlib.util.spec_from_file_location("pub", P(__file__).parent / "05_publish.py")
+    pub = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(pub)
+    calls = []
+
+    class Q:
+        def __init__(self, r): self.r = r
+        def execute(self): return self.r
+
+    class Y:
+        def playlists(self):
+            return types.SimpleNamespace(
+                list=lambda **k: Q({"items": []}),
+                insert=lambda **k: (calls.append(("create", k["body"]["snippet"]["title"])), Q({"id": "PLown"}))[1])
+        def playlistItems(self):
+            return types.SimpleNamespace(insert=lambda **k: (calls.append(("add", k["body"]["snippet"]["playlistId"],
+                                                                         k["body"]["snippet"]["resourceId"]["videoId"])), Q({}))[1])
+        def videos(self):
+            return types.SimpleNamespace(insert=lambda **k: "req")
+    d = P(tempfile.mkdtemp())
+    (d / "idea.json").write_text(json.dumps(dict(GOOD, channel="owning", description="d", tags=[])))
+    (d / "video.mp4").write_bytes(b"x")
+    pub._get_youtube_service = lambda: Y()
+    pub.upload_resumable = lambda req: {"id": "vid1"}
+    import sys as _s
+    _s.modules.setdefault("googleapiclient", types.ModuleType("googleapiclient"))
+    http = types.ModuleType("googleapiclient.http"); http.MediaFileUpload = lambda *a, **k: None
+    _s.modules["googleapiclient.http"] = http
+    pub.publish(d)
+    assert ("create", pub.OWNING_PLAYLIST) in calls, calls
+    assert ("add", "PLown", "vid1") in calls, calls
 
 
 def test_parse_llm_json_fenced():
@@ -150,6 +216,25 @@ def test_tts_falls_back_to_alternate_voice():
         oc.subprocess.run = orig
 
 
+def test_tts_error_carries_stderr():
+    """t_d0733c35: CalledProcessError печатал только команду — stderr edge_tts (NoAudioReceived) обязан быть в ошибке."""
+    import subprocess as sp
+
+    def fake(cmd, **k):
+        if "edge_tts" in cmd:
+            assert k.get("capture_output"), "stderr edge_tts не перехватывается"
+            raise sp.CalledProcessError(1, cmd, "", "edge_tts.exceptions.NoAudioReceived: No audio was received.")
+        return sp.CompletedProcess(cmd, 0, "1.5" + chr(10), "")
+    orig, oc.subprocess.run = oc.subprocess.run, fake
+    try:
+        oc.tts("hi", Path("x.mp3"), sleep=lambda s: None)
+        raise AssertionError("tts не упал при отказе всех голосов")
+    except RuntimeError as e:
+        assert "NoAudioReceived" in str(e) and "rc=1" in str(e), str(e)
+    finally:
+        oc.subprocess.run = orig
+
+
 def test_render_filter_has_no_upscale():
     """t_33aa9813: SIGKILL=OOM от scale=1188:2112 перед zoompan — рендер сразу в целевом разрешении."""
     import inspect
@@ -167,6 +252,8 @@ if __name__ == "__main__":
     test_rotation_varies_topic_hook_structure()
     test_prompt_carries_plan()
     test_validate_script()
+    test_validate_script_factchecks_us_ranges()
+    test_publish_adds_owning_to_playlist()
     test_parse_llm_json_fenced()
     test_cta_decision_and_description()
     test_upload_body_for_channel()

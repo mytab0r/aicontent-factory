@@ -54,8 +54,8 @@ def router_post(path: str, payload: dict, timeout: int = 120, retries: int = 3) 
                     continue
                 raise last_err from None
             last_err = RuntimeError(f"9router {path} HTTP {e.code}: {body}")
-            # 429/503 — временная перегрузка провайдера, стоит повторить
-            if e.code in (429, 503) and attempt < retries - 1:
+            # 429/5xx — временная перегрузка провайдера, стоит повторить (t_b87507e0: 5xx, не только 503)
+            if (e.code == 429 or e.code >= 500) and attempt < retries - 1:
                 time.sleep(5 * (attempt + 1))
                 continue
             raise last_err from None
@@ -67,6 +67,20 @@ def router_post(path: str, payload: dict, timeout: int = 120, retries: int = 3) 
                 continue
             raise last_err from None
     raise last_err
+
+
+def model_alive(model: str, post=None, timeout: int = 30) -> bool:
+    """t_b87507e0: дешёвый probe (16 токенов) ДО генерации — мёртвая модель не жжёт полный запрос.
+    404/400 (model_not_found/unsupported) => False; 5xx после ретраев router_post => False (следующая в цепочке).
+    ponytail: без кеша на диск — один процесс = один прогон, повторный probe внутри прогона не нужен."""
+    post = post or router_post
+    try:
+        post("/chat/completions", {"model": model, "max_tokens": 16, "stream": False,
+                                   "messages": [{"role": "user", "content": "ok"}]}, timeout=timeout)
+        return True
+    except RuntimeError as e:
+        print(f"probe {model}: {e}"[:200])
+        return False
 
 
 def load_moods() -> list[str]:

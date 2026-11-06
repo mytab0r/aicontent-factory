@@ -1,11 +1,3 @@
-import json, os, re, subprocess, sys, tempfile
-# optional numpy for tuning checks
-try:
-    if np is None:
-        return []
-    # numpy already imported at module level
-except ImportError:
-    np = None
 #!/usr/bin/env python3
 """Критик трека перед публикацией (03c). exit 1 = не публиковать, шаги 04-07 не идут.
 
@@ -427,9 +419,7 @@ def loudjump_why(f):
 
 def tunings(f, sr=11025, n=8192):
     """A19: строй (центы от A440, -50..50) по окнам TUNE_WIN с; окна без согласованных тональных пиков пропускаются."""
-    if np is None:
-        return []
-    # numpy already imported at module level
+    import numpy as np
     x = np.frombuffer(subprocess.run(["ffmpeg", "-v", "error", "-i", str(f), "-ac", "1", "-ar", str(sr), "-f", "f32le", "-"],
                                      capture_output=True).stdout, np.float32)
     fq, win, out = np.fft.rfftfreq(n, 1 / sr), int(TUNE_WIN * sr), []

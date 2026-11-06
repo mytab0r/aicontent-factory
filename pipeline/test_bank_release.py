@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """t_ba72c7aa R2: выпуск собирается ИЗ БАНКА (bank_release), не генерирует.
-R4: статистика отказов по промптам (stats_record/fail_rate/prompt_enabled) в bank.py.
+R4 (t_fed47d5f): статистика брака по промптам за 30 дней в stats.json банка, выключение промпта > 50%.
 Тесты = контракт; реализация пишется по тому же контракту (TDD RED)."""
 import hashlib
 import json
@@ -88,7 +88,7 @@ def test_take_refills_after_delivery_failure():
     """Проверка ОДНА (put_verified при записи). take() только доставляет: cp не удался =
     сегмент добирается другим, БЕЗ карантина и БЕЗ ffprobe-вердикта."""
     now = time.time()
-    ents = [meta(n, 89, "F major") for n in ("a", "b", "c")]
+    ents = [meta(n, 70, "F major") for n in ("a", "b", "c")]
     names = "".join(e["name"] + ".mp3\n" for e in ents)
     metas = {f"/app/output/bank/anime-lofi/{e['name']}.json": json.dumps(
         {"prompt": e["prompt"], "seed": e["seed"]}) for e in ents}
@@ -109,7 +109,7 @@ def test_take_refills_after_delivery_failure():
 
 def test_take_copies_each_segment_or_none():
     now = time.time()
-    ents = [meta("a", 89, "F major"), meta("b", 89, "F major")]
+    ents = [meta("a", 70, "F major"), meta("b", 70, "F major")]
     names = "\n".join(e["name"] + ".mp3" for e in ents) + "\n"
     metas = {f"/app/output/bank/anime-lofi/{e['name']}.json": json.dumps(
         {"prompt": e["prompt"], "seed": e["seed"]}) for e in ents}
@@ -153,7 +153,7 @@ def test_assemble_writes_music_meta_and_concat():
     spec.loader.exec_module(m)
     calls = {}
     m.prep_segments = lambda ps, log=print: calls.setdefault("prep", ps)
-    m.concat_tracks = lambda ps, out, xfade=m.XFADE: calls.update(out=str(out), paths=ps)
+    m.concat_tracks = lambda ps, out, xfade=m.XFADE: (calls.update(out=str(out), paths=ps), ([0.0, 164.0], [172.0]))[1]
     bank_release.master_final = lambda path, genre: calls.update(master=str(path), genre=genre)  # mastering не тестируем
     m._probe_sec = lambda p: 180.0
     with tempfile.TemporaryDirectory() as td:
@@ -176,53 +176,92 @@ def test_release_budget_under_15_min():
     assert bank_release.release_budget_sec(20) < 900
 
 
-def test_fail_rate_and_prompt_enabled():
-    """Критерий 9: статистика отказов; промпт с браком >50% выключается автоматически."""
-    lines = [json.dumps({"prompt": "p1", "seed": i, "ok": i % 2 == 0, "ts": i}) for i in range(20)]
-    assert bank.fail_rate(lines, "p1") == 0.5
-    lines_bad = lines[:-12] + [json.dumps({"prompt": "p1", "seed": i, "ok": False, "ts": i}) for i in range(12)]
-    assert bank.fail_rate(lines_bad, "p1") == 0.8
-    assert bank.fail_rate(["{broken"], "p1") is None          # битая строка не роняет
-    assert bank.fail_rate([], "p1") is None                   # нет данных
-    few = [json.dumps({"prompt": "p1", "ok": False}) for _ in range(3)]
-    assert bank.prompt_enabled(few, "p1") is True             # < min_n = недостаточно данных
-    assert bank.prompt_enabled(lines_bad, "p1") is False      # 0.8 > 0.5
-    assert bank.prompt_enabled(lines, "p1") is True           # ровно 0.5 не > 0.5
+DAY = 86400
 
 
-def test_stats_record_appends_jsonl():
-    dk = FakeDocker({})
-    bank.stats_record("anime lofi", "p1", 7, True, docker_sh=dk)
-    bank.stats_record("anime lofi", "p1", 8, False, "CE low", docker_sh=dk)
-    assert len(dk.ops) == 2
-    for (_, cmd), ok in zip(dk.ops, (True, False)):
-        row = json.loads(cmd.split("echo ", 1)[1].rsplit(" >>", 1)[0].strip("'\""))
-        assert row["prompt"] == "p1" and row["ok"] is ok and "ts" in row
+def _row(prompt, ok, ts, seed=1):
+    return {"prompt": prompt, "seed": seed, "ok": ok, "why": "" if ok else "CE low", "ts": ts}
 
 
-def test_bank_main_skips_disabled_prompts():
-    """Критерий 9: генератор берёт первый включённый вариант; все disabled -> fallback pick()."""
-    import refpool
-    saved = (bank.refpool if hasattr(bank, "refpool") else None)
-    variants = ["v1 89 BPM, F major", "v2 82 BPM, D major", "v3 76 BPM, G major"]
-    refpool.PROMPT_VARIANTS, saved_variants = variants, variants
-    refpool.pick = lambda now=None: {"prompt": variants[0], "ref_path": ""}
-    try:
-        chosen = []
-        def enabled(lines, prompt):
-            chosen.append(prompt)
-            return prompt != variants[0]  # v1 выключен, v2 включён
-        got = bank.pick_prompt(enabled)
-        assert got == variants[1], (got, chosen)
-        def none_enabled(lines, prompt):
-            return False
-        fallback = {"prompt": variants[2], "ref_path": ""}
-        refpool.pick = lambda now=None: fallback
-        assert bank.pick_prompt(none_enabled) == variants[2]  # fallback без фильтра
-    finally:
-        refpool.PROMPT_VARIANTS = saved_variants
-        if saved is not None:
-            bank.refpool = saved
+def test_fail_rate_and_prompt_enabled_30_days():
+    """t_fed47d5f R4: брак > 50% за последние 30 дней = промпт выключен; старше 30 дней не в счёт."""
+    now = 100 * DAY
+    half = [_row("p1", i % 2 == 0, now - i) for i in range(20)]
+    assert bank.fail_rate(half, "p1", now) == (0.5, 20)
+    assert bank.prompt_enabled(half, "p1", now) is True              # ровно 0.5 не > 0.5
+    bad = [_row("p1", i < 4, now - i) for i in range(20)]            # 80% брака
+    assert bank.prompt_enabled(bad, "p1", now) is False
+    old_bad = [_row("p1", False, now - 31 * DAY) for _ in range(20)]
+    assert bank.fail_rate(old_bad, "p1", now) == (None, 0)          # вне окна
+    assert bank.prompt_enabled(old_bad + half, "p1", now) is True
+    few = [_row("p1", False, now) for _ in range(3)]
+    assert bank.prompt_enabled(few, "p1", now) is True               # < min_n = данных мало
+    assert bank.prompt_enabled(bad, "p2", now) is True               # статистика по промпту
+
+
+def test_high_reject_prompt_is_skipped():
+    """t_fed47d5f R4 (CI-критерий): генератор не берёт промпт с браком > 50%; все выключены -> без фильтра."""
+    now = time.time()
+    v = ["v1 70 BPM, F major", "v2 68 BPM, D major"]
+    rows = [_row(v[0], False, now) for _ in range(10)] + [_row(v[1], True, now) for _ in range(10)]
+    assert bank.enabled_variants(v, rows) == [v[1]]
+    counts = {(70, "F major"): 10, (68, "D major"): 3}                # открытая группа v1 больше
+    key = lambda x: (int(x.split()[1]), x.split(", ")[1])
+    assert bank.choose_prompt(v, counts, 24, v[0], key) == v[0]       # без статистики добивал бы v1
+    on = bank.enabled_variants(v, rows)
+    assert bank.choose_prompt(on, counts, 24, on[0], key) == v[1]     # со статистикой v1 пропущен
+    all_bad = [_row(x, False, now) for x in v for _ in range(10)]
+    assert bank.enabled_variants(v, all_bad) == v
+
+
+def test_stats_flush_updates_file_and_prunes():
+    """t_fed47d5f R4: stats.json дописывается после сегмента, атомарно (cp .part -> mv), >30 дней выкинуты."""
+    now = 100 * DAY
+    path = bank.stats_path("anime lofi")
+    assert path == "/app/output/bank/anime-lofi/stats.json"
+    old = [_row("p1", True, now - 40 * DAY), _row("p1", False, now - DAY)]
+    sent = {}
+
+    def dk(*a):
+        if a[0] == "cp":
+            sent["data"] = json.loads(Path(a[1]).read_text(encoding="utf-8"))
+            sent["dst"] = a[2]
+            return ""
+        if a[-1].startswith("cat "):
+            return json.dumps(old)
+        sent.setdefault("ops", []).append(a)
+        return ""
+    assert bank.stats_flush("anime lofi", [_row("p1", True, now)], dk, now=now) is True
+    assert sent["dst"] == f"ace-step:{path}.part"
+    assert sent["ops"][-1] == ("exec", "ace-step", "mv", f"{path}.part", path)
+    assert [r["ts"] for r in sent["data"]] == [now - DAY, now]       # 40-дневная выкинута
+    # битый файл = заново; exec недоступен = не перезаписываем вслепую
+    assert bank.stats_load("anime lofi", lambda *a: "{broken") == []
+
+    def down(*a):
+        raise RuntimeError("exec down")
+    assert bank.stats_load("anime lofi", down) is None
+    assert bank.stats_flush("anime lofi", [_row("p1", True, now)], down, now=now) is False
+
+
+def test_stats_json_invisible_to_release():
+    """Release unaffected: выпуск берёт только *.mp3 с json-мета; stats.json сегментом не становится."""
+    dk = FakeDocker({"ls /app/output/bank/anime-lofi": "stats.json\na.mp3\na.json\n",
+                     "a.json": json.dumps({"bpm": 70, "key": "F major", "prompt": "p"})})
+    assert [e["name"] for e in bank_release.entries("anime lofi", docker_sh=dk)] == ["a"]
+
+
+def test_gated_gen_records_every_candidate():
+    """R4: каждый кандидат сегмента (OK и брак) попадает в статистику через record."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("music_r4", Path(__file__).resolve().parent / "03_music.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    got = []
+    gen = m.gated_gen(lambda i, k: f"/nonexistent/s{i}_{k}.mp3", lambda ps: [[7.9] * 3, [3.0] * 3, [7.0] * 3],
+                      lambda p: [], attempts=3, log=lambda *a: None, record=lambda p, ok, why: got.append(ok))
+    assert gen(0) == "/nonexistent/s0_0.mp3"
+    assert got == [True, False, True]
 
 
 def test_margin_absorbs_ragged_cp_burst():
@@ -234,7 +273,7 @@ def test_margin_absorbs_ragged_cp_burst():
 def test_take_retries_failed_cp():
     """Рваный/несостоявшийся cp перекачивается (до 5 попыток) и не карантинится."""
     now = time.time()
-    ents = [meta("a", 89, "F major"), meta("b", 89, "F major")]
+    ents = [meta("a", 70, "F major"), meta("b", 70, "F major")]
     names = "\n".join(e["name"] + ".mp3" for e in ents) + "\n"
     metas = {f"/app/output/bank/anime-lofi/{e['name']}.json": json.dumps(
         {"prompt": e["prompt"], "seed": e["seed"]}) for e in ents}
@@ -264,7 +303,7 @@ def test_take_never_quarantines():
     tmp-папки). Контракт: take() не двигает файлы банка, только предупреждает."""
 
     now = time.time()
-    ents = [meta(n, 89, "F major") for n in ("a", "b", "c")]
+    ents = [meta(n, 70, "F major") for n in ("a", "b", "c")]
     names = "".join(e["name"] + ".mp3\n" for e in ents)
     metas = {f"/app/output/bank/anime-lofi/{e['name']}.json": json.dumps(
         {"prompt": e["prompt"], "seed": e["seed"]}) for e in ents}
@@ -309,7 +348,7 @@ def test_take_creates_missing_run_dir():
     'invalid output path' -> все сегменты «не доставлены» -> nobank. Контракт: take() создаёт run_dir."""
     import contextlib, io
     now = time.time()
-    ents = [meta(n, 89, "F major") for n in ("a", "b")]
+    ents = [meta(n, 70, "F major") for n in ("a", "b")]
     names = "\n".join(e["name"] + ".mp3" for e in ents) + "\n"
     metas = {f"/app/output/bank/anime-lofi/{e['name']}.json": json.dumps(
         {"prompt": e["prompt"], "seed": e["seed"]}) for e in ents}
@@ -333,9 +372,233 @@ def test_take_creates_missing_run_dir():
             bank_release.time.sleep = orig
         assert got is not None and len(got) == 2, got
 
+
+def _meta(n, bpm, key):
+    return {"name": n, "prompt": f"p {bpm} BPM, {key}, t", "seed": 1}
+
+
+def test_pick_cross_group_compatible_fills_need():
+    """24.10 (коммент 05:47): крупнейшая группа 19 < need=20 -> pick None при 53 свободных.
+    Контракт: добор из соседних групп (та же тональность или квартово-родственная, BPM в пределах
+    COMPAT_BPM=4) до need; основная группа - большинство."""
+    now = __import__("time").time()
+    ents = [_meta(f"f{i}", 89, "F major") for i in range(19)]
+    ents += [_meta(f"c{i}", 91, "F major") for i in range(3)]   # тот же key, BPM 89+-4
+    got = bank_release.pick(ents, need=20, now=now, used_lines=[], rng=__import__("random").Random(1))
+    assert got is not None, "19+3 совместимых должны дать выпуск"
+    core = [e for e in got if e["name"].startswith("f")]
+    assert len(core) == 19 and len(got) == 20, (len(core), len(got))
+    assert all(abs((e["prompt"] and int(e["prompt"].split(" BPM")[0].split()[-1]) or 0) - 89) <= bank_release.COMPAT_BPM for e in got)
+
+
+def test_pick_cross_group_rejects_incompatible():
+    """Несовместимые (тоналность вне родства, BPM дальше COMPAT_BPM) не добираются:
+    группа 4 < MIN_SEG + 1 чужой — чужой не тянет группу через MIN_SEG, ответ None."""
+    now = __import__("time").time()
+    ents = [_meta(f"f{i}", 89, "F major") for i in range(4)]
+    ents += [_meta("x", 120, "D minor")]
+    got = bank_release.pick(ents, need=20, now=now, used_lines=[], rng=__import__("random").Random(1))
+    assert got is None, got
+
+
+def test_pick_short_mix_instead_of_skip():
+    """H3: даже need не добирается — короткий микс >= bank_release.MIN_SEG (>=5 сегм, 15 мин)
+    вместо пропуска слота; меньше MIN_SEG = None."""
+    now = __import__("time").time()
+    ents = [_meta(f"f{i}", 89, "F major") for i in range(8)]
+    got = bank_release.pick(ents, need=20, now=now, used_lines=[], rng=__import__("random").Random(1))
+    assert got is not None and len(got) == 8, got
+    ents = [_meta(f"g{i}", 89, "F major") for i in range(3)]
+    got = bank_release.pick(ents, need=20, now=now, used_lines=[], rng=__import__("random").Random(1))
+    assert got is None, got
+
+
+
+
+def test_master_final_loudnorms_when_too_quiet():
+    """run 40145954650: TP=-2.0 -> loudnorm пропускался, трек остался I=-17.4 (< -16) = 03c FAIL.
+    Контракт: master_final нормализует не только при клиппинге, но и при I вне окна гейта."""
+    import importlib.util
+    import subprocess as sp
+    import types
+    from pathlib import Path as P
+    HERE2 = P(__file__).resolve().parent
+    spec = importlib.util.spec_from_file_location("br_mf", HERE2 / "bank_release.py")
+    br = importlib.util.module_from_spec(spec)
+    sys.modules["br_mf"] = br
+    spec.loader.exec_module(br)
+
+    class R:  # t_96de1cc6: loudnorm 2-проходный; 1-й проход = ebur128 Summary в stderr (t_ba72c7aa: быстрее json-анализа)
+        stderr = ("Summary:\n  Integrated loudness:\n    I:         -17.4 LUFS\n    Threshold: -27.5 LUFS\n"
+                  "  Loudness range:\n    LRA:         6.0 LU\n  True peak:\n    Peak:       -2.0 dBFS\n")
+        stdout = ""
+        returncode = 0
+
+    ran = []
+    fake_mastering = types.ModuleType("mastering")
+    fake_mastering.measure = lambda track: {"tp": -2.0, "i": -17.4}
+    saved_mastering = sys.modules.get("mastering")
+    saved_music = br._music_mod
+    sys.modules["mastering"] = fake_mastering
+    br._music_mod = lambda: types.SimpleNamespace(fade_end=lambda *a, **k: None)
+    orig_run = sp.run
+    import tempfile
+    td = tempfile.mkdtemp()
+    track = f"{td}/track.mp3"
+    P(track).write_bytes(b"x")
+    sp.run = lambda cmd, check=False, **k: (ran.append(cmd), P(str(cmd[-1])).write_bytes(b"y"), R())[2]
+    try:
+        import quality_gate as qg
+        if qg.MIN_I <= -17.4 <= qg.MAX_I:
+            fake_mastering.measure = lambda track: {"tp": -2.0, "i": qg.MIN_I - 2.0}
+        br.master_final(track, "anime lofi")
+    finally:
+        sp.run = orig_run
+        br._music_mod = saved_music
+        if saved_mastering is None:
+            sys.modules.pop("mastering", None)
+        else:
+            sys.modules["mastering"] = saved_mastering
+    # t_2c32a785: нормализация = постоянный gain к LUFS_TARGET (loudnorm linear молча уходил в динамику).
+    import re as _re
+    gains = [float(g) for c in ran for g in _re.findall(r"volume=(-?[\d.]+)dB,", " ".join(map(str, c)))]
+    assert gains and max(gains) >= qg.LUFS_TARGET - fake_mastering.measure(track)["i"] - 0.05, (gains, ran[:2])
+
+
+def test_trim_fade_head_cuts_leading_fade():
+    """run 40145954650: тихое вступление первого сегмента = блоки 3-63 с на 4.8 LU ниже тела = A18 FAIL.
+    trim_fade_head обязан существовать и срезать лидирующий фейд (синтетика: sine с фейдом 0->-30 дБ)."""
+    import importlib.util
+    import subprocess as sp
+    import tempfile
+    HERE2 = __import__("pathlib").Path(__file__).resolve().parent
+    spec = importlib.util.spec_from_file_location("m03h", HERE2 / "03_music.py")
+    m = importlib.util.module_from_spec(spec)
+    sys.modules["m03h"] = m
+    spec.loader.exec_module(m)
+    assert hasattr(m, "trim_fade_head")
+    with tempfile.TemporaryDirectory() as td:
+        f = f"{td}/seg.mp3"
+        sp.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=90",
+                "-af", "volume=-12dB,afade=t=in:st=0:d=20", "-ac", "2",
+                "-c:a", "libmp3lame", "-b:a", "192k", f], check=True)
+        d0 = m._probe_sec(f)
+        m.trim_fade_head([f], max_sec=20.0, log=lambda *a: None)
+        d1 = m._probe_sec(f)
+        assert d0 - d1 >= 5.0, (d0, d1)  # срезал вступление
+        assert d1 >= 60.0  # тело цело
+
+
+def _synth(path, dip=False):
+    """90s -20dB sine; dip=True -> середина (30-60s) на -45dB => swing > 8 дБ."""
+    import subprocess as sp
+    if dip:
+        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+               "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100:duration=30,volume=-20dB",
+               "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100:duration=30,volume=-45dB",
+               "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100:duration=30,volume=-20dB",
+               "-filter_complex", "[0:a][1:a][2:a]concat=n=3:v=0:a=1[a]", "-map", "[a]",
+               "-codec:a", "libmp3lame", "-b:a", "128k", str(path)]
+    else:
+        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+               "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100:duration=90,volume=-20dB",
+               "-codec:a", "libmp3lame", "-b:a", "128k", str(path)]
+    r = sp.run(cmd, capture_output=True, text=True)
+    assert Path(path).exists() and Path(path).stat().st_size > 0, r.stderr
+
+def test_internal_swing_detects_dip():
+    with tempfile.TemporaryDirectory() as td:
+        clean = Path(td) / "clean.mp3"
+        dip = Path(td) / "dip.mp3"
+        _synth(clean)
+        _synth(dip, dip=True)
+        lo0, hi0 = bank_release.internal_swing(clean)
+        lo1, hi1 = bank_release.internal_swing(dip)
+        assert hi0 - lo0 <= bank_release.MAX_SWING_DB, (lo0, hi0)
+        assert hi1 - lo1 > bank_release.MAX_SWING_DB, (lo1, hi1)
+
+
+def test_take_excludes_internal_dip_segment():
+    """run 40155188504: сегмент с внутренним провалом 4.7 LU валит loudjump. take исключает его и добирает другие."""
+    now = time.time()
+    ents = [meta(n, 70, "F major") for n in ("a", "b", "c")]
+    names = "".join(e["name"] + ".mp3\n" for e in ents)
+    metas = {f"/app/output/bank/anime-lofi/{e['name']}.json": json.dumps(
+        {"prompt": e["prompt"], "seed": e["seed"]}) for e in ents}
+    dk = FakeDocker({**metas, "/app/output/bank/anime-lofi": names})
+
+    def cp_real(*a):
+        if a and a[0] == "cp":
+            dst = Path(a[2])
+            _synth(dst, dip=(dst.stem == "a"))
+        return dk(*a)
+
+    with tempfile.TemporaryDirectory() as td:
+        got = bank_release.take("anime lofi", 2, td, docker_sh=cp_real, now=now,
+                                rng=random.Random(1),
+                                valid=lambda p: Path(p).stat().st_size > 0)
+        assert {p.stem for p in got} == {"b", "c"}, got
+
+
+
+
+
+
+
+
+
+
+
+def test_internal_swing_ignores_edge_fades():
+    """run 40243598650: все сегменты банка исключены (провал 52-69 дБ) из-за штатных fade-in/out к тишине."""
+    import subprocess as sp
+    with tempfile.TemporaryDirectory() as td:
+        f = Path(td) / "faded.mp3"
+        sp.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
+                "sine=frequency=440:sample_rate=44100:duration=180,volume=-20dB,"
+                "afade=t=in:d=6,afade=t=out:st=170:d=10", "-codec:a", "libmp3lame", "-b:a", "128k", str(f)],
+               check=True)
+        lo, hi = bank_release.internal_swing(f)
+        assert hi - lo <= bank_release.MAX_SWING_DB, (lo, hi)
+
+
+def test_lofi_energy_gate_excludes_fast_segments():
+    """25.10 владелец: 89 BPM для lofi «слишком энергично, под это не уснёшь» (цель 64-72).
+    Выпуск 26.10 «Autumn Attic Hideaway» собран из банка 89 BPM. Сегменты lofi > 75 BPM
+    в выпуск не берутся: пусто = слот пропущен, а не опубликован брак."""
+    fast = [meta(f"f{i}", 89, "F major") for i in range(25)]
+    assert bank_release.energy_ok(fast, "anime lofi") == []
+    calm = [meta(f"c{i}", 70, "F major") for i in range(25)]
+    assert len(bank_release.energy_ok(fast + calm, "anime lofi")) == 25
+    # phonk вне правила (другой жанр, свой эталон)
+    assert len(bank_release.energy_ok(fast, "chill phonk")) == 25
+
+
+def test_flatten_blocks_passes_loudjump_gate():
+    """t_a771ef4f: A18 (скачок громкости между блоками) после master_final.flatten_blocks не возвращается.
+    Фикстуры: ступень 7.8 LU и чередование +2.4/-2.4 LU от медианы (каждый блок в старом допуске 2.5,
+    соседи 4.8 > JUMP_MAX: старый flatten пропускал их как есть, run 40171388541 = 4.1 LU)."""
+    import subprocess
+    import quality_gate as qg
+    alt = "+".join(f"{10 ** (x / 20):.4f}*between(t,{i * 60},{(i + 1) * 60}-0.001)"
+                   for i, x in enumerate([0, 2.4, -2.4, 2.4, -2.4, 0]))
+    with tempfile.TemporaryDirectory() as td:
+        for name, d, expr in [("step", 330, "if(lt(t,150),1,0.4)"), ("alt", 360, alt)]:
+            f = f"{td}/{name}.mp3"
+            subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
+                            f"anoisesrc=d={d}:c=pink:a=0.1:seed=7", "-af", f"volume='{expr}':eval=frame",
+                            "-ac", "2", "-c:a", "libmp3lame", "-b:a", "192k", f], check=True)
+            assert qg.loudjump_why(f), name  # фикстура воспроизводит сигнатуру
+            bank_release.flatten_blocks(f)
+            assert qg.loudjump_why(f) == [], (name, qg.loudjump_why(f))
+    assert qg.JUMP_MAX == 4.0 and qg.JUMP_BLOCK == 60.0  # порог гейта не трогали
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for f in fns:
         f()
         print("ok", f.__name__)
     print(f"PASS {len(fns)} tests")
+
+

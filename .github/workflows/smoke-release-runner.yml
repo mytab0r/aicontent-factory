@@ -1,0 +1,21 @@
+name: smoke-release-runner
+# Проверка полосы label release: setup-uv должен исполнить uv в RUNNER_TEMP (t_3c5f3862).
+on:
+  workflow_dispatch:
+  push:
+    branches: ['wt/t_3c5f3862-*']
+    paths: ['.github/workflows/smoke-release-runner.yml']
+jobs:
+  smoke:
+    runs-on: [self-hosted, release]
+    # pc-acf тоже несёт label release; job печатает имя раннера
+    timeout-minutes: 15
+    steps:
+      - uses: astral-sh/setup-uv@v3
+        timeout-minutes: 5  # t_6758c86f: сетевой шаг не висит до таймаута джобы
+      - run: echo "runner=$RUNNER_NAME temp=$RUNNER_TEMP"
+      - run: uv --version && grep -E " $RUNNER_TEMP| /tmp/runner" /proc/mounts || true
+      - name: ace-step reachable (daily-video зависимость)
+        run: |
+          getent hosts ace-step && curl -s -m 10 -o /dev/null -w "ace-step http=%{http_code}\n" "http://ace-step:8001/health" || { echo "::error::ace-step не резолвится с раннера"; exit 1; }
+          docker info --format 'docker ok {{.ServerVersion}}'; nproc; free -m | head -2

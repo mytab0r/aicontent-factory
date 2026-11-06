@@ -1,12 +1,257 @@
-name: tests
+name: ci
+# один прогон на коммит: push только в master, ветки проверяет pull_request;
+# exp/* не гоняем (их проверяет свой oneoff-*). Устаревший коммит той же ветки отменяется новым.
 on:
   push:
     branches: [master]
   pull_request:
-  workflow_dispatch:
-
+# Вытеснение (t_7461c726, t_e7b938b0): группа = ветка (мастер или PR-ветка), отменяется ТОЛЬКО ожидающий
+# прогон (cancel-in-progress: false): начатый всегда доводится до вердикта, в очереди остаётся один — новейший.
+# Версия с cancel-in-progress: true убивала начатые прогоны мастера при очереди >1 ч (16 отмен 24.10);
+# версия с уникальной группой на прогон (run_id) копила неограниченный бэклог: 25.10 HEAD ждал старта 10+ ч,
+# каждый вытеснённый push сжигал ~40 мин GPU-раннера. Вытеснённый в очереди прогон — шум (verdict у новейшего),
+# см. supersede_verdict в recurrence_scan. Инвариант: pipeline/test_ci_concurrency.py.
 concurrency:
-  group: ci-${{ github.head_ref || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.head_ref || github.ref }}
+  cancel-in-progress: false
+jobs:
+  test:
+    runs-on: [self-hosted, ci]
+    # merge-police (P10) читает /commits/{sha}/pulls и /check-runs: default read-токен (contents+metadata+packages)
+    # даёт 403 -> master ci красный с 25.10, pay-image не публиковал образ (t_3ecce166). Инвариант: test_merge_police.py.
+    permissions:
+      contents: read
+      packages: read
+      pull-requests: read
+      checks: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: install test deps
+        run: |
+          set -e
+          # self-hosted runner: чиним сломанное dpkg-состояние после прерванных прогонов.
+          # fontconfig postinst падает на regenerating fonts cache в контейнере без /proc
+          # монтирований для fontconfig — не критично для ffmpeg CLI, чиним форсом.
+          sudo dpkg --configure -a || true
+          # fontconfig postinst (fc-cache) падает в раннер-контейнере — чиним окружение и повторяем
+          sudo mkdir -p /var/cache/fontconfig /usr/share/fonts /var/lib/dpkg/updates
+          sudo fc-cache -f -v >/dev/null 2>&1 || true
+          sudo DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
+          sudo apt-get update -qq || true
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -f -qq ffmpeg || true
+          # прерванный apt оставил битые (нулевые) .so; apt-reinstall блокируется ошибкой
+          # postinst fontconfig. Ищем пакеты, у которых файлы в /lib и /usr нулевого размера
+          # (симптом прерванной распаковки), и ставим их .deb напрямую — dpkg распаковывает
+          # файлы ДО postinst, так что fontconfig-ошибка восстановлению не мешает.
+          broken=""
+          for f in $(sudo find /lib /usr/lib /usr/bin -xdev -type f -size 0 2>/dev/null); do
+            p=$(sudo dpkg -S "$f" 2>/dev/null | cut -d: -f1) || continue
+            broken="$broken $p"
+          done
+          broken=$(echo $broken | tr ' ' '\n' | sort -u | tr '\n' ' ')
+          echo "broken:$broken"
+          if [ -n "$broken" ]; then
+            cd /tmp
+            for p in $broken; do
+              apt-get download "$p" >/dev/null 2>&1 && sudo dpkg -i --force-overwrite ./*.deb >/dev/null 2>&1 || echo "skip $p"
+              sudo rm -f ./*.deb
+            done
+            cd "$GITHUB_WORKSPACE"
+          fi
+          sudo DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
+          command -v ffmpeg || { sudo dpkg --configure -a || true; for i in 1 2 3; do sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg && break; sleep 20; done; }
+          command -v ffmpeg
+          ffmpeg -version | head -1
+          pip install pillow gradio_client numpy google-api-python-client google-auth-httplib2 librosa pyyaml
+      - name: run python tests
+        run: |
+          set -e
+          for f in pipeline/test_*.py; do
+            echo "=== $f ==="
+            python "$f"
+          done
+      - name: recheck_blockers selftest
+        run: python recheck_blockers.py --selftest
+      - name: run pay.pxbt.app tests (wallet-verify + api + server)
+        run: |
+          set -e
+          for f in test/test_*.mjs; do
+            echo "=== $f ==="
+            node "$f"
+          done
+      # P10 (аудит 25.10): branch protection и rulesets на Free/private недоступны (API 403
+      # "Upgrade to GitHub Pro") — гейт «merge только после зелёного test» ставит детектор:
+      # на push в master проверяем HEAD-PR; merge раньше зелёного test = красный job + TG-алерт.
+      # PR-прогоны не задевает (только push).
+      - name: merge-police (P10)
+        id: police
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 pipeline/merge_police.py
+      - name: TG alert merge-police
+        if: failure() && steps.police.outcome == 'failure'
+        working-directory: pipeline
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          TG_THREAD_ID: ${{ secrets.TG_THREAD_ID }}
+        run: |
+          python3 -c "from common import tg_send; tg_send('🚨 merge-police (P10): PR смержен раньше зелёного test — master получил непроверенный коммит. Лог: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}')"
 
-jobs: {}
+  pay-image-smoke:
+    runs-on: [self-hosted, ci]
+    steps:
+      - uses: actions/checkout@v4
+      - name: build + run pay image (bind-mount ./data как в compose), healthz, /admin 403, запись счёта
+        run: |
+          set -e
+          # self-hosted DooD: контейнеры живут на хосте, а не в раннере. Уникальное имя + уборка + доступ по IP
+          TOK=smoke-$GITHUB_RUN_ID  # не литерал: редактор секретов агента заменял его на ***; в этом job, не в test
+          N=pay-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT; trap "docker rm -f $N >/dev/null 2>&1 || true" EXIT
+          docker build -q -f deploy/pay-page/Dockerfile -t pay-smoke .
+          # root-owned каталог: контейнер должен упасть сразу с понятной ошибкой, а не 500 позже
+          sudo mkdir -p /tmp/pay-root && sudo chown root:root /tmp/pay-root
+          if timeout 20 docker run --rm -v /tmp/pay-root:/data pay-smoke 2> err.txt; then echo 'должен был упасть'; exit 1; fi
+          cat err.txt
+          grep -q 'chown 1000:1000' err.txt
+          # путь из README: mkdir + chown 1000:1000. DooD: bind-путь резолвит демон хоста, не раннер —
+          # $PWD/data на хосте нет (демон создаёт root-owned), поэтому каталог готовим на хосте через контейнер
+          D=/tmp/$N; R="docker run --rm --user 0 --entrypoint sh -v /tmp:/h pay-smoke -c"
+          trap "docker rm -f $N >/dev/null 2>&1; $R 'rm -rf /h/$N' >/dev/null 2>&1 || true" EXIT
+          $R "mkdir -p /h/$N && chown 1000:1000 /h/$N"
+          docker run -d --name $N -v "$D:/data" -e PAY_API_TOKEN=$TOK pay-smoke
+          H=http://$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' $N):8080
+          for i in $(seq 1 20); do curl -fs $H/healthz && break; sleep 1; done
+          test "$(curl -s -o /dev/null -w '%{http_code}' $H/healthz)" = 200
+          test "$(curl -s -o /dev/null -w '%{http_code}' $H/admin)" = 403
+          id=$(curl -fs -X POST $H/api/invoice -H "authorization: Bearer $TOK" -d '{"amount":1}' | sed -n 's/.*"id":"\([a-z0-9]*\)".*/\1/p')
+          test -n "$id"
+          test "$(curl -s -o /dev/null -w '%{http_code}' $H/i/$id)" = 200
+          $R "grep -q 'invoice:$id' /h/$N/kv.json"
+          docker logs $N
+
+  e2e-admin:
+    # Playwright e2e /admin (docs/pay/spec.md S1–S5): браузер внутри образа, раннер ничего не качает.
+    # DooD: bind-mount не годится (путь резолвит демон хоста), поэтому код копируется в образ.
+    runs-on: [self-hosted, ci]
+    steps:
+      - uses: actions/checkout@v4
+      - name: playwright e2e pay.pxbt.app/admin
+        run: |
+          set -e
+          T=pay-e2e:$GITHUB_RUN_ID
+          trap "docker rmi -f $T >/dev/null 2>&1 || true" EXIT
+          # t_6de08f33: guard базы до build — не mcr.microsoft.com (недоступен с раннеров, 7 падений 20-21.10),
+          # версия playwright-образа == npm playwright@X; несуществующий тег = сразу падение без повторов.
+          python3 scripts/check_e2e_base.py --selftest && python3 scripts/check_e2e_base.py test/e2e/Dockerfile
+          B=$(sed -n 's/^FROM //p' test/e2e/Dockerfile | head -1)
+          # root-cause: t_6de08f33 — повтор только на транспортные обрывы Docker Hub; manifest unknown/not found = exit 1.
+          for n in 1 2 3 4; do o=$(docker pull -q "$B" 2>&1) && break; echo "$o"; echo "$o" | grep -qiE 'manifest unknown|not found' && { echo "::error::тег $B не существует"; exit 1; }; [ $n = 4 ] && exit 1; echo "pull $B: попытка $n не удалась, повтор через $((n*20)) с"; sleep $((n*20)); done
+          docker build -q -f test/e2e/Dockerfile -t $T .
+          docker run --rm --ipc=host $T
+  ci-bypass-lint:
+    # лёгкий линт: не ждать занятый GPU-раннер pc-acf. t_55108370: все jobs ci.yml на label ci —
+    # release-раннеры только под выпуски (daily-video), CI их не занимает. Инвариант: test_ci_no_release_label.py
+    runs-on: [self-hosted, ci]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # t_de7348c1: нужны все ветки origin для --branches
+      - name: ci-bypass-lint («Повтор = класс»)
+        run: python3 scripts/ci_bypass_lint.py . && python3 scripts/test_ci_lint_docker_login.py && python3 scripts/ci_bypass_lint.py --branches . && python3 scripts/actions_policy.py .
+
+  # t_b1429246: сам хостед-раннер во время окон деградации PC-egress не смог доставить вердикт
+  # (CompleteJobAsync -> HttpIOException "The response ended prematurely") — job падает с
+  # System.AggregateException "… (An error occurred while sending the request.)" без реальной
+  # ошибки шагов. Проверяем логи упавших jobs текущего прогона и перезапускаем совпавшие.
+  runner-restore:
+    needs: [test, pay-image-smoke, e2e-admin, ci-bypass-lint]
+    if: ${{ !cancelled() }}
+    runs-on: [self-hosted, ci]
+    permissions:
+      actions: write  # t_b1429246: перезапуск jobs (rerun API) требует write на actions
+    steps:
+      # Без checkout: гард не зависит от repo-контента (checkout PR merge ref падал
+      # "Repository not found" в эгресс-окнах — тот же класс t_b1429246). Скрипт инлайн.
+      - name: re-run jobs killed by runner transport failure
+        continue-on-error: true  # root-cause: t_b1429246
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 - --repo "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" <<'PY'
+          #!/usr/bin/env python3
+          """t_b1429246: self-hosted runner transport failure = job fails with
+          System.AggregateException "(An error occurred while sending the request.)" —
+          Runner.Worker could not deliver CompleteJobAsync to GitHub (HttpIOException:
+          "The response ended prematurely") during PC-egress degradation windows.
+          All steps already ran; GitHub has no verdict. Detect that signature on this
+          run's failed jobs and re-run each affected job so the verdict is real.
+          Stdlib-only; never raises (guard job must not fail the run)."""
+          import argparse
+          import json
+          import re
+          import subprocess
+          import sys
+          import time
+
+          SIG = re.compile(r"System\.AggregateException[\s\S]{0,400}?An error occurred while sending the request")
+
+
+          def gh(*args):
+              r = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=120)
+              if r.returncode:
+                  raise RuntimeError(r.stderr.strip()[:300])
+              return r.stdout
+
+
+          def main():
+              ap = argparse.ArgumentParser()
+              ap.add_argument("--repo", required=True)
+              ap.add_argument("--run-id", type=int, required=True)
+              ap.add_argument("--run-attempt", type=int, required=True)
+              a = ap.parse_args()
+              try:
+                  jobs = json.loads(gh("api", f"repos/{a.repo}/actions/runs/{a.run_id}/attempts/{a.run_attempt}/jobs"))["jobs"]
+              except Exception as e:
+                  print(f"::warning::jobs list unavailable, skip restore: {e}")
+                  return 0
+              reran = 0
+              for j in jobs:
+                  if j.get("conclusion") != "failure":
+                      continue
+                  try:
+                      log = gh("api", f"repos/{a.repo}/actions/jobs/{j['id']}/logs")
+                      has_sig = "BlobNotFound" in log or bool(SIG.search(log))
+                  except Exception:
+                      # Log blob never uploaded (t_98562d0e): a transport-failed job
+                      # dies mid-step, so GitHub shows failure + a frozen in_progress
+                      # step and no logs. A real test failure uploads logs and leaves
+                      # the failing step completed - only the frozen combo reruns.
+                      steps = j.get("steps") or []
+                      has_sig = any(
+                          s.get("status") == "in_progress" and s.get("conclusion") is None
+                          for s in steps
+                      )
+                  if not has_sig:
+                      continue
+                  print(f"runner transport failure: job {j['name']} ({j['id']}) -> rerun")
+                  time.sleep(15)  # let the worker release the job before the rerun lands
+                  try:
+                      gh("api", "-X", "POST", f"repos/{a.repo}/actions/jobs/{j['id']}/rerun")
+                      reran += 1
+                  except Exception as e:
+                      print(f"::warning::rerun of job {j['id']} failed: {e}")
+              print(f"restored {reran} job(s)")
+              return 0
+
+
+          if __name__ == "__main__":
+              sys.exit(main())
+          PY

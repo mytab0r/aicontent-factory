@@ -53,14 +53,14 @@ def test_prompt_hygiene_no_noise_words_no_vocals():
 
 def test_prompts_are_owner_approved_family():
     """t_ef393676: ротация = только семейство ab_1/ab_3 (одобрены 20.10). music box (ab_0)
-    и harp (ab_2) без оценки владельца -> не в ротации; темп = одобренный (82/89)."""
+    и harp (ab_2) без оценки владельца -> не в ротации; темп 64-72 (25.10 владелец: 89 «слишком энергично»)."""
     import re
     for p in rp.PROMPT_VARIANTS:
         low = p.lower()
         assert low.startswith("dreamy lofi chillout instrumental"), p
         assert "glockenspiel" in low or "celesta" in low, f"нет колокольчиков: {p!r}"
         assert not any(w in low for w in ("music box", "harp", "anime lofi")), p
-        assert int(re.search(r"(\d+) BPM", p).group(1)) in (82, 89), p
+        assert int(re.search(r"(\d+) BPM", p).group(1)) in range(64, 73), p
 
 
 def test_ref_fragment_not_from_zero():
@@ -78,6 +78,39 @@ def test_claim_bumps_refpool_offset():
         assert (b["yt_id"], b["prompt"]) != (a["yt_id"], a["prompt"]), "offset не сменил пару"
 
 
+
+
+def test_ensure_ref_downloads_via_running_python():
+    """run 39391131570: на раннере нет yt-dlp в PATH (FileNotFoundError).
+    Качаем модулем того же интерпретатора, что исполняет pipeline
+    (sys.executable -m yt_dlp), а не поиском бинарника по PATH."""
+    import sys as _sys
+    import tempfile
+    calls = []
+
+    class FakeCompleted:
+        returncode = 0
+
+    real_run = rp.subprocess.run
+
+    def fake_run(argv, **kw):
+        calls.append(list(argv))
+        if "-o" in argv:
+            prefix = argv[argv.index("-o") + 1].replace("%(ext)s", "m4a")
+            cwd = Path(kw.get("cwd") or ".")
+            cwd.mkdir(parents=True, exist_ok=True)
+            (cwd / prefix).write_bytes(b"x" * 1000)
+        return FakeCompleted()
+
+    rp.subprocess.run = fake_run
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            rp.ensure_ref({"yt_id": "N7ce_v08QlE"}, out_dir=td)
+    finally:
+        rp.subprocess.run = real_run
+    dl = calls[0]
+    assert dl[:3] == [_sys.executable, "-m", "yt_dlp"], f"ожидаем [sys.executable, -m, yt_dlp], получено {dl[:3]}"
+
 if __name__ == "__main__":
     test_pool_size_in_range()
     test_pool_refs_distinct()
@@ -87,4 +120,5 @@ if __name__ == "__main__":
     test_prompts_are_owner_approved_family()
     test_ref_fragment_not_from_zero()
     test_claim_bumps_refpool_offset()
+    test_ensure_ref_downloads_via_running_python()
     print("ok test_refpool")

@@ -1,0 +1,65 @@
+name: daily dnd ambience video
+
+on:
+  schedule:
+    - cron: "30 9 * * *"  # 09:30 UTC daily, через 30 мин после lofi (квоты HF не пересекаются по времени)
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: [self-hosted, release]
+    timeout-minutes: 45
+    env:
+      ROUTER_BASE_URL: https://9router.pxbt.app/v1
+      ROUTER_API_KEY: ${{ secrets.ROUTER_API_KEY }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      CHANNEL: dd
+      # D&D ambience: long-form 1 час (3600с) — формат ниши (DECISIONS.md п.8),
+      # дробится chunk_plan() на куски <=240с = 15 вызовов ACE-Step.
+      # ⚠️ free HF квота 5 мин/день НЕ позволяет 15 вызовов — этот workflow
+      # НЕ включается по крону, пока музыка не переехала на self-host GPU
+      # или HF PRO (25 вызовов/день). Запуск вручную = тест качества сцен.
+      TRACK_DURATION_SEC: "120"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+        timeout-minutes: 5  # t_6758c86f: сетевой шаг не висит до таймаута джобы
+
+      - name: install deps
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ffmpeg
+          uv venv .venv
+          uv pip install --python .venv/bin/python pillow gradio_client numpy librosa
+
+      - name: 01 idea (dd scene)
+        working-directory: pipeline
+        run: ../.venv/bin/python 01_idea.py
+
+      - name: 02 cover
+        working-directory: pipeline
+        run: ../.venv/bin/python 02_cover.py
+
+      - name: 03 music (ACE-Step, dd scene prompt)
+        working-directory: pipeline
+        run: ../.venv/bin/python 03_music.py
+
+      - name: 04 assemble (ffmpeg)
+        working-directory: pipeline
+        run: ../.venv/bin/python 04_assemble.py
+
+      # Публикации НЕТ: отдельному D&D каналу нужен свой YouTube OAuth-токен
+      # (DD_CHANNEL_ID + свой YOUTUBE_TOKEN_JSON, см. DECISIONS.md п.8).
+      # Видео падает в артефакт ранa — прослушать/посмотреть руками.
+
+      - name: commit dd scene rotation state
+        run: |
+          git config user.name "aicontent-factory-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add -f .state/dd_scene_idx.txt 2>/dev/null || true
+          git diff --cached --quiet || git commit -m "chore: advance dd scene rotation [skip ci]"
+          git push || true  # root-cause: t_f95a06da
+
+      # t_1011874c: upload-artifact убран — артефакт никто не скачивал (результат в YouTube/TG/логе шага),
+      # а каждая загрузка копила GB-часы общей квоты storage аккаунта (500MB x часы месяца).

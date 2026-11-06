@@ -1,0 +1,44 @@
+name: recheck-blockers
+# Ежедневная перепроверка blocked-карточек всех досок (recheck_blockers.py, t_c819a3fc).
+# Self-hosted PC runner (DooD): БД досок и /opt/data/secrets живут в docker volume hermes-data
+# на том же демоне. Bind-mount workdir раннера невозможен (DooD) — скрипт идёт в контейнер через stdin.
+# uid 10000 = владелец тома hermes-data после переноса 20.10 (/opt/data 700); 10001 -> Permission denied.
+on:
+  schedule:
+    - cron: "0 3 * * *"  # 06:00 Europe/Moscow (UTC+3)
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "только отчёт, без записи в БД"
+        type: boolean
+        default: false
+
+jobs:
+  recheck:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 30
+    env:
+      # секреты только как переменные окружения: проверки needs: secret:<NAME> видят наличие имени,
+      # значения скрипт не печатает никогда; GitHub дополнительно маскирует их в логе
+      ROUTER_API_KEY: ${{ secrets.ROUTER_API_KEY }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: recheck blocked cards (all boards)
+        run: |
+          set -e
+          DRY=""; [ "${{ inputs.dry_run }}" = "true" ] && DRY="--dry-run"
+          # -e NAME без значения: docker берёт значение из env раннера, в командной строке его нет
+          ENVS=""; for n in ROUTER_API_KEY HF_TOKEN YOUTUBE_TOKEN_JSON; do [ -n "$(printenv $n)" ] && ENVS="$ENVS -e $n"; done
+          docker run --rm -i --user 10000:10000 $ENVS -v hermes-data:/opt/data python:3.12-slim sh -c '
+            set -e
+            cat > /tmp/r.py
+            ls /opt/data/kanban/boards/*/kanban.db >/dev/null
+            rc=0
+            for db in /opt/data/kanban/boards/*/kanban.db; do
+              b=$(basename $(dirname $db)); [ "$b" = _archived ] && continue
+              echo "=== доска $b ==="
+              python3 /tmp/r.py --db "$db" --report-dir /opt/data/reports/blockers/$b '"$DRY"' || rc=1
+            done
+            exit $rc' < recheck_blockers.py

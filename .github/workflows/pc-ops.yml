@@ -1,0 +1,256 @@
+name: pc-ops
+# Обслуживание GPU-стека на ПК владельца. Воркер идёт self-hosted runner'ом,
+# докер-сокет хоста доступен напрямую (gh-runner контейнер с сокетом).
+# Умеет: статус; deploy-comfyui (сборка образа + запуск с GPU + сеть runner);
+# download-models (Wan2.2 FLF2V набор ~36 GB в C:\dockerlocal\wan22\models).
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "status | deploy-comfyui | download-models"
+        default: "status"
+        type: choice
+        options: [status, deploy-comfyui, download-models, comfy-object-list, add-release-runner, diag-release-runner, add-repo-runner, deploy-postiz]
+      repo:
+        description: "owner/repo for add-repo-runner"
+        required: false
+        type: string
+      name:
+        description: "runner suffix for add-repo-runner (gh-runner-<name>)"
+        required: false
+        type: string
+      token:
+        description: "registration token (single-use) for add-repo-runner"
+        required: false
+        type: string
+      labels:
+        description: "extra labels for add-repo-runner"
+        required: false
+        type: string
+
+# t_77eb56b7: все gh-runner-* монтируют общий том gh-actions-archive-cache + ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE —
+# runner берёт tar.gz action из кеша, если codeload.github.com лежит. Recreate без этих двух строк = кеш потерян.
+jobs:
+  ops:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 600
+    steps:
+      - uses: actions/checkout@v4
+
+      # второй раннер-полоса: выпуски/CI (label release) не ждут многочасовые oneoff-эксперименты.
+      # Образ уже на ПК (тот же, что у pc-acf) — диск не растёт; токен регистрации разовый (секрет).
+      - name: add-release-runner
+        if: ${{ inputs.action == 'add-release-runner' }}
+        env:
+          REG: ${{ secrets.RUNNER_REG_TOKEN }}
+        run: |
+          set -e
+          docker rm -f gh-runner-acf-release 2>/dev/null || true
+          docker run -d --name gh-runner-acf-release --restart unless-stopped --dns 192.168.65.7 --dns 8.8.8.8 --dns 77.88.8.8 --cpus 4 --memory 6g \
+            -e REPO_URL=https://github.com/mytab0r/aicontent-factory -e RUNNER_SCOPE=repo \
+            -e RUNNER_NAME=pc-acf-release -e LABELS=release,ci -e RUNNER_TOKEN="$REG" \
+            -e RUNNER_WORKDIR=/tmp/runner/acf-release -e CONFIGURED_ACTIONS_RUNNER_FILES_DIR=/runner/data \
+            -e DISABLE_AUTOMATIC_DEREGISTRATION=true \
+            -e ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE=/opt/actions-archive-cache -v gh-actions-archive-cache:/opt/actions-archive-cache \
+            -v /var/run/docker.sock:/var/run/docker.sock -v gh-runner-acf-release-data:/runner/data \
+            -v gh-runner-aicontent-factory-tools:/opt/hostedtoolcache \
+            -v gh-runner-acf-release-work:/tmp/runner/acf-release myoung34/github-runner:ubuntu-noble
+          # host /tmp/runner/* = tmpfs noexec (Docker Desktop VM): setup-uv падал spawn EACCES (t_3c5f3862).
+          # workdir теперь named volume (ext4, exec). Гейт: раннер обязан уметь исполнять файлы в workdir.
+          docker exec gh-runner-acf-release sh -c 'f=/tmp/runner/acf-release/.exec-probe; printf "#!/bin/sh\necho EXEC_OK\n" > $f && chmod +x $f && $f && rm -f $f' | grep -qx EXEC_OK || { echo "::error::workdir noexec"; exit 1; }
+          for n in comfynet gpu-net; do docker network connect $n gh-runner-acf-release || true; done
+          sleep 20; docker logs --tail 15 gh-runner-acf-release
+
+      - name: add-repo-runner
+        if: ${{ inputs.action == 'add-repo-runner' }}
+        run: |
+          set -e
+          R="${{ inputs.name }}"
+          test -n "$R" || { echo "::error::name required"; exit 1; }
+          docker rm -f "gh-runner-$R" 2>/dev/null || true
+          # config lives in this volume; without purge the old identity/labels get reused
+          docker volume rm -f "gh-runner-$R-data" 2>/dev/null || true
+          docker run -d --name "gh-runner-$R" --restart unless-stopped --dns 192.168.65.7 --dns 8.8.8.8 --dns 77.88.8.8 --cpus 4 --memory 6g \
+            -e REPO_URL="https://github.com/${{ inputs.repo }}" -e RUNNER_SCOPE=repo \
+            -e RUNNER_NAME="pc-gh-runner-$R" -e LABELS="${{ inputs.labels }}" \
+            -e RUNNER_TOKEN="${{ inputs.token }}" \
+            -e RUNNER_WORKDIR="/tmp/runner/$R" -e CONFIGURED_ACTIONS_RUNNER_FILES_DIR="/runner/data" \
+            -e DISABLE_AUTOMATIC_DEREGISTRATION=true \
+            -e ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE=/opt/actions-archive-cache -v gh-actions-archive-cache:/opt/actions-archive-cache \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "gh-runner-$R-data:/runner/data" \
+            -v "gh-runner-$R-work:/tmp/runner/$R" \
+            myoung34/github-runner:ubuntu-noble
+          docker exec "gh-runner-$R" sh -c 'f=/tmp/runner/.exec-probe; printf "#!/bin/sh\necho EXEC_OK\n" > $f && chmod +x $f && $f && rm -f $f' | grep -qx EXEC_OK || { echo "::error::workdir noexec"; exit 1; }
+          sleep 20; docker logs --tail 15 "gh-runner-$R"
+
+      - name: diag-release-runner
+        if: ${{ inputs.action == 'diag-release-runner' }}
+        run: |
+          for c in gh-runner-aicontent-factory gh-runner-acf-release; do
+            echo "=== $c ==="
+            docker inspect $c --format 'img={{.Config.Image}} user={{.Config.User}} mounts={{json .Mounts}} tmpfs={{json .HostConfig.Tmpfs}} sec={{json .HostConfig.SecurityOpt}}' || true
+            docker exec $c sh -c 'id; grep -E "runner|/tmp" /proc/mounts; ls -ld /tmp /tmp/runner /tmp/runner/* 2>&1; printf "#!/bin/sh\necho EXEC_OK\n" > /tmp/runner/x.sh 2>&1; chmod +x /tmp/runner/x.sh; /tmp/runner/x.sh; for d in /tmp/runner/*/; do cp /tmp/runner/x.sh $d/x.sh 2>/dev/null && $d/x.sh && echo "in $d"; rm -f $d/x.sh; done; ls -la /tmp/runner/acf-release/_temp 2>&1 | head' || true
+          done
+          echo "=== own runner ==="; id; grep -E "runner|/tmp" /proc/mounts; echo "RUNNER_TEMP=$RUNNER_TEMP"
+
+      - name: pc-ops deploy-postiz
+        if: ${{ inputs.action == 'deploy-postiz' }}
+        env:
+          YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
+        run: |
+          set -e
+          sh deploy/gpu-pc/disk_gate.sh c 2
+          docker rm -f postiz postiz-postgres postiz-redis 2>/dev/null || true
+          docker network create postiz-net 2>/dev/null || true
+          docker run --rm -v /run/desktop/mnt/host/c/dockerlocal/postiz:/d alpine:3.20 \
+            sh -c 'mkdir -p /d/pg-data /d/uploads'
+          docker run -d --name postiz-postgres --restart unless-stopped --network postiz-net \
+            -e POSTGRES_PASSWORD=postiz-local-pw -e POSTGRES_USER=postiz-user -e POSTGRES_DB=postiz-db-local \
+            -v /run/desktop/mnt/host/c/dockerlocal/postiz/pg-data:/var/lib/postgresql/data postgres:17-alpine
+          docker run -d --name postiz-redis --restart unless-stopped --network postiz-net redis:7-alpine
+          # YOUTUBE_TOKEN_JSON — authorized_user creds (Desktop OAuth client владельца),
+          # содержит client_id/client_secret. Postiz может переиспользовать тот же client,
+          # но нужен ОДИН ручной шаг владельца: добавить Web redirect URI в GCP Console
+          # (см. вывод ниже) — headless-сессия это сделать не может (OAuth consent screen edit).
+          YT_ID=$(python3 -c "import json,os; print(json.loads(os.environ['YOUTUBE_TOKEN_JSON']).get('client_id',''))")
+          YT_SECRET=$(python3 -c "import json,os; print(json.loads(os.environ['YOUTUBE_TOKEN_JSON']).get('client_secret',''))")
+          for i in 1 2 3; do
+            docker pull ghcr.io/gitroomhq/postiz-app:latest && break
+            [ $i = 3 ] && { echo "::error::postiz image pull failed"; exit 1; }
+            sleep 15
+          done
+          docker run -d --name postiz --restart unless-stopped --network postiz-net -p 5070:5000 \
+            -e MAIN_URL="http://localhost:5070" -e FRONTEND_URL="http://localhost:5070" \
+            -e NEXT_PUBLIC_BACKEND_URL="http://localhost:5070/api" -e BACKEND_INTERNAL_URL="http://localhost:3000" \
+            -e JWT_SECRET="$(head -c32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9')" \
+            -e DATABASE_URL="postgresql://postiz-user:postiz-local-pw@postiz-postgres:5432/postiz-db-local" \
+            -e REDIS_URL="redis://postiz-redis:6379" -e IS_GENERAL=true -e DISABLE_REGISTRATION=false \
+            -e STORAGE_PROVIDER=local -e UPLOAD_DIRECTORY=/uploads -e NEXT_PUBLIC_UPLOAD_DIRECTORY=/uploads \
+            -e YOUTUBE_CLIENT_ID="$YT_ID" -e YOUTUBE_CLIENT_SECRET="$YT_SECRET" \
+            -v /run/desktop/mnt/host/c/dockerlocal/postiz/uploads:/uploads \
+            ghcr.io/gitroomhq/postiz-app:latest
+          for i in $(seq 1 30); do
+            sleep 5
+            ST=$(docker inspect postiz --format '{{.State.Status}}' 2>/dev/null || true)
+            echo "t=$((i*5))s state: ${ST:-gone}"
+            case "$ST" in exited*|dead*) echo "=== postiz died, logs:"; docker logs --tail 100 postiz 2>&1; exit 1;; esac
+          done
+          echo "=== postiz containers ==="
+          docker ps --filter name=postiz --format '{{.Names}} {{.Status}}'
+          echo "Redirect URI для Google Cloud Console (OAuth client -> Authorized redirect URIs -> добавить):"
+          echo "  http://localhost:5070/api/integrations/social/youtube/callback"
+
+      - name: pc-ops status
+        if: ${{ inputs.action == 'status' }}
+        run: |
+          set -e
+          echo "=== containers ==="
+          docker ps -a --format '{{.Names}}  {{.State}}  {{.Status}}'
+          echo "=== comfyui ==="
+          docker ps --filter name=wan22 --format '{{.Names}} {{.Status}}'
+          curl -s -m 10 http://comfyui:8188/system_stats | head -c 800 || true
+          echo
+          echo "=== volumes ==="
+          docker volume ls --format '{{.Name}}'
+          echo "=== gpu ==="
+          nvidia-smi --query-gpu=name,memory.used,memory.total --format=csv,noheader || true
+          echo "=== janitor ==="
+          JN=$(docker ps -a --format '{{.Names}}' | grep -i "janitor\|cleanup\|prune" | head -1 || true)
+          if [ -n "$JN" ]; then
+            docker inspect "$JN" --format 'image={{.Config.Image}} cmd={{json .Config.Cmd}} env={{json .Config.Env}} labels={{json .Config.Labels}} restart={{.HostConfig.RestartPolicy.Name}}'
+            echo "--- janitor mounts ---"
+            docker inspect "$JN" --format '{{json .Mounts}}'
+            echo "--- janitor.sh ---"
+            docker exec "$JN" cat /j/janitor.sh 2>&1 | head -80 || echo "exec недоступен"
+          else
+            echo "janitor-подобный контейнер не найден"
+          fi
+          echo "=== volumes size ==="
+          docker system df -v 2>/dev/null | grep -A2 "Local Volumes space" || docker system df | tail -3
+
+      - name: pc-ops deploy-comfyui
+        if: ${{ inputs.action == 'deploy-comfyui' }}
+        run: |
+          set -e
+          docker rm -f comfyui >/dev/null 2>&1 || true
+          # t_40bfcd35 R2: веса/выходы — bind на C:\dockerlocal\wan22 (не docker-том на D:)
+          # YAML путей моделей нужен контейнеру при старте (CMD --extra-model-paths-config);
+          # шлём содержимое через stdin — не зависим от монтирования файла
+          docker run --rm -i -v /run/desktop/mnt/host/c/dockerlocal/wan22/models:/models alpine:3.20 \
+            sh -c 'cat > /models/extra_model_paths.yaml' < deploy/gpu-pc/comfyui/extra_model_paths.yaml
+          docker build -q -f deploy/gpu-pc/comfyui/Dockerfile -t comfyui-wan22:local deploy/gpu-pc/comfyui
+          # сеть раннера: docker compose создаёт <project>_default; реальное имя
+          # берём из контейнера раннера, а не угадываем (имя не gh-runner-..._default)
+          NET=$(docker network ls --format '{{.Name}}' | grep -v '^bridge$\|^host$\|^none$' | while read n; do docker network inspect "$n" --format '{{range .Containers}}{{$v := printf "%s\n" .Name}}{{printf "%s" $v}}{{end}}' | grep -qx 'gh-runner-aicontent-factory' && echo "$n" && break; done)
+          echo "runner network: $NET"
+          docker run -d --name wan22 \
+            --gpus all \
+            --network "$NET" \
+            --network-alias comfyui \
+            -v /run/desktop/mnt/host/c/dockerlocal/wan22/models:/models \
+            -v /run/desktop/mnt/host/c/dockerlocal/wan22/output:/app/output \
+            -v /run/desktop/mnt/host/c/dockerlocal/wan22/input:/app/input \
+            comfyui-wan22:local
+          # ждём HTTP (первый старт: импорт torch, ~1-3 мин); каждый круг — статус
+          # контейнера, при смерти сразу тащим логи и падаем с диагнозом
+          for i in $(seq 1 60); do
+            sleep 5
+            if curl -fsS -m 5 http://comfyui:8188/system_stats >/dev/null 2>&1; then
+              echo "comfyui UP after $((i*5))s"; exit 0
+            fi
+            ST=$(docker inspect wan22 --format '{{.State.Status}} exit={{.State.ExitCode}}' 2>/dev/null || true)
+            echo "t=$((i*5))s state: ${ST:-gone}"
+            case "$ST" in exited*|dead*) echo "=== comfyui died, logs:"; docker logs --tail 80 comfyui 2>&1; exit 1;; esac
+          done
+          echo "comfyui не поднялся за 300с"; docker logs --tail 80 comfyui 2>&1 || true; exit 1
+
+      - name: pc-ops comfy-object-list
+        if: ${{ inputs.action == 'comfy-object-list' }}
+        run: |
+          set -e
+          curl -s -m 10 "http://$(docker inspect wan22 --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'):8188/object_info" -o /tmp/oi.json
+          python3 - <<'PY'
+          import json
+          oi = json.load(open('/tmp/oi.json'))
+          def names(cls, key):
+              inp = oi.get(cls, {}).get('input', {}).get('required', {})
+              return inp.get(key, [[], {}])[0]
+          print('UNETLoader unet_name:', names('UNETLoader', 'unet_name'))
+          print('LoraLoaderModelOnly lora_name:', names('LoraLoaderModelOnly', 'lora_name'))
+          print('CLIPLoader clip_name:', names('CLIPLoader', 'clip_name'))
+          print('VAELoader vae_name:', names('VAELoader', 'vae_name'))
+          print('CLIPVisionLoader clip_name:', names('CLIPVisionLoader', 'clip_name'))
+          PY
+
+      - name: pc-ops download-models
+        if: ${{ inputs.action == 'download-models' }}
+        timeout-minutes: 540
+        run: |
+          set -e
+          sh deploy/gpu-pc/disk_gate.sh c 36   # R3 t_40bfcd35: Wan2.2 FLF2V набор ~36 GB на C:
+          docker run --rm -v /run/desktop/mnt/host/c/dockerlocal/wan22/models:/models -w /models \
+            curlimages/curl:latest -s --version >/dev/null
+          # hf_get.sh по stdin: одно HF-соединение рвётся через ~205 с, качаем диапазонами (t_5dccab9e)
+          docker run --rm -i -v /run/desktop/mnt/host/c/dockerlocal/wan22/models:/models --entrypoint /bin/sh alpine:3.20 -c "
+            set -e
+            cat > /hf_get.sh
+            apk add -q curl >/dev/null 2>&1
+            cd /models
+            mkdir -p diffusion_models loras text_encoders vae clip_vision
+            base22='https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files'
+            base21='https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files'
+            dl() { sh /hf_get.sh \"\$1\" \"\$2\"; }
+            dl \$base22/diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors
+            dl \$base22/diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors
+            dl \$base22/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors
+            dl \$base22/vae/wan_2.1_vae.safetensors vae/wan_2.1_vae.safetensors
+            dl \$base21/clip_vision/clip_vision_h.safetensors clip_vision/clip_vision_h.safetensors
+            dl \$base22/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors loras/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors
+            dl \$base22/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors loras/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors
+            cp /models/../extra_model_paths.yaml /models/extra_model_paths.yaml 2>/dev/null || true
+            echo '=== models ==='; ls -la diffusion_models loras text_encoders vae clip_vision
+          " < deploy/gpu-pc/hf_get.sh
+          # extra_model_paths.yaml в volume (stdin: монтирование файла ненадёжно)
+          docker run --rm -i -v /run/desktop/mnt/host/c/dockerlocal/wan22/models:/models alpine:3.20 \
+            sh -c 'cat > /models/extra_model_paths.yaml' < deploy/gpu-pc/comfyui/extra_model_paths.yaml

@@ -206,7 +206,7 @@ def test_title_fits_feed_70():
 
 def test_mix_segment_mastered_before_gate():
     """Ревью t_187762da: кандидат сегмента мастерится как прод ДО критика/objective —
-    гейт меряет то, что уйдёт на канал (LOFI_AF меняет 20-60 Гц и LRA = метрики провала 17.10)."""
+    гейт меряет то, что уйдёт на канал (мастер меняет 20-60 Гц и LRA = метрики провала 17.10)."""
     import tempfile
     d = Path(tempfile.mkdtemp())
     calls = []
@@ -364,6 +364,24 @@ def test_fade_end_passes_a16_after_loudnorm():
     assert abs(music._probe_sec(f) - dur) < 0.1, "длительность не меняется (главы/стыки)"
 
 
+def test_mix_segment_extra_candidates_only_when_all_fail():
+    """t_f0794976, run 39450050733: 3 сегмента из 9 дали 0/3 (max CE 6.49/6.13/6.43 < 6.5).
+    Порог не трогаем: сегменту с 0 прошедших дозаказываем extra кандидатов (3 -> 5),
+    сегменты с OK из первых 3 лишнего GPU не тратят."""
+    made = []
+    def raw(i, k):
+        made.append((i, k))
+        return f"s{i}_{k}"
+    ce = {"s0_0": 7.0, "s0_1": 6.4, "s0_2": 6.4, "s1_0": 6.49, "s1_1": 6.13, "s1_2": 6.43, "s1_3": 6.2, "s1_4": 6.8}
+    scores = lambda fs: [[ce.get(f, 6.0)] * 3 for f in fs]
+    gen = music.gated_gen(raw, scores, lambda p: [], attempts=3, extra=2, log=lambda *a: None)
+    assert gen(0) == "s0_0" and (0, 3) not in made
+    assert gen(1) == "s1_4", made
+    assert made.count((1, 3)) == 1 and made.count((1, 4)) == 1 and (1, 5) not in made
+    gen0 = music.gated_gen(raw, scores, lambda p: [], attempts=3, extra=0, log=lambda *a: None)
+    assert gen0(1) is None
+
+
 def test_mix_raw_hung_task_restarts_with_short_timeout():
     """21.10 run 39536019351: задача сегмента висела status=0 40 мин (норма ~2 мин) при
     timeout 2400 с -> весь выпуск упал, 2 готовых сегмента потеряны. Сегмент ждёт
@@ -406,30 +424,37 @@ def test_edge_match_measures_crossfaded_seam_like_gate():
     fs = [seg("a.mp3", "1", 1), seg("b.mp3", "if(lt(t,5),2.5,if(between(t,47,54),0.4,1))", 2), seg("c.mp3", "1", 3)]
     music.prep_segments(fs, log=lambda *x: None)
     out = str(d / "mix.mp3")
-    music.concat_tracks(fs, out)
+    _, ts = music.concat_tracks(fs, out)
     seams = [{"t": t, "ce": 9.0, "rms_l": qg.rms_db(out, t - qg.SEAM_HALF, qg.SEAM_HALF),
-              "rms_r": qg.rms_db(out, t, qg.SEAM_HALF)} for t in music.seam_times([music._probe_sec(p) for p in fs])]
+              "rms_r": qg.rms_db(out, t, qg.SEAM_HALF)} for t in ts]
     assert qg.seam_why(seams) == [], seams
 
 
+def test_edge_match_quiet_intro_full_gain_in_gate_window():
+    """t_44f5c3b3 (runs 40477529845 R3 595 с -17.0 -> -21.0, 40508302240 R3 1312 с -16.3 -> -20.2): у сегмента банка
+    тихое вступление (~-14 дБ к телу) длиннее DJ-перехода. edge_match давал gain +16/+15 дБ, но рампа спадала с t=0,
+    в окно гейта (центр стыка ± SEAM_HALF) доходила лишь часть -> стык 4 дБ после всех проходов. Синтетика с
+    бит-сеткой 72 BPM (dj_plan = DJ-стык как в банке), проверка тем же кодом, что гейт R3 (rms_db + seam_why)."""
+    import subprocess as sp
+    import tempfile
+    import quality_gate as qg
+    d = Path(tempfile.mkdtemp())
 
-
-def test_mix_segment_extra_candidates_only_when_all_fail():
-    """t_f0794976, run 39450050733: 3 сегмента из 9 дали 0/3 (max CE 6.49/6.13/6.43 < 6.5).
-    Порог не трогаем: сегменту с 0 прошедших дозаказываем extra кандидатов (3 -> 5),
-    сегменты с OK из первых 3 лишнего GPU не тратят."""
-    made = []
-    def raw(i, k):
-        made.append((i, k))
-        return f"s{i}_{k}"
-    ce = {"s0_0": 7.0, "s0_1": 6.4, "s0_2": 6.4, "s1_0": 6.49, "s1_1": 6.13, "s1_2": 6.43, "s1_3": 6.2, "s1_4": 6.8}
-    scores = lambda fs: [[ce.get(f, 6.0)] * 3 for f in fs]
-    gen = music.gated_gen(raw, scores, lambda p: [], attempts=3, extra=2, log=lambda *a: None)
-    assert gen(0) == "s0_0" and (0, 3) not in made
-    assert gen(1) == "s1_4", made
-    assert made.count((1, 3)) == 1 and made.count((1, 4)) == 1 and (1, 5) not in made
-    gen0 = music.gated_gen(raw, scores, lambda p: [], attempts=3, extra=0, log=lambda *a: None)
-    assert gen0(1) is None
+    def seg(name, vol, seed, dur=150):
+        f = d / name
+        sp.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", f"anoisesrc=d={dur}:c=pink:a=0.08:seed={seed}",
+                "-f", "lavfi", "-i", f"sine=f=55:d={dur}", "-filter_complex",
+                "[1:a]volume='0.9*exp(-12*mod(t,0.8333))':eval=frame[k];"
+                f"[0:a][k]amix=inputs=2:normalize=0,volume='{vol}':eval=frame",
+                "-ar", "44100", "-ac", "2", "-c:a", "libmp3lame", "-b:a", "192k", str(f)], check=True)
+        return str(f)
+    fs = [seg("a.mp3", "1", 1), seg("q.mp3", "if(lt(t,60),0.15,1)", 2), seg("c.mp3", "1", 3)]
+    music.prep_segments(fs, log=lambda *x: None)
+    out = str(d / "mix.mp3")
+    _, ts = music.concat_tracks(fs, out)
+    seams = [{"t": t, "ce": 9.0, "rms_l": qg.rms_db(out, t - qg.SEAM_HALF, qg.SEAM_HALF),
+              "rms_r": qg.rms_db(out, t, qg.SEAM_HALF)} for t in ts]
+    assert len(ts) == 2 and qg.seam_why(seams) == [], seams
 
 
 if __name__ == "__main__":

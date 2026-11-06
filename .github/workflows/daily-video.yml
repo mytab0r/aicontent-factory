@@ -1,0 +1,373 @@
+name: daily lo-fi video
+
+on:
+  # Слоты (t_c678b8fa шаг 3): lofi 09:00 UTC + ретраи 13/17, phonk 11:00 + ретрай 15.
+  # GitHub schedule опаздывает на 6-9 ч (04-13.10: старт 14:39-18:41 вместо 09:00), 23.10 слот 17:00 не
+  # запустил вовсе. Все слоты 9/11/13/15/17 диспатчит cron Hermes (acf_slot_dispatch.sh) с scheduled=true;
+  # guard genre-aware (watchdog.already_published) — лишний слот = no-op (t_55108370).
+  workflow_dispatch:
+    inputs:
+      scheduled:
+        description: "плановый запуск: guard (пропуск, если long-form жанра за сегодня уже есть)"
+        type: boolean
+        default: false
+      force:
+        description: "P16: намеренный второй long-form жанра за сутки (guard выключен). Без force guard работает и на ручном dispatch"
+        type: boolean
+        default: false
+
+# слоты не перекрываются: второй run ждёт первый и guard видит выпуск
+concurrency:
+  group: daily-video
+  cancel-in-progress: false
+
+# push ротации .state: default token = read -> было 403, ротация не сохранялась
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  build:
+    # one video per genre per day, each into its own playlist (05_publish.py).
+    # 2 жанра = 2 выпуска/день (t_c678b8fa): "anime lofi" (одобрен 13.10) и
+    # "chill phonk" (направление одобрено 14.10, v2 выбран оркестратором 16.10).
+    # Жанр живёт на своих cron-слотах (см. guard-step); ручной dispatch гоняет оба.
+    strategy:
+      max-parallel: 1  # single GPU
+      fail-fast: false
+      matrix:
+        include:
+          - genre: "anime lofi"
+            slots: "0 9,13,17 * * *"
+            ref: /tmp/acf-ref/ref1.wav
+          - genre: "chill phonk"
+            slots: "0 11,15 * * *"
+            ref: ""  # phonk v1-v3 одобрены БЕЗ эталона (noref) — ref-трек не подмешивать
+    # pc-acf-release: setup-uv падает EACCES (spawn uv, 16.10) — выпуск на проверенном pc-acf
+    runs-on: [self-hosted, release]
+    # 16.10 run 38886770624: аплоад часа >34 мин -> 75 обрезал 05 publish; music теперь = сборка из банка (<15 мин).
+    timeout-minutes: 240
+    env:
+      ROUTER_BASE_URL: https://9router.pxbt.app/v1
+      ROUTER_API_KEY: ${{ secrets.ROUTER_API_KEY }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      ACE15_ENDPOINT: http://ace-step:8001  # ACE-Step 1.5 REST на ПК (comfynet)
+      # один run-каталог на весь прогон: idea/cover/track/video в одном месте (common._acf_run_dir)
+      ACF_RUN_DIR: ${{ github.workspace }}/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: true  # self-hosted: wipe previous runs/ so disk doesn't grow
+
+      # schedule опаздывает до 18:41 UTC -> второй long-form за сутки (12.10). Ручной dispatch = намеренный.
+      # Слот жанра: cron-ы обеих матриц срабатывают оба, чужой слот = published=1 (скип всех шагов).
+      - name: guard (один long-form жанра в сутки)
+        id: guard
+        # P16 (20.10): 4 ручных dispatch без scheduled обходили guard -> риск дубля long-form. Guard всегда, кроме force.
+        if: ${{ !inputs.force }}
+        working-directory: pipeline
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" != "${{ matrix.slots }}" ]; then
+            echo "не слот жанра $GENRE (его слоты: ${{ matrix.slots }}), скип"
+            echo "published=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          python3 watchdog.py --guard
+
+      - uses: astral-sh/setup-uv@v3
+        timeout-minutes: 5  # t_6758c86f: сетевой шаг не висит до таймаута джобы
+        if: steps.guard.outputs.published != '1'
+        with:
+          cache-local-path: /tmp/acf-uv-cache  # P23: кэш переживает прогон
+
+      - name: install deps
+        id: deps
+        if: steps.guard.outputs.published != '1'
+        run: |
+          # apt на self-hosted раннере падал exit 100 (lock/битый dpkg) — ffmpeg уже стоит -> пропуск
+          command -v ffmpeg || { sudo dpkg --configure -a || true; for i in 1 2 3; do sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg && break; sleep 20; done; }
+          command -v ffmpeg
+          uv venv .venv
+          for i in 1 2 3; do UV_HTTP_TIMEOUT=120 uv pip install --python .venv/bin/python pillow gradio_client numpy yt-dlp librosa && break; [ $i = 3 ] && exit 1; sleep 30; done  # refpool.ensure_ref (21.10: FileNotFoundError yt-dlp -> fallback); librosa = DJ-стык bank_release (t_96de1cc6)
+
+      - name: 01 idea
+        id: idea
+        if: steps.guard.outputs.published != '1'
+        timeout-minutes: 15  # P18: зависание шага = failure -> TG alert, не 240 мин
+        working-directory: pipeline
+        run: ../.venv/bin/python 01_idea.py
+
+      - name: 02 cover
+        id: cover
+        if: steps.guard.outputs.published != '1'
+        timeout-minutes: 30  # P18: зависание шага = failure -> TG alert, не 240 мин
+        working-directory: pipeline
+        run: ../.venv/bin/python 02_cover.py
+
+      - name: 03b animate cover (Wan2.2 ZeroGPU, сбой -> статика)
+        id: animate
+        if: steps.guard.outputs.published != '1'
+        continue-on-error: true  # root-cause: t_f95a06da
+        timeout-minutes: 15
+        working-directory: pipeline
+        run: ../.venv/bin/python 03b_animate.py
+
+      # 13.10: ace-step остановлен (exit 137, stop вручную/чужим процессом) -> unless-stopped не поднимает; выпуск падал бы на 03 music
+      - name: ACE-Step up (recreate if removed, start if stopped, wait health)
+        id: ace
+        if: steps.guard.outputs.published != '1'
+        timeout-minutes: 30  # P18: зависание шага = failure -> TG alert, не 240 мин
+        run: |
+          sh deploy/gpu-pc/gpu_yield.sh stop || true  # 23.10: flint держал VRAM, банк пустой
+          # 17.10: после xl-probe ace-step остался healthy, но очередь висела на XL /v1/init -> 03 music timeout 1ч.
+          # Рестарт сбрасывает зависшие задачи и возвращает дефолтный turbo без LoRA (concurrency group исключает чужой прогон).
+          # 19.10 (t_03efb867): спайк остановил ace-step, затем сторонний docker rm удалил его ->
+          # класс «контейнер удалён, start невозможен» закрываем recreate'ом из эталонного описания (как в xl-probe).
+          # root-cause: t_860a1c4b — #239 ставил UV_NO_SYNC=1 только при recreate; существующий контейнер без него
+          # restart'ом не лечится (env фиксирован при create) -> run 40123150806 на фикс-коммите снова 18 мин starting.
+          # Контейнер без флага = устаревший: удаляем, ниже пересоздаётся из эталона.
+          if docker inspect ace-step >/dev/null 2>&1 && ! docker inspect -f '{{json .Config.Env}}' ace-step 2>/dev/null | grep -q '"UV_NO_SYNC=1"'; then
+            echo "ace-step без UV_NO_SYNC=1 — пересоздаю (t_860a1c4b)"; docker rm -f ace-step >/dev/null
+          fi
+          if ! docker inspect ace-step >/dev/null 2>&1; then
+            echo "ace-step отсутствует — пересоздаю (t_03efb867)"
+            docker pull -q ghcr.io/ace-step/ace-step-1.5:latest >/dev/null 2>&1 || true
+            docker run -d --name ace-step --restart unless-stopped \
+              --gpus all \
+              -e ACESTEP_MODE=api -e ACESTEP_LLM_BACKEND=pt \
+              -e ACESTEP_CONFIG_PATH=acestep-v15-turbo \
+              -e ACESTEP_CONFIG_PATH2=acestep-v15-base \
+              -e ACESTEP_LM_MODEL_PATH=acestep-5Hz-lm-1.7B \
+              -e ACESTEP_ON_DEMAND_MODEL_LOAD=true \
+              -e ACESTEP_QUEUE_WORKERS=1 -e ACESTEP_API_WORKERS=1 \
+              -e ACESTEP_API_HOST=0.0.0.0 -e ACESTEP_INIT_SERVICE=true -e UV_NO_SYNC=1 \
+              -v /run/desktop/mnt/host/c/dockerlocal/ace15/checkpoints:/app/checkpoints \
+              -v /run/desktop/mnt/host/c/dockerlocal/ace15/output:/app/output \
+              -v /run/desktop/mnt/host/c/dockerlocal/ace15/hf:/root/.cache/huggingface \
+              ghcr.io/ace-step/ace-step-1.5:latest
+            docker network connect comfynet ace-step >/dev/null 2>&1 || true
+          fi
+          docker restart ace-step >/dev/null 2>&1 || docker start ace-step >/dev/null 2>&1 || true
+          sleep 10
+          # 180 x 6s = 18 мин: первый старт после recreate грузит turbo+base+LM до ~15 мин (замер xl-probe)
+          for i in $(seq 1 180); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' ace-step 2>/dev/null)" = healthy ] && { echo "ace-step healthy"; exit 0; }
+            sleep 6
+          done
+          # t_ba72c7aa follow-up (run 40116619895): docker-healthcheck остаётся starting, пока
+          # контейнер грузит модели (до 20 мин), при этом сервис уже отвечает 200 на /health.
+          # Выпуск генерацию не делает — ему нужен живой контейнер (exec/cp банк, критик 03c).
+          # health-proxy-probe: сервис жив -> идём дальше; иначе ошибка с диагностикой.
+          echo "::group::health-proxy-probe"
+          if docker exec ace-step python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=5)" 2>/dev/null; then
+            echo "::endgroup::"
+            echo "ace-step: docker-health не healthy, но сервис отвечает /health 200 — выпуск продолжается без генерации"
+            exit 0
+          fi
+          echo "::endgroup::"
+          echo "::error::ace-step не healthy за 18 мин"; docker inspect -f 'status={{.State.Status}} health={{.State.Health.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}} restarts={{.RestartCount}} image={{.Config.Image}}' ace-step 2>&1 || echo "ace-step: контейнер отсутствует (t_50f1fc9b)"; docker logs --tail 40 ace-step 2>&1 || echo "ace-step: логов нет"; exit 1
+
+      - name: 03 music (сборка из банка, t_ba72c7aa)
+        id: music
+        if: steps.guard.outputs.published != '1'
+        timeout-minutes: 20  # P18: зависание шага = failure -> TG alert, не 240 мин
+        working-directory: pipeline
+        env:
+          TRACK_DURATION_SEC: "3600"
+          GENRE: ${{ matrix.genre }}
+          ACF_RUN_DIR: ${{ github.workspace }}/runs/${{ github.run_id }}
+        run: |
+          set +e
+          ../.venv/bin/python bank_release.py
+          rc=$?
+          if [ "$rc" = 2 ]; then
+            echo "nobank=1" >> "$GITHUB_OUTPUT"   # банк пуст: слот пропущен, брак не публикуем
+            echo "::warning::банк пуст/несовместим — слот пропущен"
+            exit 0
+          fi
+          exit "$rc"
+
+      # P20 (аудит 23.10): пустой банк = зелёный прогон без выпуска, только ::warning — простой не виден.
+      - name: TG alert nobank (слот пропущен)
+        if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank == '1'
+        working-directory: pipeline
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          TG_THREAD_ID: ${{ secrets.TG_THREAD_ID }}
+        run: |
+          python3 -c "from common import tg_send; tg_send('⚠️ daily-video (${{ matrix.genre }}): банк сегментов пуст — слот пропущен, выпуска нет. Лог: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}')"
+
+      # 16.10: на канал ушла «каша» (LRA 1.4), проверялись только тишина/LUFS. Критик: эталон жанра + audiobox CE.
+      # FAIL = выпуск не публикуется (TG alert ниже); следующий слот жанра генерирует заново.
+      - name: 03c quality gate (критик, FAIL = не публиковать)
+        id: qg
+        if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1'
+        timeout-minutes: 60  # P18: зависание шага = failure -> TG alert, не 240 мин
+        working-directory: pipeline
+        run: ../.venv/bin/python quality_gate.py
+
+      # t_e39908b1 (спец t_b4006a6e п.3): chroma-схожесть с треками, опубликованными за 14 дней (.state/antirepeat).
+      # FAIL -> регенерация трека (03 music + 03c) внутри шага; повтор и после неё -> exit 1, не публиковать.
+      - name: 03d anti-repeat (chroma vs 14 дней, FAIL = другая выборка банка)
+        id: antirepeat
+        if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1'
+        timeout-minutes: 30  # P18: зависание шага = failure -> TG alert, не 240 мин
+        working-directory: pipeline
+        env:
+          ACF_BANK: "1"  # t_ba72c7aa: повтор = другая выборка из банка, не генерация
+        run: ../.venv/bin/python antirepeat.py
+
+      - name: 04 assemble (ffmpeg)
+        id: assemble
+        if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1'
+        timeout-minutes: 30  # P18: зависание шага = failure -> TG alert, не 240 мин
+        working-directory: pipeline
+        run: ../.venv/bin/python 04_assemble.py
+
+      # A13 (17.10): YouTube-копия p-kkEmLGviU TP +1.3..+1.9 dBTP при чистом track.mp3 — AAC добавляет пики.
+      # Гейт по звуку финального video.mp4 (то, что заливается). FAIL = не публиковать.
+      - name: 04b quality gate final (звук video.mp4, FAIL = не публиковать)
+        id: qgfinal
+        if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1'
+        timeout-minutes: 60  # P18: зависание шага = failure -> TG alert, не 240 мин
+        working-directory: pipeline
+        run: ../.venv/bin/python quality_gate.py --final
+
+      # t_cbeefa4f: без GO гейта запуска G1zm0 — выход без upload (рендер/QA идут, токен не пишется).
+      - name: launch gate (NO-GO = без upload)
+        id: gate
+        if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1'
+        run: |
+          if python3 scripts/launch_gate.py g1zm0; then echo "go=1" >> "$GITHUB_OUTPUT"
+          else echo "::warning::launch gate NO-GO: upload G1zm0 пропущен (reports/products/g1zm0.launch.md)"; fi
+
+      - name: 05 publish (skips if no YouTube token secret)
+        id: publish
+        if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1' && steps.gate.outputs.go == '1'
+        timeout-minutes: 60  # P18: зависание шага = failure -> TG alert, не 240 мин
+        working-directory: pipeline
+        env:
+          # P18 x claim-гейт: ожидание вердикта Content ID обязано влезать в timeout шага вместе с аплоадом
+          # (5400 с по умолчанию + аплоад > 60 мин -> шаг убивался таймаутом, ролик оставался unlisted, 25.10).
+          CLAIM_TIMEOUT_SEC: "1500"
+          YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}  # uploadLimitExceeded -> одно TG-сообщение
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          TG_THREAD_ID: ${{ secrets.TG_THREAD_ID }}
+        run: |
+          # t_d53850f6: A/B-сэмплы живут только в oneoff-ab-refpool.yml (без публикации).
+          # В прод идёт только ротация refpool.PROMPT_VARIANTS = одобренное владельцем семейство ab_1/ab_3.
+          if [ -n "$YOUTUBE_TOKEN_JSON" ]; then
+            mkdir -p ../.state
+            printf '%s' "$YOUTUBE_TOKEN_JSON" > ../.state/youtube_token.json
+            for i in 1 2 3; do UV_HTTP_TIMEOUT=120 uv pip install --quiet --python ../.venv/bin/python google-api-python-client google-auth-oauthlib && break; [ $i = 3 ] && exit 1; sleep 30; done
+            # t_d53850f6: гейт Content ID — unlisted -> ждём вердикт -> public / удаление.
+            for i in 1 2 3; do UV_HTTP_TIMEOUT=120 uv pip install --quiet --python ../.venv/bin/python google-api-python-client && break; [ $i = 3 ] && exit 1; sleep 30; done
+            ../.venv/bin/python 05_publish.py --claim-gate
+          else
+            echo "skip: секрет YOUTUBE_TOKEN_JSON не задан, публикация отложена"
+          fi
+
+      # t_d53850f6: claim -> 05_publish делает bump_offset и exit 2; без коммита offset терялся
+      # (.state в .gitignore + checkout clean) и ретрай-слот брал ту же пару. Шаг идёт и после падения.
+      - name: persist refpool offset (claim -> следующий слот берёт другой эталон/промпт)
+        if: always() && steps.publish.outcome == 'failure'
+        run: |
+          [ -f .state/refpool/offset.txt ] || { echo "offset не менялся"; exit 0; }
+          git config user.name "aicontent-factory-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add -f .state/refpool/offset.txt
+          git diff --cached --quiet && exit 0
+          git commit -m "chore: refpool offset after Content ID claim [skip ci]"
+          for i in 1 2 3; do git pull --rebase -X theirs -q && git push && break; git rebase --abort 2>/dev/null || true; sleep $((i*5)); done  # root-cause: t_d53850f6 (abort неудачного rebase перед повтором; итог проверяет строка ниже)
+          git status -sb | head -1 | grep -qv ahead
+
+      - name: 05b anti-repeat record (отпечаток опубликованного трека в .state)
+        id: arrecord
+        if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1' && steps.gate.outputs.go == '1'
+        timeout-minutes: 15  # P18: зависание шага = failure -> TG alert, не 240 мин
+        continue-on-error: true  # видео уже на канале; потеря отпечатка не валит выпуск  # root-cause: t_f95a06da
+        working-directory: pipeline
+        run: ../.venv/bin/python antirepeat.py --record
+
+      - name: 07 shorts (2 x 9:16 из long-form, ссылка на него)
+        id: shorts
+        if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1' && steps.gate.outputs.go == '1'
+        timeout-minutes: 30  # P18: зависание шага = failure -> TG alert, не 240 мин
+        working-directory: pipeline
+        run: |
+          if [ -f ../.state/youtube_token.json ]; then
+            for i in 1 2 3; do UV_HTTP_TIMEOUT=120 uv pip install --quiet --python ../.venv/bin/python librosa && break; [ $i = 3 ] && exit 1; sleep 30; done
+            ../.venv/bin/python 07_shorts.py
+          else
+            echo "skip: нет YouTube токена"
+          fi
+
+      - name: M13 cascade (public-шортс на скрытый long-form -> private)
+        if: always()
+        working-directory: pipeline
+        env:
+          YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
+        run: python3 cascade_private.py || echo "::warning::каскад не отработал, повтор в watchdog 10:00"
+
+      - name: TG report (ролик + шортсы)
+        id: report
+        if: steps.guard.outputs.published != '1' && steps.music.outputs.nobank != '1'
+        working-directory: pipeline
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          TG_THREAD_ID: ${{ secrets.TG_THREAD_ID }}
+        run: python3 watchdog.py --report || true
+
+      - name: commit mood rotation state
+        id: commit
+        if: steps.guard.outputs.published != '1'
+        run: |
+          git config user.name "aicontent-factory-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add -f .state/*_idx.txt 2>/dev/null || true  # mood + scene + fallback ротации
+          # P21: заголовок занимает сцену на 14 дней только если ролик реально залит (nobank/сбой = откат файла)
+          PUB_OUTCOME="${{ steps.publish.outcome }}"  # P21: исход шага публикации
+          if [ "$PUB_OUTCOME" = "success" ]; then git add -f .state/titles.json 2>/dev/null || true; else git checkout -- .state/titles.json 2>/dev/null || true; fi  # M1
+          git add -f .state/antirepeat 2>/dev/null || true  # отпечатки анти-повтора (t_e39908b1), удаления старше 14 дней тоже
+          git add -f .state/bank_used.jsonl 2>/dev/null || true
+          git add -f .state/refpool/offset.txt 2>/dev/null || true  # t_d53850f6: смещение пары после claim  # t_ba72c7aa: использованные сегменты банка (анти-повтор 14д)
+          git diff --cached --quiet || git commit -m "chore: advance mood rotation [skip ci]"
+          # root-cause: t_ba72c7aa / run 39800343057: параллельные джобы матрицы правят те же .state-файлы
+          # (CONFLICT titles.json); своя версия поверх (-X theirs при rebase = наш коммит), 3 попытки, без маскировки
+          for i in 1 2 3; do git pull --rebase -X theirs -q && git push && break; git rebase --abort 2>/dev/null || true; sleep $((i*5)); done
+          git status -sb | head -1 | grep -qv ahead
+
+      - name: TG alert on failure (без секретов TG_* — только лог)
+        if: failure()
+        working-directory: pipeline
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          TG_THREAD_ID: ${{ secrets.TG_THREAD_ID }}
+          GH_TOKEN: ${{ github.token }}
+          STEPS_JSON: ${{ toJSON(steps) }}
+        run: |
+          # упавший шаг из steps-контекста джобы: API jobs в момент алерта ещё без conclusion («не определён», 39115022028)
+          python3 - <<'PY'
+          import json, os, urllib.request
+          from common import failed_step, tg_send, ROOT
+          wf = (ROOT / ".github/workflows/daily-video.yml").read_text(encoding="utf-8")
+          api = f"{os.environ['GITHUB_API_URL']}/repos/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}/jobs"
+          try:
+              jobs = json.load(urllib.request.urlopen(urllib.request.Request(api, headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"]}), timeout=30))["jobs"]
+          except Exception:
+              jobs = []
+          failed = failed_step(json.loads(os.environ["STEPS_JSON"]), jobs, wf)
+          tg_send(f"❌ daily-video (${{ matrix.genre }}) упал на шаге: {failed}. Лог: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}")
+          PY
+
+      - name: GPU tenants restore (gpu_yield)
+        if: always()
+        run: sh deploy/gpu-pc/gpu_yield.sh restore || true
+
+      - name: upload run files -> C:\dockerlocal\acf-out\<run_id>\ (t_265d0147)
+        if: always() && steps.guard.outputs.published != '1'  # и упавший прогон оставляет файлы на C:
+        run: sh deploy/gpu-pc/acf_out.sh put ${{ github.run_id }} runs/*/video.mp4 runs/*/short_*.mp4

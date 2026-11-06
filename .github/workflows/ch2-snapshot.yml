@@ -1,0 +1,27 @@
+name: ch2 snapshot (analytics)
+
+# Снапшот по роликам канала @OwningItMath (ch2 живёт плейлистами на нём): просмотры/подписки/показы/CTR/
+# удержание/источник трафика. Ежедневно 12:30 UTC + на PR. Только чтение, публикации нет.
+on:
+  schedule:
+    - cron: "30 12 * * *"  # ежедневный снапшот (t_f807dc99)
+  workflow_dispatch: {}
+  pull_request:
+    paths: [pipeline/ch2_snapshot.py, pipeline/08_post_analytics.py, .github/workflows/ch2-snapshot.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: [self-hosted, release]
+    timeout-minutes: 5
+    env:
+      YT_CH1_TOKEN_JSON: ${{ secrets.YT_CH1_TOKEN_JSON }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: snapshot
+        working-directory: pipeline
+        run: python3 ch2_snapshot.py
+      # t_1011874c: upload-artifact убран — артефакт никто не скачивал (результат в YouTube/TG/логе шага),
+      # а каждая загрузка копила GB-часы общей квоты storage аккаунта (500MB x часы месяца).

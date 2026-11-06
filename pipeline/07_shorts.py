@@ -177,14 +177,13 @@ def main() -> None:
     from youtube_oauth import check_auth
     if not check_auth(quiet=True):
         sys.exit("ERROR: нет валидного OAuth-токена")
-    yt = import_module("05_publish")._get_youtube_service()
+    pub = import_module("05_publish")
+    yt = pub._get_youtube_service()
     ids = []
     for i, out in enumerate(outs, 1):
         req = yt.videos().insert(part="snippet,status", body=short_body(idea, long_url, i, hook=next_hook()),
                                  media_body=MediaFileUpload(str(out), mimetype="video/mp4", resumable=True))
-        resp = None
-        while resp is None:
-            _, resp = req.next_chunk(num_retries=5)
+        resp = pub.upload_resumable(req)  # read timeout 26.10 (run 40260975482): resume, не падение
         ids.append(resp["id"])
         print(f"OK: short {i} https://youtube.com/shorts/{resp['id']}")
     (run_dir / "shorts.json").write_text(json.dumps({"ids": ids, "windows": wins}), encoding="utf-8")

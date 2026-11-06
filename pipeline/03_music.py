@@ -238,7 +238,7 @@ class _Http:
 
 def ace15_prepare(model: str | None, lora: str | None, api=None) -> dict:
     """t_b4006a6e: LoRA через /v1/lora/load (в /release_task поля LoRA нет). Модель НЕ через /v1/init:
-    XL init на 12 ГБ висел 3x1 ч (run 39017603255) -> модель уходит в body запроса (on-demand, run 38971884880).
+    XL init на 12 ГБ висел 3x1 ч (run 39017603255; повтор 39106389601/40022391620, t_f3937fb8).
     Возврат /v1/lora/status — доказательство в лог; LoRA не встала = ошибка шага."""
     if not lora:
         return {}
@@ -246,18 +246,16 @@ def ace15_prepare(model: str | None, lora: str | None, api=None) -> dict:
     import tempfile
     api = api or _Http(os.environ["ACE15_ENDPOINT"])
     if model:
-        # on-demand swap пересоздаёт primary-хендлер (initialize_service) -> LoRA, загруженная ДО swap,
-        # теряется. Короткий прогрев моделью: swap в очереди, затем LoRA на уже XL-хендлер.
-        # Swap мог не включиться (env воркеров/прочее, прогон 39064436852: "сгенерировала turbo")
-        # -> единственный /v1/init с жёстким потолком 900 с (не час, как 39017603255).
+        # Прогрев моделью = проверка, что контейнер реально отдаёт model (dit_model в ответе), до LoRA.
+        # t_f3937fb8: НИКАКОГО /v1/init fallback. Образ ace-step (upstream dce6214) не умеет on-demand swap;
+        # /v1/init догружал XL (9 ГБ) поверх turbo+base+LM на 12 ГБ -> задачи status=0 навсегда, A/B не собран
+        # (39106389601, 40022391620). Модель задаёт конфигурация контейнера: deploy/gpu-pc/ace_mode.sh xl.
         with tempfile.TemporaryDirectory() as td:
             try:
                 generate_track_v15("warmup", 10, 0, Path(td) / "w.mp3", api=api, model=model)
-            except (RuntimeError, urllib.error.URLError) as e:
-                print(f"on-demand swap не сработал ({type(e).__name__}: {e}); /v1/init 900 с", flush=True)
-                r = api.post("/v1/init", {"model": model}, timeout=900)
-                if r.get("code") != 200 or (r.get("data") or {}).get("loaded_model") != model:
-                    raise RuntimeError(f"/v1/init {model}: {str(r)[:300]}") from e
+            except RuntimeError as e:
+                raise RuntimeError(f"ace-step не отдаёт {model} ({e}): нужен контейнер с ним в primary "
+                                   f"(deploy/gpu-pc/ace_mode.sh), /v1/init на 12 ГБ запрещён") from e
     r = api.post("/v1/lora/load", {"lora_path": lora})
     st = json.loads(api.get("/v1/lora/status"))["data"]
     if r.get("code") != 200 or not (st.get("lora_loaded") and st.get("use_lora")):
@@ -268,7 +266,7 @@ def ace15_prepare(model: str | None, lora: str | None, api=None) -> dict:
 
 def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=None,
                        poll_sec: float = 5, timeout_sec: int = 2400, ref_audio=None,
-                       model: str | None = None) -> dict:
+                       model: str | None = None, stall_sec: float | None = None) -> dict:
     import json
     import time
     api = api or _Http(os.environ["ACE15_ENDPOINT"])
@@ -290,14 +288,30 @@ def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=
     else:
         tid = api.post("/release_task", body)["data"]["task_id"]
     deadline = time.time() + timeout_sec
+    # t_418f9cdc: XL-sft на 12 ГБ висел 25 мин в status=0 (0 = и queued, и running) без ошибки.
+    # Сервер отдаёт stage/progress в result бегущей задачи: нет движения stall_sec -> честный
+    # быстрый отказ со стадией, а не таймаут. 0/None = выкл (прод turbo не трогаем).
+    stall = float(os.environ.get("ACE15_STALL_SEC") or 0) if stall_sec is None else stall_sec
+    mark, moved = None, time.time()
     n_poll = 0
     while True:
         d = api.post("/query_result", {"task_id_list": [tid]})["data"][0]
         n_poll += 1
+        try:
+            r0 = json.loads(d.get("result") or "[]")
+            r0 = r0[0] if isinstance(r0, list) and r0 and isinstance(r0[0], dict) else {}
+        except (TypeError, ValueError):
+            r0 = {}
+        if (r0.get("stage"), r0.get("progress")) != mark:
+            mark, moved = (r0.get("stage"), r0.get("progress")), time.time()
         if d.get("status") != 0 or n_poll % 24 == 0:  # 24×5 c = раз в 2 мин видно, что жив и стоит в очереди
-            print(f"  task {tid[:8]} poll#{n_poll}: status={d.get('status')} qpos={d.get('queue_position')}", flush=True)
+            print(f"  task {tid[:8]} poll#{n_poll}: status={d.get('status')} qpos={d.get('queue_position')}"
+                  f" stage={mark[0]} progress={mark[1]}", flush=True)
         if d["status"] != 0:
             break
+        if stall and time.time() - moved > stall:
+            raise RuntimeError(f"ACE-Step 1.5 task {tid} stall: {int(time.time() - moved)} с без движения "
+                               f"(stage={mark[0]} progress={mark[1]}) — воркер не ведёт задачу")
         if time.time() > deadline:
             raise RuntimeError(f"ACE-Step 1.5 task {tid} timeout")
         time.sleep(poll_sec)
@@ -311,7 +325,7 @@ def generate_track_v15(prompt: str, duration_sec: int, seed: int, out_path, api=
     return item
 
 
-def gated_gen(raw, scores, objective, attempts=3, log=print, extra=0):
+def gated_gen(raw, scores, objective, attempts=3, log=print, extra=0, record=None):
     """Гейт сегмента час-микса (t_187762da): качество меряется по КАЖДОМУ сегменту,
     а не только по склейке (17.10: целый час упал на одной полосе 20-60 Гц одного трека).
     best-of-K как PR #59: attempts кандидатов с разными seed, ОДИН батчевый прогон
@@ -333,6 +347,8 @@ def gated_gen(raw, scores, objective, attempts=3, log=print, extra=0):
             why = list(objective(p)) + ([f"CE {min(ce):.2f} < {MIN_CE}"] if min(ce) < MIN_CE else [])
             log(f"сегмент {i} кандидат {k + 1}/{total}: CE(min)={min(ce):.2f}, "
                 + ("FAIL: " + "; ".join(why) if why else "OK"))
+            if record:  # t_fed47d5f R4: статистика брака по промпту (bank.stats_flush)
+                record(p, not why, "; ".join(why))
             if why:
                 fails.append(why)
                 Path(p).unlink(missing_ok=True)
@@ -370,7 +386,7 @@ def ace_restart(wait_sec=600):
 
 def mix_raw(run_dir, prompt, seed, ref, genre_name):
     """Кандидат сегмента час-микса, отмастеренный как прод ДО гейта (ревью t_187762da):
-    LOFI_AF (highpass 28 + loudnorm LRA=11) меняет полосу 20-60 Гц и LRA — ровно метрики
+    лофи-мастер (highpass 28 + громкость) меняет полосу 20-60 Гц и LRA — ровно метрики
     провала 17.10, поэтому гейт сегмента обязан мерить мастер, как cand() в best-of."""
     def raw(i, k):
         p = Path(run_dir) / f"mix_{i:02d}_{k}.mp3"
@@ -468,12 +484,7 @@ def chunk_plan(total_sec: int, max_chunk_sec: int = 240) -> list[int]:
     return chunks
 
 
-XFADE = 16.0  # t_3f0f7b91, t_ffa7ff01: стыки сегментов через acrossfade (шире — плавнее RMS-переход R3), не встык
-
-
-def seam_times(durs, xfade=XFADE) -> list[float]:
-    """Центры кроссфейдов в склейке concat_tracks: их проверяет quality_gate R3 (окно ±5 с, RMS)."""
-    return [sum(durs[:i]) - i * xfade + xfade / 2 for i in range(1, len(durs))]
+XFADE = 16.0  # фолбэк-переход без бит-сетки (dj_plan); основной стык = DJ_BARS тактов (t_96de1cc6)
 
 
 def edge_rms(path, side, sec=5.0) -> float:
@@ -491,22 +502,120 @@ def edge_rms(path, side, sec=5.0) -> float:
 
 
 EDGE_RAMP_SEC = 30.0  # gain только на начале сегмента, к телу спадает до 0: без накопления по цепочке
-EDGE_MAX_GAIN = 18.0  # 3 прохода x клэмп 6 дБ
+EDGE_PASSES = 3
+EDGE_MAX_GAIN = 18.0  # EDGE_PASSES прохода x клэмп 6 дБ
+
+
+def pmap(fn, items):
+    """t_ba72c7aa (run 40253826993: 03 music > 20 мин на 20 сегментах): ffmpeg однопоточен на сегмент,
+    сегменты независимы -> параллельно по ядрам. Порядок результатов = порядок items."""
+    from concurrent.futures import ThreadPoolExecutor
+    items = list(items)
+    if len(items) <= 1:
+        return [fn(x) for x in items]
+    with ThreadPoolExecutor(max_workers=min(len(items), os.cpu_count() or 4)) as ex:
+        return list(ex.map(fn, items))
+
+
+DJ_BARS = 8      # t_96de1cc6: переход 8 тактов 4/4 (16 тактов = 43 с при 89 BPM съедают час-микс)
+BASS_HZ = 200.0  # bass swap: ниже — бас, его в переходе держит только один трек
+
+
+@__import__("functools").lru_cache(maxsize=256)
+def _downbeats(path, start, dur):
+    """(bpm, абс. времена сильных долей) окна [start, start+dur]; None = сетка не нашлась (короткий файл,
+    нет ритма в окне). t_2be41a12: ImportError librosa раньше тоже давал None -> dj_plan молча откатывался
+    на xfade (acrossfade qsin без среза/bass swap). edge_match на таком стыке не сходится ниже порога R3
+    гейта (проверено: двусторонняя gain-коррекция застревает на разрыве >3 дБ, когда у края сегмента есть
+    переходный участок типа брейкдауна/удара — ramp не может убрать локальный провал без искажения тела).
+    librosa — обязательная зависимость пайплайна (pyproject.toml); отсутствие — дефект окружения, падаем
+    громко, как уже делает bank_release.assemble (t_96de1cc6), а не тихо ломаем качество склейки."""
+    import librosa
+    import numpy as np
+    y, sr = librosa.load(str(path), sr=22050, mono=True, offset=max(0.0, start), duration=dur)
+    if len(y) < sr * 8:
+        return None
+    env = librosa.onset.onset_strength(y=y, sr=sr)
+    tempo, beats = librosa.beat.beat_track(onset_envelope=env, sr=sr)
+    bpm = float(np.atleast_1d(tempo)[0])
+    # октавная ошибка librosa: на банке 89 BPM отдаёт 172 (удвоенные биты). Свёртка в <=125 по сильной фазе:
+    # для быстрых жанров «такт» = 2 реальных такта, переход всё равно по сильным долям
+    while bpm > 125 and len(beats) >= 32:
+        h = max(range(2), key=lambda k: float(env[beats[k::2]].mean()))
+        beats, bpm = beats[h::2], bpm / 2
+    if not 50 <= bpm <= 200 or len(beats) < 16:
+        return None
+    ph = max(range(4), key=lambda k: float(env[beats[k::4]].mean()))
+    return bpm, tuple(float(t) + max(0.0, start) for t in librosa.frames_to_time(beats[ph::4], sr=sr))
+
+
+def dj_plan(prev, nxt, bars=DJ_BARS, xfade=XFADE):
+    """Стык prev->nxt как у DJ: (конец prev, начало nxt, длина перехода L, bass swap), секунды в исходных файлах.
+    Переход стартует на последней сильной доле prev, где влезает bars тактов; nxt входит со своей первой
+    сильной доли -> сетки совпадают (сегменты одной BPM-группы). Нет сетки = xfade qsin без среза и bass swap."""
+    dp, dn = _probe_sec(prev), _probe_sec(nxt)
+    a, b = _downbeats(str(prev), round(dp - 60.0, 2), 60.0), _downbeats(str(nxt), 0.0, 30.0)
+    if not a or not b:
+        return dp, 0.0, xfade, False
+    L = bars * 4 * 60.0 / a[0]
+    starts = [t for t in a[1] if t + L <= dp]
+    if not starts or L > 0.4 * min(dp, dn):
+        return dp, 0.0, xfade, False
+    return starts[-1] + L, b[1][0], L, True
+
+
+def _dj_seg(src, dst, start, end, lin, lout):
+    """Вырезать [start, end] src в dst (flac: mp3-паддинг сдвигал бы сетку) с bass swap:
+    бас входящей части (первые lin с) и уходящей (последние lout с) вычитается до/после середины
+    перехода, рампа полдоли. acrossover (Linkwitz-Riley): полосы в сумме = исходник; вычитание lowpass
+    давало фазовый хвост и +3 дБ низа на середине (замер на банке 89F)."""
+    import subprocess
+    d = end - start
+    k = []
+    if lin > 0:
+        q = lin / (DJ_BARS * 8)
+        k.append(f"clip(({lin / 2 + q:.4f}-t)/{2 * q:.4f},0,1)")
+    if lout > 0:
+        q = lout / (DJ_BARS * 8)
+        k.append(f"clip((t-{d - lout / 2 - q:.4f})/{2 * q:.4f},0,1)")
+    fc = f"[0:a]atrim=start={start:.4f}:end={end:.4f},asetpts=PTS-STARTPTS"
+    if k:
+        kill = k[0] if len(k) == 1 else f"max({k[0]},{k[1]})"
+        fc += (f",acrossover=split={BASS_HZ:g}:order=4th[l][h];[l]volume='1-{kill}':eval=frame[lk];"
+               "[lk][h]amix=inputs=2:normalize=0")
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(src), "-filter_complex", fc + "[o]",
+                    "-map", "[o]", str(dst)], check=True)
+    return dst
+
+
+def _xfade_chain(ins, ls, out):
+    """Цепочка acrossfade qsin/qsin (equal-power: на середине оба -3 дБ, мощность постоянна)."""
+    import subprocess
+    if len(ins) == 1:
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(ins[0]), str(out)], check=True)
+        return
+    fc, prev = [], "[0:a]"
+    for i in range(1, len(ins)):
+        o = "[a]" if i == len(ins) - 1 else f"[x{i}]"
+        fc.append(f"{prev}[{i}:a]acrossfade=d={ls[i - 1]:.4f}:c1=qsin:c2=qsin{o}")
+        prev = o
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", *[x for p in ins for x in ("-i", str(p))],
+                    "-filter_complex", ";".join(fc), "-map", "[a]", str(out)], check=True, capture_output=True)
 
 
 def seam_rms(prev, nxt, xfade=XFADE):
-    """RMS дБ слева/справа от центра стыка prev->nxt ровно как гейт R3: acrossfade(tri) как в concat_tracks,
-    окна [c-SEAM_HALF, c] и [c, c+SEAM_HALF], c = dur(prev) - xfade/2 как в seam_times (t_e0c297c7).
-    prev целиком: acrossfade с входом длиной ровно xfade отдаёт пустой поток."""
-    import subprocess
+    """RMS дБ слева/справа от центра стыка prev->nxt ровно как гейт R3 (окна по SEAM_HALF) на том же
+    переходе, что concat_tracks (dj_plan + bass swap + qsin). prev берётся хвостом L + 2*SEAM_HALF."""
     import tempfile
     from quality_gate import SEAM_HALF, rms_db
+    pe, ns, L, sw = dj_plan(prev, nxt, xfade=xfade)
+    a0 = max(0.0, pe - L - 2 * SEAM_HALF)
     with tempfile.TemporaryDirectory() as td:
+        a = _dj_seg(prev, f"{td}/a.flac", a0, pe, 0, L if sw else 0)
+        b = _dj_seg(nxt, f"{td}/b.flac", ns, min(_probe_sec(nxt), ns + L + 2 * SEAM_HALF), L if sw else 0, 0)
         x = f"{td}/seam.wav"
-        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(prev), "-t", str(xfade + 2 * SEAM_HALF),
-                        "-i", str(nxt), "-filter_complex", f"[0:a][1:a]acrossfade=d={xfade}:c1=tri:c2=tri[a]",
-                        "-map", "[a]", "-c:a", "pcm_s16le", x], check=True)
-        c = _probe_sec(prev) - xfade / 2
+        _xfade_chain([a, b], [L], x)
+        c = pe - a0 - L / 2
         return rms_db(x, c - SEAM_HALF, SEAM_HALF), rms_db(x, c, SEAM_HALF)
 
 
@@ -523,13 +632,24 @@ def edge_match(paths, max_gain=6.0, ramp=EDGE_RAMP_SEC, log=print):
     for i in range(1, len(paths)):
         tot = 0.0
         r = max(6.0, min(ramp, _probe_sec(paths[i]) * 0.4))
-        for _ in range(3):
+        # t_44f5c3b3 (runs 40477529845 R3 595 с -17.0 -> -21.0, 40508302240 R3 1312 с -16.3 -> -20.2; edge gain
+        # +16.3/+14.7 дБ): рампа спадала с t=0, внутри окна гейта (центр стыка ns+L/2 ± SEAM_HALF) доходило
+        # 50-70% gain, 3 прохода по клэмпу 6 дБ не сходились на тихом вступлении. Полный gain держим до конца
+        # окна гейта (hold), спад — после: каждый проход доходит до окна целиком.
+        from quality_gate import SEAM_HALF
+        _pe, ns, L, _sw = dj_plan(paths[i - 1], paths[i])
+        hold = ns + L / 2 + SEAM_HALF + 1.0
+        # короткий сегмент: hold+рампа не доходят до окна следующего стыка (иначе дрейф по цепочке)
+        dur = _probe_sec(paths[i])
+        hold = min(hold, dur * 0.3)
+        r = max(3.0, min(r, dur * 0.4 - hold))
+        for _ in range(EDGE_PASSES):
             lv, rv = seam_rms(paths[i - 1], paths[i])
             g = max(-max_gain, min(max_gain, lv - rv))
             if abs(g) <= 0.5:
                 break
             tmp = f"{paths[i]}.g.mp3"
-            af = f"volume='pow(10,{g:.3f}*max(0,1-t/{r:.1f})/20)':eval=frame"
+            af = f"volume='pow(10,{g:.3f}*min(1,max(0,1-(t-{hold:.2f})/{r:.1f}))/20)':eval=frame"
             subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", paths[i], "-af", af,
                             "-c:a", "libmp3lame", "-b:a", "192k", tmp], check=True)
             os.replace(tmp, paths[i])
@@ -550,8 +670,7 @@ def trim_fade_tails(paths, max_sec=20.0, floor_db=6.0, log=print):
     import statistics
     import subprocess
     import tempfile
-    cuts = []
-    for p in paths:
+    def one(p):
         dur = _probe_sec(p)
         # metadata=1 кладёт RMS в метаданные кадра, в stderr их нет: без ametadata=print win пуст и срез = no-op
         proc = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-loglevel", "error", "-i", p, "-af",
@@ -561,8 +680,7 @@ def trim_fade_tails(paths, max_sec=20.0, floor_db=6.0, log=print):
         win = [float(x) if x != "-inf" else -120.0
                for x in re.findall(r"RMS_level=(-?[\d.]+|-inf)", proc.stdout)]
         if len(win) < 10:  # тимеровая сетка: короткий/битый файл не режем
-            cuts.append(0.0)
-            continue
+            return 0.0
         frame = dur / len(win)  # astats reset=1 -> окно на кадр (~23 мс)
         body = statistics.median(win)
         n = 0
@@ -576,10 +694,47 @@ def trim_fade_tails(paths, max_sec=20.0, floor_db=6.0, log=print):
             subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", p, "-t", str(dur - cut),
                             "-c:a", "libmp3lame", "-b:a", "192k", tmp], check=True)
             os.replace(tmp, p)
-        cuts.append(float(cut))
         log(f"trim_fade_tail {os.path.basename(p)}: -{cut:.0f} с (хвост-затухание)")
+        return float(cut)
+    cuts = pmap(one, paths)
     return cuts
 
+
+def trim_fade_head(paths, max_sec=20.0, floor_db=6.0, log=print):
+    """run 40145954650: ACE-Step фейдит и НАЧАЛО сегмента; первым в миксе он даёт тихие блоки 3-63 с ->
+    гейт A18 «скачок 4.8 LU между блоками 3 и 63». Зеркало trim_fade_tails: срезаем 1с-окна с НАЧАЛА,
+    пока RMS окна ниже медианы тела на floor_db; не более max_sec на сегмент."""
+    import os
+    import re
+    import statistics
+    import subprocess
+    def one(p):
+        dur = _probe_sec(p)
+        proc = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-loglevel", "error", "-i", p, "-af",
+                               "astats=metadata=1:reset=1:measure_overall=RMS_level:measure_perchannel=none,"
+                               "ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-",
+                               "-f", "null", "-"], capture_output=True, text=True)
+        win = [float(x) if x != "-inf" else -120.0
+               for x in re.findall(r"RMS_level=(-?[\d.]+|-inf)", proc.stdout)]
+        if len(win) < 10:
+            return 0.0
+        frame = dur / len(win)
+        body = statistics.median(win)
+        n = 0
+        for r in win:
+            if r > body - floor_db or (n + 1) * frame >= max_sec or (n + 1) * frame > dur * 0.4:
+                break
+            n += 1
+        cut = n * frame
+        if cut >= 1.0:
+            tmp = f"{p}.h.mp3"
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", p, "-ss", str(cut),
+                            "-c:a", "libmp3lame", "-b:a", "192k", tmp], check=True)
+            os.replace(tmp, p)
+        log(f"trim_fade_head {os.path.basename(p)}: -{cut:.0f} с (вступление-затухание)")
+        return float(cut)
+    cuts = pmap(one, paths)
+    return cuts
 
 BODY_SEC, BODY_MAX_GAIN, BODY_TOL = 60.0, 6.0, 0.5
 
@@ -593,21 +748,36 @@ def _apply_gain(path, g):
     os.replace(tmp, path)
 
 
+def body_lufs(path, sec=BODY_SEC):
+    """run 40127996482: body_match мерил RMS, гейт A18 (quality_gate.loudjump_why) меряет медиану short-term
+    LUFS (K-weighting). RMS-выровненные тела разошлись на 4.6 LU (блоки 1443/1503/1563 с) -> 03c FAIL.
+    Выравниваем той же метрикой, что судит гейт: медиана S (ebur128, шаг 0.1 с) середины сегмента."""
+    import re
+    import subprocess
+    dur = _probe_sec(path)
+    sec = min(sec, dur * 0.4)
+    start = max(0.0, (dur - sec) / 2)
+    out = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-ss", str(start), "-t", str(sec), "-i", str(path),
+                          "-af", "ebur128=framelog=info", "-f", "null", "-"], capture_output=True, text=True).stderr
+    st = sorted(float(x) for x in re.findall(r"S:\s*(-?[\d.]+)", out)[:-1][30:])  # без первых 3 с (окно S)
+    return st[len(st) // 2] if st else -120.0
+
+
 def body_match(paths, log=print):
     """t_cron1024 (run 40075415222): edge_match правит только первые 30 с, тела сегментов из банка
     расходились до 6 дБ -> гейт 03c «скачок громкости 4.9/5.8 LU между блоками». Константный gain
-    на сегмент по RMS середины (BODY_SEC) к телу первого, клэмп ±BODY_MAX_GAIN. Гейт не ослаблен."""
-    ref = edge_rms(paths[0], "body", sec=BODY_SEC)
-    gains = [0.0]
-    for p in paths[1:]:
-        g = max(-BODY_MAX_GAIN, min(BODY_MAX_GAIN, ref - edge_rms(p, "body", sec=BODY_SEC)))
+    на сегмент по short-term LUFS середины (body_lufs, метрика гейта A18) к телу первого, клэмп ±BODY_MAX_GAIN. Гейт не ослаблен."""
+    ref = body_lufs(paths[0])
+
+    def one(p):
+        g = max(-BODY_MAX_GAIN, min(BODY_MAX_GAIN, ref - body_lufs(p)))
         if abs(g) < BODY_TOL:
             g = 0.0
         else:
             _apply_gain(p, g)
-        gains.append(round(g, 2))
         log(f"body_match {p}: {g:+.2f} дБ")
-    return gains
+        return round(g, 2)
+    return [0.0] + pmap(one, paths[1:])
 
 
 def prep_segments(paths, log=print):
@@ -615,6 +785,7 @@ def prep_segments(paths, log=print):
     мерил тихий фейд, давил следующие сегменты на -18 дБ, после среза хвоста стык 336 с -> R3 FAIL.
     Фейд последнего сегмента остаётся концом микса."""
     trim_fade_tails(paths[:-1], log=log)
+    trim_fade_head(paths, log=log)  # run 40145954650: тихое вступление первого сегмента = A18-скачок в начале
     body_match(paths, log=log)
     return edge_match(paths, log=log)
 
@@ -634,22 +805,39 @@ def fade_end(path, sec: float = FADE_END_SEC) -> None:
     os.replace(tmp, path)
 
 
-def concat_tracks(paths: list[str], out_path, xfade: float = XFADE) -> None:
-    """Склеивает треки цепочкой acrossfade (tri/tri, xfade с): без разрыва громкости и щелчка на стыке."""
+def concat_tracks(paths: list[str], out_path, xfade: float = XFADE) -> tuple[list[float], list[float]]:
+    """t_96de1cc6: склейка как у DJ вместо acrossfade tri 16 с (03c FAIL 24.10: стык +3.3 дБ).
+    Каждый стык: dj_plan (сильная доля, DJ_BARS тактов) + bass swap + qsin. Возвращает (старты треков,
+    центры стыков) в секундах склейки — их меряет гейт R3 и из них главы."""
     import shutil
-    import subprocess
-
+    import tempfile
     if len(paths) == 1:
         shutil.copy(paths[0], out_path)
-        return
-    ins = [x for p in paths for x in ("-i", str(p))]
-    fc, prev = [], "[0:a]"
-    for i in range(1, len(paths)):
-        out = "[a]" if i == len(paths) - 1 else f"[x{i}]"
-        fc.append(f"{prev}[{i}:a]acrossfade=d={xfade}:c1=tri:c2=tri{out}")
-        prev = out
-    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", *ins, "-filter_complex", ";".join(fc), "-map", "[a]",
-                    str(out_path)], check=True, capture_output=True)
+        return [0.0], []
+    plans = pmap(lambda i: dj_plan(paths[i - 1], paths[i], xfade=xfade), range(1, len(paths)))
+    starts, seams, t = [], [], 0.0
+    # рядом с выходом: час flac ~600 МБ, /tmp раннера мал; TemporaryDirectory удалит при любом исходе
+    with tempfile.TemporaryDirectory(dir=os.path.dirname(os.path.abspath(out_path))) as td:
+        cuts = []
+        for i, p in enumerate(paths):
+            s0 = plans[i - 1][1] if i else 0.0
+            e0 = plans[i][0] if i < len(plans) else _probe_sec(p)
+            lin = plans[i - 1][2] if i else 0.0
+            sin_ = lin if i and plans[i - 1][3] else 0.0
+            sout = plans[i][2] if i < len(plans) and plans[i][3] else 0.0
+            cuts.append((p, f"{td}/{i:03d}.flac", s0, e0, sin_, sout))
+            if i:
+                t -= lin
+                seams.append(t + lin / 2)
+            starts.append(t)
+            t += e0 - s0
+        segs = pmap(lambda c: _dj_seg(*c), cuts)
+        _xfade_chain(segs, [pl[2] for pl in plans], out_path)
+    return starts, seams
+
+
+def chapters_at(starts, names) -> list[str]:
+    return [f"{_ts(s)} {n}" for s, n in zip(starts, names)]
 
 
 def main() -> None:
@@ -725,11 +913,9 @@ def main() -> None:
         paths, durs = plan_mix(duration, gen_mix, _probe_sec, budget_sec=mix_budget,
                                max_tracks=-(-duration // MIX_SEG_SEC) + 2)
         prep_segments(paths, log=print)
-        durs = [_probe_sec(p) for p in paths]  # срез хвостов меняет длительности — перезамер
-        concat_tracks(paths, out_path)
-        chaps = chapters(durs, track_names(len(paths), seed), xfade=XFADE)
-        seams = seam_times(durs)
-        duration = int(sum(durs) - XFADE * (len(durs) - 1))
+        starts, seams = concat_tracks(paths, out_path)
+        chaps = chapters_at(starts, track_names(len(paths), seed))
+        duration = int(_probe_sec(out_path))
     elif os.environ.get("ACE15_ENDPOINT"):
         duration = min(duration, ACE15_MAX_SEC)
         n = int(os.environ.get("ACE15_BESTOF") or 0)  # t_b4006a6e: best-of-N через quality_gate, 0 = 1 кандидат

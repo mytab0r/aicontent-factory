@@ -256,6 +256,41 @@ def test_put_verifies_checksum_and_skips_torn_copy():
         assert bank.put_verified(p, "lofi", "z_seed.mp3", {}, docker_exec_fails) is False
 
 
+def test_lofi_group_counts_ignore_fast_segments():
+    """26.10: energy-гейт выпуска (<=75 BPM) не берёт 89/92/82, но банк считал их «полными»
+    (53 сегмента, цель 40) -> bank-fill выходил за минуту, медленные 68-70 BPM не генерировались,
+    выпуск 27.10 остался бы без сегментов. Быстрые lofi-сегменты не идут в группы и в have()."""
+    import json as _j
+    metas = {"a": "x, 89 BPM, F major", "b": "x, 92 BPM, G major", "c": "x, 70 BPM, F major"}
+    def sh(*a):
+        cmd = " ".join(a)
+        if "ls " in cmd:
+            return "\n".join(f"{k}.mp3" for k in metas)
+        if "cat " in cmd:
+            k = cmd.split("/")[-1].split(".json")[0]
+            return _j.dumps({"genre": "anime lofi", "prompt": metas[k]})
+        if "ffprobe" in cmd:
+            return "180.0"
+        return ""
+    assert bank.group_counts("anime lofi", sh) == {(70, "F major"): 1}
+    assert bank.group_counts("chill phonk", sh) == {(89, "F major"): 1, (92, "G major"): 1, (70, "F major"): 1}
+
+
+def test_put_uses_docker_cli(monkeypatch=None):
+    """26.10 run 40337950296: put_verified получал голый _sh -> локальный `cp src ace-step:...`
+    (No such file or directory), 4 принятых сегмента из 4 потеряны. docker_sh обязан звать docker."""
+    calls = []
+    orig = bank._sh
+    bank._sh = lambda *a: calls.append(a) or ""
+    try:
+        bank._docker("cp", "a", "ace-step:/b")
+    finally:
+        bank._sh = orig
+    assert calls == [("docker", "cp", "a", "ace-step:/b")], calls
+    src = Path(bank.__file__).read_text(encoding="utf-8")
+    assert not re.search(r"put_verified\([^)]*,\s*_sh\)", src), "put_verified получает голый _sh"
+
+
 if __name__ == "__main__":
     test_every_release_genre_has_bank_generator()
     test_genre_without_bpm_gets_pinned_group()
@@ -274,4 +309,6 @@ if __name__ == "__main__":
     test_persistent_failure_without_release_raises()
     test_target_grows_until_largest_group_has_margin()
     test_put_verifies_checksum_and_skips_torn_copy()
+    test_lofi_group_counts_ignore_fast_segments()
+    test_put_uses_docker_cli()
     print("ok test_bank")

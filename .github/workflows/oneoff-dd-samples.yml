@@ -1,0 +1,32 @@
+name: oneoff-dd-samples
+on:
+  workflow_dispatch: {}
+
+# новый пуш в ветку эксперимента заменяет старый прогон, а не встаёт в очередь
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  generate:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        timeout-minutes: 5  # t_6758c86f: сетевой шаг не висит до таймаута джобы
+      - name: deps
+        run: |
+          uv venv .venv
+          uv pip install --python .venv/bin/python gradio_client
+      - name: generate dd scene samples (fail fast, resume on re-dispatch)
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: .venv/bin/python pipeline/dd_samples.py
+      - name: upload files (даже при неполном результате) -> C:\dockerlocal\acf-out\<run_id>\ (t_265d0147)
+        if: always()
+        run: sh deploy/gpu-pc/acf_out.sh put ${{ github.run_id }} samples_candidates/dd_*.mp3
+      - name: report
+        if: always()
+        run: |
+          count=$(ls samples_candidates/dd_*.mp3 2>/dev/null | wc -l)
+          echo "saved: $count/6 dd samples"
