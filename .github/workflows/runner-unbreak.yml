@@ -36,7 +36,7 @@ jobs:
           # Ротация кэшей — janitor purge_tmp (find /tmp -mmin +720), видит bind-пути хоста.
           mkdir -p /work/docker-caches/acf-uv-cache /work/docker-caches/xlv /work/docker-caches/runner-work/$(basename "$WORK")
           TMP="unbreak-$$"
-          docker run -d --name "$TMP" --restart unless-stopped --dns 192.168.65.7 --dns 8.8.8.8 --dns 77.88.8.8 --cpus 4 --memory 4g \
+          docker run -d --name "$TMP" --restart unless-stopped --dns 192.168.65.7 --dns 8.8.8.8 --dns 77.88.8.8 --cpus 4 --memory 6g \
             -e REPO_URL=https://github.com/mytab0r/aicontent-factory -e RUNNER_SCOPE=repo \
             -e RUNNER_NAME="$RUNNER_NAME" -e LABELS="$LBL" -e RUNNER_TOKEN="$REG" \
             -e RUNNER_WORKDIR="$WORK" -e CONFIGURED_ACTIONS_RUNNER_FILES_DIR=/runner/data \
