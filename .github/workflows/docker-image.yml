@@ -1,4 +1,6 @@
-name: docker-image
+name: docker-image  # root-cause: t_0a4cae59 — push ретраится buildx-циклом ниже (4 попытки), prepull не нужен (cache-from registry)
+# root-cause: t_0a4cae59 — push образа ретраится fallback-степом ниже (buildx --push цикл),
+# подготовка/препулл здесь не нужны: cache-from тянет слои из registry
 # ghcr.io/mytab0r/aicontent-factory:latest -- built only after green `tests` on push to main; Watchtower on the VPS pulls it.
 on:
   workflow_run:
@@ -24,6 +26,8 @@ jobs:
         run: |
           d="$RUNNER_TEMP/docker"; mkdir -p "$d"; echo "DOCKER_CONFIG=$d" >> "$GITHUB_ENV"
           printf '{"auths":{"ghcr.io":{"auth":"%s"}}\n' "$(printf '%s:%s' "$GITHUB_ACTOR" "$GHCR_TOKEN" | base64 -w0)" > "$d/config.json"
+      # root-cause: t_a41372f5 — client-side buildx с daemon-docker заменён один-в-один;
+      # buildx-driver оставлен как в работающем прогоне pay-image (t_0a4cae59)
       - uses: docker/setup-buildx-action@v3
         with:
           buildkitd-config-inline: |
@@ -50,8 +54,10 @@ jobs:
             type=raw,value=latest
             type=sha
       - id: push
+        # root-cause: t_0a4cae59 — transport-обрывы ghcr на ПК (EOF/timeout): первый push
+        # не гейтовой дорогой, ретрай buildx --push циклом ниже; исход не глотается, fail = red job
         continue-on-error: true
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v6  # root-cause: t_0a4cae59 — ретрай buildx --push циклом ниже
         env:
           DOCKER_BUILD_SUMMARY: "false"
           DOCKER_BUILD_RECORD_UPLOAD: "false"
@@ -76,6 +82,7 @@ jobs:
           exit 1
       # Prune older versions of this image (best-effort)
       - if: steps.push.outcome == 'success'
+        # root-cause: t_b87507e0 — pruning GHCR-версий не гейт сборки; сбой бухгалтера не должен красить прод-пуш
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
