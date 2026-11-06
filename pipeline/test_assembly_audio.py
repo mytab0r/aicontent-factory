@@ -80,7 +80,9 @@ def test_norm_segments_static_gain_no_loudnorm(tmp_path=None):
         Path(cmd[-1]).write_bytes(b"x")
         return SimpleNamespace(returncode=0, stderr="")
 
-    p1 = Path("/tmp/n1.mp3"); p2 = Path("/tmp/n2.mp3")
+    import tempfile
+    _td = tempfile.mkdtemp()
+    p1 = Path(_td) / "n1.mp3"; p2 = Path(_td) / "n2.mp3"
     with patch.object(br.subprocess, "run", fake_run), \
             patch.object(mastering, "measure", lambda f: {"i": -20.0, "lra": 9.0, "tp": -3.0}):
         br._norm_segments([p1, p2], log=lambda *a, **k: None)
