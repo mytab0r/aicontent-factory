@@ -112,7 +112,9 @@ def master(src: str, dst: str, genre: str = "chill phonk") -> dict:
     # t_619efc27: динамический loudnorm на экстремальной динамике (длинные паузы) не
     # дотягивает до цели (замер: I -15.7 при I=-14, 5 проходов сходятся туда же) —
     # добираем статическим gain + лимитер, как в bank_release._norm_segments.
-    if not (-15 <= m["i"] <= -13):
+    for _ in range(3):
+        if -15 <= m["i"] <= -13:
+            break
         run(dst, dst, f"volume={LUFS_TARGET - m['i']:+.2f}dB,alimiter=limit=-2dB:level=false")
         m = measure(dst)
     assert -15 <= m["i"] <= -13, f"гейт I: {m}"
