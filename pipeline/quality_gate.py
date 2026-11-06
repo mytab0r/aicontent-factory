@@ -9,7 +9,7 @@
 --final (шаг 04b) = целостность mp4 (V2/V3: потоки, длительность, синхрон) + тот же объективный гейт и CE по окнам/стыкам ФИНАЛЬНОГО video.mp4 (AAC после 04 assemble):
    17.10 YouTube-копия p-kkEmLGviU дала TP +1.3..+1.9 dBTP — перекодирование добавляет пики, мерить надо то, что уходит.
 """
-import json, os, re, subprocess, sys, tempfile
+import json, os, re, subprocess, sys, tempfile, shutil
 
 BANDS = [(20, 60), (60, 150), (150, 400), (400, 1000), (1000, 2500), (2500, 5000), (5000, 10000), (10000, 16000)]
 # Абсолютные RMS дБ по полосам (двойные фильтры), сняты с одобренных эталонов целиком:
@@ -211,18 +211,21 @@ def rms_db(f, start, dur):
 def critic_clips(paths):
     """Реальный критик: CE для каждого wav ОДНИМ прогоном audiobox в контейнере ace-step (модель грузится 1 раз)."""
     td = tempfile.mkdtemp()
-    names = []
-    for i, p in enumerate(paths):  # имя сортируется = порядок paths (AES читает sorted listdir)
-        names.append(f"c{i:05d}.wav")
-        subprocess.run(["cp", str(p), f"{td}/{names[-1]}"], check=True)
-    subprocess.run(["docker", "exec", "ace-step", "sh", "-c", "rm -rf /app/output/qg && mkdir -p /app/output/qg"], check=True)
-    subprocess.run(["docker", "cp", f"{td}/.", "ace-step:/app/output/qg/in"], check=True)
-    out = subprocess.run(["docker", "exec", "ace-step", "sh", "-c", AES], capture_output=True, text=True, timeout=3000)
-    res = {l.split("\t")[0]: json.loads(l.split("\t")[1])["CE"] for l in out.stdout.splitlines() if "\t" in l}
-    want = ["in/" + n for n in names]
-    if sorted(res) != sorted(want):
-        raise RuntimeError(f"критик не отработал ({len(res)}/{len(want)}): {out.stdout[-300:]} {out.stderr[-600:]}")
-    return [res[n] for n in want]
+    try:
+        names = []
+        for i, p in enumerate(paths):  # имя сортируется = порядок paths (AES читает sorted listdir)
+            names.append(f"c{i:05d}.wav")
+            subprocess.run(["cp", str(p), f"{td}/{names[-1]}"], check=True)
+        subprocess.run(["docker", "exec", "ace-step", "sh", "-c", "rm -rf /app/output/qg && mkdir -p /app/output/qg"], check=True)
+        subprocess.run(["docker", "cp", f"{td}/.", "ace-step:/app/output/qg/in"], check=True)
+        out = subprocess.run(["docker", "exec", "ace-step", "sh", "-c", AES], capture_output=True, text=True, timeout=3000)
+        res = {l.split("\t")[0]: json.loads(l.split("\t")[1])["CE"] for l in out.stdout.splitlines() if "\t" in l}
+        want = ["in/" + n for n in names]
+        if sorted(res) != sorted(want):
+            raise RuntimeError(f"критик не отработал ({len(res)}/{len(want)}): {out.stdout[-300:]} {out.stderr[-600:]}")
+        return [res[n] for n in want]
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
 
 
 def _critic(paths, critic):
@@ -235,13 +238,16 @@ def _critic(paths, critic):
 def window_report(f, seams=(), critic=None):
     """CE по всем окнам WIN + окну ±SEAM_HALF и RMS по сторонам каждого стыка. Сбой критика = исключение."""
     dur, td = duration(f), tempfile.mkdtemp()
-    ws = windows(dur)
-    clips = [cut(f, s, l, f"{td}/w{i:05d}.wav") for i, (s, l) in enumerate(ws)]
-    clips += [cut(f, t - SEAM_HALF, 2 * SEAM_HALF, f"{td}/s{i:05d}.wav") for i, t in enumerate(seams)]
-    ce = _critic(clips, critic)
-    return {"wins": [(s, round(c, 3)) for (s, _), c in zip(ws, ce)],
-            "seams": [{"t": t, "ce": round(c, 3), "rms_l": round(rms_db(f, t - SEAM_HALF, min(SEAM_HALF, t)), 2),
-                       "rms_r": round(rms_db(f, t, SEAM_HALF), 2)} for t, c in zip(seams, ce[len(ws):])]}
+    try:
+        ws = windows(dur)
+        clips = [cut(f, s, l, f"{td}/w{i:05d}.wav") for i, (s, l) in enumerate(ws)]
+        clips += [cut(f, t - SEAM_HALF, 2 * SEAM_HALF, f"{td}/s{i:05d}.wav") for i, t in enumerate(seams)]
+        ce = _critic(clips, critic)
+        return {"wins": [(s, round(c, 3)) for (s, _), c in zip(ws, ce)],
+                "seams": [{"t": t, "ce": round(c, 3), "rms_l": round(rms_db(f, t - SEAM_HALF, min(SEAM_HALF, t)), 2),
+                           "rms_r": round(rms_db(f, t, SEAM_HALF), 2)} for t, c in zip(seams, ce[len(ws):])]}
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
 
 
 def full_ce_why(f, seams=(), critic=None):
@@ -257,14 +263,17 @@ def ce_windows_batch(files, critic=None):
     """Гейт сегмента час-микса (gated_gen/best-of): CE КАЖДОГО окна WIN каждого файла одним прогоном критика.
     Возврат [[ce окна, ...], ...] в порядке files; min() = R1 сегмента. Ошибка критика = исключение."""
     td, clips, n = tempfile.mkdtemp(), [], []
-    for fi, f in enumerate(files):
-        ws = windows(duration(f))
-        clips += [cut(f, s, l, f"{td}/f{fi:03d}w{i:04d}.wav") for i, (s, l) in enumerate(ws)]
-        n.append(len(ws))
-    ce, out = _critic(clips, critic), []
-    for k in n:
-        out, ce = out + [ce[:k]], ce[k:]
-    return out
+    try:
+        for fi, f in enumerate(files):
+            ws = windows(duration(f))
+            clips += [cut(f, s, l, f"{td}/f{fi:03d}w{i:04d}.wav") for i, (s, l) in enumerate(ws)]
+            n.append(len(ws))
+        ce, out = _critic(clips, critic), []
+        for k in n:
+            out, ce = out + [ce[:k]], ce[k:]
+        return out
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
 
 
 def ce_scores(f):
@@ -275,11 +284,14 @@ def ce_batch(files, critic=None):
     """t_b4006a6e (best-of сегментов): CE 3 отрывков по 30 с (10/50/90 %) на трек одним прогоном критика.
     Возврат [[c,c,c], ...] в порядке files. Ошибка критика = исключение (FAIL)."""
     td, clips = tempfile.mkdtemp(), []
-    for fi, f in enumerate(files):
-        dur = duration(f)
-        clips += [cut(f, dur * frac - 15, 30, f"{td}/t{fi:03d}c{i}.wav") for i, frac in enumerate((0.1, 0.5, 0.9))]
-    ce = _critic(clips, critic)
-    return [ce[3 * i:3 * i + 3] for i in range(len(files))]
+    try:
+        for fi, f in enumerate(files):
+            dur = duration(f)
+            clips += [cut(f, dur * frac - 15, 30, f"{td}/t{fi:03d}c{i}.wav") for i, frac in enumerate((0.1, 0.5, 0.9))]
+        ce = _critic(clips, critic)
+        return [ce[3 * i:3 * i + 3] for i in range(len(files))]
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
 
 
 def streams(f):
