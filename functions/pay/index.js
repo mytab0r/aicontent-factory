@@ -73,25 +73,19 @@ export async function onRequestGet({ env = {} }) {
   <div class="muted" id="done" style="margin-top:8px"></div>
  </div>
 </div>
-<script>
-const NETS = ${inline(nets)};
+<script>const NETS = ${inline(nets)};
 const el = (h) => { const d = document.createElement('div'); d.innerHTML = h; return d; };
 const box = document.getElementById('opts');
 if (!NETS.length) box.appendChild(el('<p class="warn">Реквизиты ещё не настроены.</p>'));
 
-// Рендерим все сети сразу карточками
 for (const c of NETS) {
   const card = document.createElement('div');
   card.className = 'card';
   card.style.marginTop = '16px';
-
-  // Заголовок сети
   const h = document.createElement('h3');
   h.style.margin = '0 0 8px';
   h.textContent = c.label;
   card.appendChild(h);
-
-  // Токены для EVM-сетей
   if (c.tokens && c.tokens.length) {
     const tk = document.createElement('div');
     tk.style.marginBottom = '8px';
@@ -109,26 +103,21 @@ for (const c of NETS) {
       tk.appendChild(tb);
     }
     card.appendChild(tk);
-    // Дефолт — первый токен
     paintCard(card, c, c.tokens[0]);
   } else {
     paintCard(card, c, null);
   }
-
   box.appendChild(card);
 }
 
 function paintCard(card, c, t) {
-  // Удаляем старые addr/qr/copy/done если есть
   const old = card.querySelector('.addr-row');
   if (old) old.remove();
-
   const row = document.createElement('div');
   row.className = 'addr-row';
   row.style.display = 'flex';
   row.style.flexDirection = 'column';
   row.style.gap = '8px';
-
   const parts = ['Отправляйте ТОЛЬКО ' + (t ? t.label + ' в сети ' : '') + c.net];
   if (c.warn) parts.push(c.warn);
   if (t) parts.push('контракт токена: ' + t.contract);
@@ -136,16 +125,13 @@ function paintCard(card, c, t) {
   warn.className = 'warn';
   warn.textContent = '⚠ ' + parts.join(' — ') + ' — при переводе из другой сети средства будут потеряны.';
   row.appendChild(warn);
-
   const addr = document.createElement('div');
   addr.className = 'addr';
   addr.textContent = c.address;
   row.appendChild(addr);
-
   const qr = document.createElement('div');
   qr.id = 'qr-' + c.id;
   row.appendChild(qr);
-
   const copyBtn = document.createElement('button');
   copyBtn.className = 'act';
   copyBtn.textContent = 'Скопировать адрес';
@@ -154,10 +140,7 @@ function paintCard(card, c, t) {
     catch (e) { copyBtn.textContent = c.address; }
   };
   row.appendChild(copyBtn);
-
   card.appendChild(row);
-
-  // QR
   if (typeof qrcode === 'function') {
     const qrgen = qrcode(0, 'M');
     qrgen.addData(c.address);
@@ -191,7 +174,6 @@ wcBtn.onclick = async () => {
   wcState.textContent = 'Открываю список кошельков…';
   try {
     const modal = await appkit();
-    // Висячая WC-сессия без аккаунта дизейблит кошельки в модалке (hasAnyConnection). Сбрасываем.
     try { await modal.disconnect(); } catch (e) {}
     await modal.open();
     wcState.textContent = '';
