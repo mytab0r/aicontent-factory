@@ -73,7 +73,7 @@ export async function onRequestGet({ env = {} }) {
   <div class="muted" id="done" style="margin-top:8px"></div>
  </div>
 </div>
-<script><script>
+<script>
 const NETS = ${inline(nets)};
 const el = (h) => { const d = document.createElement('div'); d.innerHTML = h; return d; };
 const box = document.getElementById('opts');
@@ -199,4 +199,7 @@ wcBtn.onclick = async () => {
     wcState.textContent = 'Кошелёк не открылся: ' + ((e && e.message) || e) + '. Откройте эту страницу в браузере кошелька (SafePal → Discover).';
   } finally { wcBtn.disabled = false };
 };
-</script>
+</scr` + `ipt>
+</body></html>`;
+  return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } });
+}
