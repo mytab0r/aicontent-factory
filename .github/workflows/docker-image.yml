@@ -51,13 +51,12 @@ jobs:
         env: {B: "python:3.12-slim"}
         run: for n in 1 2 3 4; do o=$(docker pull -q "$B" 2>&1) && break; echo "$o"; grep -qiE 'manifest unknown|not found' <<<"$o" && { echo "::error::тег $B не существует"; exit 1; }; [ $n = 4 ] && exit 1; sleep $((n*20)); done
         timeout-minutes: 10
-      - uses: docker/metadata-action@v5
+      - name: compute tags (inline, docker/metadata-action вне ALLOW actions_policy)
         id: meta
-        with:
-          images: ghcr.io/${{ github.repository }}
-          tags: |
-            type=raw,value=latest
-            type=sha
+        run: |
+          SHA=${{ github.event.workflow_run.head_sha }}
+          echo "tags=ghcr.io/${{ github.repository }}:latest ghcr.io/${{ github.repository }}:sha-${SHA::7}" >> "$GITHUB_OUTPUT"
+          echo "labels=org.opencontainers.image.source=https://github.com/${{ github.repository }}" >> "$GITHUB_OUTPUT"
       - id: push
         # root-cause: t_0a4cae59 — transport-обрывы ghcr на ПК (EOF/timeout): первый push
         # не гейтовой дорогой, ретрай buildx --push циклом ниже; исход не глотается, fail = red job
