@@ -233,3 +233,40 @@ if __name__ == "__main__":
             f()
             print("ok", n)
     print("all model probe tests passed")
+
+
+# ---------- t_b87507e0 rev2: content=None у живых моделей -> fallback, не AttributeError ----------
+def test_llm_idea_content_null_falls_through(monkeypatch):
+    """llm_idea: content=None (combo возвращает {"content": null}) ловится у каждой
+    модели и идёт к следующей; все null -> (None, ошибка с именем модели), не вылет."""
+    calls = []
+
+    def fake_alive(model, post=None, timeout=0):
+        calls.append(model)
+        return True
+
+    def fake_post(path, payload, timeout=0, retries=0):
+        return {"choices": [{"message": {"content": None}}]}  # combo-пустой ответ
+
+    monkeypatch.setattr(idea_mod, "MODELS", ["auto-worker-combo", "auto-cheap-combo"])
+    monkeypatch.setattr(idea_mod, "model_alive", fake_alive)
+    monkeypatch.setattr(idea_mod, "router_post", fake_post)
+    out, err = idea_mod.llm_idea("prompt")
+    assert out is None, f"ожидался None, есть {out!r}"
+    assert isinstance(err, RuntimeError) and "probe failed" in str(err) or err is not None
+    # обе модели опробованы: ни одна не вылетела AttributeError наружу
+    assert calls == ["auto-worker-combo", "auto-worker-combo", "auto-cheap-combo", "auto-cheap-combo"]
+
+
+def test_llm_idea_second_model_recovers_from_null():
+    """Первая модель отдаёт content=None -> вторая валидный JSON: idea возвращается."""
+    def fake_post(path, payload, timeout=0, retries=0):
+        model = payload["model"]
+        content = None if model == "auto-worker-combo" else '{"mood": "x", "tags": ["a"]}'
+        return {"choices": [{"message": {"content": content}}]}
+
+    monkeypatch.setattr(idea_mod, "MODELS", ["auto-worker-combo", "auto-cheap-combo"])
+    monkeypatch.setattr(idea_mod, "model_alive", lambda m, post=None, timeout=0: True)
+    monkeypatch.setattr(idea_mod, "router_post", fake_post)
+    out, err = idea_mod.llm_idea("prompt")
+    assert out == {"mood": "x", "tags": ["a"]} and err is None
