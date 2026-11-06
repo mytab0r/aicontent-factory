@@ -118,17 +118,36 @@ jobs:
           # (см. вывод ниже) — headless-сессия это сделать не может (OAuth consent screen edit).
           YT_ID=$(python3 -c "import json,os; print(json.loads(os.environ['YOUTUBE_TOKEN_JSON']).get('client_id',''))")
           YT_SECRET=$(python3 -c "import json,os; print(json.loads(os.environ['YOUTUBE_TOKEN_JSON']).get('client_secret',''))")
+          # attempt 1: pinned tag with explicit platform (avoid manifest list issues)
           for i in 1 2 3; do
-            echo "=== pull attempt $i/3 ==="
-            if docker pull ghcr.io/gitroomhq/postiz-app:v2.25.3; then
+            echo "=== pull attempt $i/3 (v2.25.3 --platform linux/amd64) ==="
+            if docker pull --platform linux/amd64 ghcr.io/gitroomhq/postiz-app:v2.25.3; then
               echo "=== pull OK on attempt $i ==="
               docker images ghcr.io/gitroomhq/postiz-app --format '{{.Repository}}:{{.Tag}} {{.ID}} {{.Size}}'
               break
             fi
             echo "=== pull attempt $i FAILED ==="; docker system df || true; docker system events --since 1h --until 0s 2>/dev/null | tail -20 || true
-            [ $i = 3 ] && { echo "::error::postiz image pull failed"; exit 1; }
-            sleep 30
+            [ $i = 3 ] && break
+            sleep 60
           done
+          # attempt 2: if pinned failed, try previous working tag v2.25.2
+          if ! docker images ghcr.io/gitroomhq/postiz-app:v2.25.3 --format '{{.ID}}' 2>/dev/null | grep -q '^sha256:'; then
+            echo "=== v2.25.3 pull failed, trying v2.25.2 ==="
+            for i in 1 2; do
+              echo "=== fallback pull $i/2 (v2.25.2) ==="
+              if docker pull --platform linux/amd64 ghcr.io/gitroomhq/postiz-app:v2.25.2; then
+                echo "=== fallback pull OK ==="
+                docker images ghcr.io/gitroomhq/postiz-app --format '{{.Repository}}:{{.Tag}} {{.ID}} {{.Size}}'
+                break
+              fi
+              echo "=== fallback pull $i FAILED ==="; sleep 60
+            done
+          fi
+          # verify we have an image
+          if ! docker images ghcr.io/gitroomhq/postiz-app --format '{{.ID}}' 2>/dev/null | grep -q '^sha256:'; then
+            echo "::error::postiz image pull failed (all attempts)"
+            exit 1
+          fi
           echo "=== images after pull ==="; docker images ghcr.io/gitroomhq/postiz-app --format '{{.Repository}}:{{.Tag}} {{.ID}} {{.Size}}'
           docker run -d --name postiz --restart unless-stopped --network postiz-net -p 5070:5000 \
             -e MAIN_URL="http://localhost:5070" -e FRONTEND_URL="http://localhost:5070" \
