@@ -29,11 +29,12 @@ jobs:
           else
             NAME=gh-runner-aicontent-factory; RUNNER_NAME=pc-acf; LBL=pc; WORK=/tmp/runner/aicontent-factory; VOL=gh-runner-aicontent-factory-work
           fi
-          # t_5cdbb967 (критерий «пишущие пути вне слоя»): uv-кэш и xlv — в именованных томах
-          # (общий кэш между свапами: джобы не перекачивают ~1 ГБ uv-кэша заново). Ротация —
-          # штатный janitor purge_tmp (find /tmp -mmin +720), видит содержимое примаунченных томов.
-          docker volume create gh-runner-uv-cache >/dev/null 2>&1 || true
-          docker volume create gh-runner-xlv >/dev/null 2>&1 || true
+          # t_5cdbb967 (критерий «пишущие пути вне слоя»): uv-кэш и xlv — вне RW-слоя.
+          # t_fc4c96f9: кэши и workdir — bind-маунты на D: (D:\hermes-runner\docker-caches),
+          # чтобы vhdx docker_data.vhdx не рос; + RUNNER_EPHEMERAL=1 (--ephemeral):
+          # раннер сам deregister+выходит после джобы, janitor пересоздаёт с чистым RW.
+          # Ротация кэшей — janitor purge_tmp (find /tmp -mmin +720), видит bind-пути хоста.
+          mkdir -p /work/docker-caches/acf-uv-cache /work/docker-caches/xlv /work/docker-caches/runner-work/$(basename "$WORK")
           TMP="unbreak-$$"
           docker run -d --name "$TMP" --restart unless-stopped --dns 192.168.65.7 --dns 8.8.8.8 --dns 77.88.8.8 --cpus 4 --memory 4g \
             -e REPO_URL=https://github.com/mytab0r/aicontent-factory -e RUNNER_SCOPE=repo \
@@ -44,9 +45,10 @@ jobs:
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v "$NAME-data:/runner/data" \
             -v gh-runner-aicontent-factory-tools:/opt/hostedtoolcache \
-            -v gh-runner-uv-cache:/tmp/acf-uv-cache \
-            -v gh-runner-xlv:/tmp/xlv \
-            -v "$VOL:$WORK" \
+            -v /work/docker-caches/acf-uv-cache:/tmp/acf-uv-cache \
+            -v /work/docker-caches/xlv:/tmp/xlv \
+            -v /work/docker-caches/runner-work/$(basename "$WORK"):$WORK \
+            -e RUNNER_EPHEMERAL=1 \
             myoung34/github-runner:ubuntu-noble
           # дождаться регистрации нового
           for i in $(seq 1 60); do docker logs "$TMP" 2>&1 | grep -q "Listening for Jobs" && break; sleep 5; done
