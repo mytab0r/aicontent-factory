@@ -227,6 +227,36 @@ def test_llm_translate_all_dead_raises():
     _with_common_post(boom(404), fail)
 
 
+# ---------- t_b87507e0 rev2: content=None -> следующий, а не AttributeError ----------
+
+def test_llm_idea_content_null_goes_to_next_model():
+    """Первая модель отдаёт {"content": null} — не вылет, вторая отдаёт валидный JSON."""
+    idea_mod = load("01_idea.py")
+    idea_mod.MODELS = ["null-combo", "live"]
+    calls = []
+
+    def fake_post(path, payload, **kw):
+        calls.append((payload["model"], payload.get("max_tokens")))
+        content = None if payload["model"] == "null-combo" else '{"title": "x"}'
+        return {"choices": [{"message": {"content": content}}]}
+
+    idea_mod.router_post = fake_post
+    out, err = idea_mod.llm_idea("prompt")
+    assert err is None and out == {"title": "x"}, (out, err)
+    assert ("null-combo", 1500) in calls and calls[-1] == ("live", 1500), calls
+
+
+def test_llm_idea_all_content_null_names_model():
+    """Все модели вернули content=None -> (None, ошибка с именем модели), без исключения наружу."""
+    idea_mod = load("01_idea.py")
+    idea_mod.MODELS = ["null-a", "null-b"]
+    idea_mod.router_post = lambda path, payload, **kw: {"choices": [{"message": {"content": None}}]}
+    out, err = idea_mod.llm_idea("prompt")
+    assert out is None and err is not None, (out, err)
+    assert "null-b" in repr(err) or "content" in str(err), err
+
+
+
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"):

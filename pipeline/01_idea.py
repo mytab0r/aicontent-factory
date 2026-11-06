@@ -15,7 +15,9 @@ from watchdog import GENRE_IN_TITLE
 # ponytail: фолбэк по списку; квота gemini кончается -> следующая модель.
 # t_b87507e0 (30.10): glm без кредов (404) и cx/gpt-5.5 (400 unsupported) мертвы на 9router —
 # убраны из цепочки; auto-cheap-combo добавлен живым вторым фолбэком (проверено прямым запросом).
-MODELS = ["gemini/gemini-3.8-flash", "auto-worker-combo", "auto-cheap-combo"]
+# t_b87507e0 rev2 (04.11): gemini/"No active credentials" (404) в runs 41912902493/41751674923 —
+# убрана: каждый прогон платил +30 с probe за заведомо мёртвую модель.
+MODELS = ["auto-worker-combo", "auto-cheap-combo"]
 
 # Детерминированный фолбэк, если все LLM недоступны: сцены ротируются через
 # .state/fallback_idx.txt, чтобы заголовки не повторялись (anti-template).
@@ -224,9 +226,9 @@ def owning_idea() -> None:
 
 def llm_idea(prompt: str):
     """(idea | None, ошибка): модели по очереди, ```json-обёртка срезается."""
-    resp, err = None, None
+    err = None
     for model in MODELS:
-        if not model_alive(model, router_post):  # t_b87507e0: мёртвая (404/400) / лежащая (5xx) -> следующая
+        if not model_alive(model, router_post):  # мёртвая (404/400) / лежащая (5xx) -> следующая
             err = RuntimeError(f"{model}: probe failed (404/400/5xx)")
             continue
         try:
@@ -236,22 +238,22 @@ def llm_idea(prompt: str):
                 "max_tokens": 1500,
                 "stream": False,
             })
-            break
-        except RuntimeError as e:
+            # t_b87507e0 rev2: разбор ответа ВНУТРИ try у каждой модели — content=None
+            # (combo отдаёт {"content": null}) раньше вылетал AttributeError мимо fallback.
+            content = resp["choices"][0]["message"]["content"]
+            if not isinstance(content, str):
+                raise ValueError(f"content={content!r}")
+            content = content.strip()
+            if content.startswith("```"):
+                content = content.strip("`")
+                content = content.split("\n", 1)[1] if "\n" in content else content
+                if content.lower().startswith("json"):
+                    content = content[4:]
+            return json.loads(content), None
+        except (RuntimeError, ValueError, KeyError, IndexError, TypeError, json.JSONDecodeError) as e:
             print(f"model {model} failed: {e}"[:300])
             err = e
-    if resp is None:
-        return None, err
-    content = resp["choices"][0]["message"]["content"].strip()
-    if content.startswith("```"):
-        content = content.strip("`")
-        content = content.split("\n", 1)[1] if "\n" in content else content
-        if content.lower().startswith("json"):
-            content = content[4:]
-    try:
-        return json.loads(content), None
-    except json.JSONDecodeError as e:
-        return None, e
+    return None, err
 
 
 def main() -> None:
