@@ -1,0 +1,14 @@
+name: oneoff-bank-state
+on:
+  push:
+    branches: [ops/dtop]
+  workflow_dispatch:
+jobs:
+  bank:
+    runs-on: [self-hosted, release]
+    timeout-minutes: 10
+    steps:
+      - name: count
+        run: |
+          docker exec ace-step sh -c 'for g in /app/output/bank/*; do echo "$g $(ls -1 $g | wc -l)"; done' 2>&1 || \
+          docker run --rm -v /run/desktop/mnt/host/c:/c:ro alpine:3.20 sh -c 'for g in /c/dockerlocal/ace15/output/bank/*; do echo "$g $(ls -1 "$g" | wc -l)"; done'

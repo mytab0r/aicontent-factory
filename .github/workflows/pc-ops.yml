@@ -45,6 +45,9 @@ jobs:
           REG: ${{ secrets.RUNNER_REG_TOKEN }}
         run: |
           set -e
+          # t_fc4c96f9: caches and workdir -> D: bind mounts (D:\hermes-runner\docker-caches)
+          # prevents docker_data.vhdx growth; RUNNER_EPHEMERAL=1 makes runner exit after job
+          mkdir -p /work/docker-caches/acf-uv-cache /work/docker-caches/xlv /work/docker-caches/runner-work/acf-release
           docker rm -f gh-runner-acf-release 2>/dev/null || true
           docker run -d --name gh-runner-acf-release --restart unless-stopped --dns 192.168.65.7 --dns 8.8.8.8 --dns 77.88.8.8 --cpus 4 --memory 4g \
             -e REPO_URL=https://github.com/mytab0r/aicontent-factory -e RUNNER_SCOPE=repo \
@@ -54,9 +57,13 @@ jobs:
             -e ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE=/opt/actions-archive-cache -v gh-actions-archive-cache:/opt/actions-archive-cache \
             -v /var/run/docker.sock:/var/run/docker.sock -v gh-runner-acf-release-data:/runner/data \
             -v gh-runner-aicontent-factory-tools:/opt/hostedtoolcache \
-            -v gh-runner-acf-release-work:/tmp/runner/acf-release myoung34/github-runner:ubuntu-noble
+            -v /work/docker-caches/acf-uv-cache:/tmp/acf-uv-cache \
+            -v /work/docker-caches/xlv:/tmp/xlv \
+            -v /work/docker-caches/runner-work/acf-release:/tmp/runner/acf-release \
+            -e RUNNER_EPHEMERAL=1 \
+            myoung34/github-runner:ubuntu-noble
           # host /tmp/runner/* = tmpfs noexec (Docker Desktop VM): setup-uv падал spawn EACCES (t_3c5f3862).
-          # workdir теперь named volume (ext4, exec). Гейт: раннер обязан уметь исполнять файлы в workdir.
+          # workdir теперь bind mount на D: (ext4, exec). Гейт: раннер обязан уметь исполнять файлы в workdir.
           docker exec gh-runner-acf-release sh -c 'f=/tmp/runner/acf-release/.exec-probe; printf "#!/bin/sh\necho EXEC_OK\n" > $f && chmod +x $f && $f && rm -f $f' | grep -qx EXEC_OK || { echo "::error::workdir noexec"; exit 1; }
           for n in comfynet gpu-net; do docker network connect $n gh-runner-acf-release || true; done
           sleep 20; docker logs --tail 15 gh-runner-acf-release
@@ -67,6 +74,8 @@ jobs:
           set -e
           R="${{ inputs.name }}"
           test -n "$R" || { echo "::error::name required"; exit 1; }
+          # t_fc4c96f9: caches and workdir -> D: bind mounts; RUNNER_EPHEMERAL=1
+          mkdir -p /work/docker-caches/acf-uv-cache /work/docker-caches/xlv /work/docker-caches/runner-work/$R
           docker rm -f "gh-runner-$R" 2>/dev/null || true
           # config lives in this volume; without purge the old identity/labels get reused
           docker volume rm -f "gh-runner-$R-data" 2>/dev/null || true
@@ -79,7 +88,10 @@ jobs:
             -e ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE=/opt/actions-archive-cache -v gh-actions-archive-cache:/opt/actions-archive-cache \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v "gh-runner-$R-data:/runner/data" \
-            -v "gh-runner-$R-work:/tmp/runner/$R" \
+            -v /work/docker-caches/acf-uv-cache:/tmp/acf-uv-cache \
+            -v /work/docker-caches/xlv:/tmp/xlv \
+            -v /work/docker-caches/runner-work/$R:/tmp/runner/$R \
+            -e RUNNER_EPHEMERAL=1 \
             myoung34/github-runner:ubuntu-noble
           docker exec "gh-runner-$R" sh -c 'f=/tmp/runner/.exec-probe; printf "#!/bin/sh\necho EXEC_OK\n" > $f && chmod +x $f && $f && rm -f $f' | grep -qx EXEC_OK || { echo "::error::workdir noexec"; exit 1; }
           sleep 20; docker logs --tail 15 "gh-runner-$R"
@@ -115,10 +127,13 @@ jobs:
           # (см. вывод ниже) — headless-сессия это сделать не может (OAuth consent screen edit).
           YT_ID=$(python3 -c "import json,os; print(json.loads(os.environ['YOUTUBE_TOKEN_JSON']).get('client_id',''))")
           YT_SECRET=$(python3 -c "import json,os; print(json.loads(os.environ['YOUTUBE_TOKEN_JSON']).get('client_secret',''))")
-          for i in 1 2 3; do
+          # root-cause: t_1d4fa058 — Docker Desktop containerd/overlayfs bug on Windows:
+          # layers download but fail commit with "no such file or directory" in snapshotter.
+          # Fix: 5 retries (was 3), 30s delay (was 15s).
+          for i in 1 2 3 4 5; do
             docker pull ghcr.io/gitroomhq/postiz-app:latest && break
-            [ $i = 3 ] && { echo "::error::postiz image pull failed"; exit 1; }
-            sleep 15
+            [ $i = 5 ] && { echo "::error::postiz image pull failed after 5 retries"; exit 1; }
+            sleep 30
           done
           docker run -d --name postiz --restart unless-stopped --network postiz-net -p 5070:5000 \
             -e MAIN_URL="http://localhost:5070" -e FRONTEND_URL="http://localhost:5070" \
