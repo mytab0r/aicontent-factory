@@ -1,0 +1,71 @@
+name: create-repo-runner
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: "GitHub repo name under mytab0r (e.g. hermes-scripts)"
+        required: true
+        type: string
+      cname:
+        description: "runner name suffix (pc-gh-runner-<cname>)"
+        required: true
+        type: string
+      reg_token:
+        description: "GitHub runner registration token for the repo"
+        required: true
+        type: string
+      labels:
+        description: "runner labels (comma-separated)"
+        default: "pc,ci"
+        type: string
+jobs:
+  restore:
+    runs-on: [self-hosted, pc]
+    timeout-minutes: 15
+    steps:
+      - name: Stop and remove old container
+        run: |
+          docker stop gh-runner-${{ inputs.cname }} 2>/dev/null || true
+          docker rm -f gh-runner-${{ inputs.cname }} 2>/dev/null || true
+          docker volume rm gh-runner-${{ inputs.cname }}-data gh-runner-${{ inputs.cname }}-work gh-runner-${{ inputs.cname }}-tools 2>/dev/null || true
+          sleep 2
+      - name: Create runner
+        env:
+          REG_TOKEN: ${{ inputs.reg_token }}
+          CNAME: ${{ inputs.cname }}
+          REPO: ${{ inputs.repo }}
+          LABELS: ${{ inputs.labels }}
+        run: |
+          docker run -d --name "gh-runner-$CNAME" --restart unless-stopped \
+            --dns 192.168.65.7 --dns 8.8.8.8 --dns 77.88.8.8 \
+            --cpus 4 --memory 6g \
+            -e REPO_URL=https://github.com/mytab0r/$REPO \
+            -e RUNNER_SCOPE=repo \
+            -e RUNNER_NAME=pc-gh-runner-$CNAME \
+            -e LABELS="$LABELS" \
+            -e STARTUP_SCRIPT_SCRIPT="echo noop" \
+            -e RUNNER_TOKEN="$REG_TOKEN" \
+            -e RUNNER_WORKDIR=/tmp/runner/$CNAME \
+            -e CONFIGURED_ACTIONS_RUNNER_FILES_DIR=/runner/data \
+            -e DISABLE_AUTOMATIC_DEREGISTRATION=true \
+            -e ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE=/opt/actions-archive-cache \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v gh-runner-$CNAME-data:/runner/data \
+            -v gh-runner-$CNAME-work:/tmp/runner/$CNAME \
+            myoung34/github-runner:ubuntu-noble
+      - name: Wait for runner ready
+        env:
+          CNAME: ${{ inputs.cname }}
+        run: |
+          for i in $(seq 1 40); do
+            sleep 5
+            ST=$(docker inspect "gh-runner-$CNAME" --format '{{.State.Status}}' 2>/dev/null || true)
+            echo "t=$((i*5))s state: ${ST:-gone}"
+            if [ "$ST" = "running" ]; then
+              docker logs --tail 30 "gh-runner-$CNAME" 2>&1 | grep -q "Listening for Jobs" && { echo "Runner ready"; exit 0; }
+            fi
+            case "$ST" in exited*|dead*) echo "=== runner died, logs:"; docker logs --tail 80 "gh-runner-$CNAME" 2>&1; exit 1;; esac
+          done
+          echo "Timeout waiting for runner after 200s"
+          docker logs --tail 100 "gh-runner-$CNAME" 2>&1
+          exit 1
