@@ -71,7 +71,7 @@ swap_runner() {
   docker volume create gh-runner-uv-cache >/dev/null; docker volume create gh-runner-xlv >/dev/null
   docker rm -f "$n-old" >/dev/null 2>&1
   docker stop -t 60 "$n" >/dev/null && docker rename "$n" "$n-old" || { rm -f "$envf"; docker start "$n" >/dev/null 2>&1; return; }
-  docker run -d --name "$n" --restart unless-stopped --dns 192.168.65.7 --dns 8.8.8.8 --dns 77.88.8.8 --cpus 4 --memory 4g \
+  docker run -d --name "$n" --restart unless-stopped --dns 192.168.65.7 --dns 8.8.8.8 --dns 77.88.8.8 --cpus 4 --memory 6g \
     --env-file "$envf" -e CONFIGURED_ACTIONS_RUNNER_FILES_DIR=/runner/data -e AGENT_TOOLSDIRECTORY=/opt/hostedtoolcache \
     -e ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE=/opt/actions-archive-cache -v gh-actions-archive-cache:/opt/actions-archive-cache \
     -v /var/run/docker.sock:/var/run/docker.sock -v "$n-data:/runner/data" \
@@ -93,16 +93,16 @@ swap_runner() {
   fi
 }
 # t_8ba1bcfb: 28.10 18:33Z массовый `docker update` (источник вне репо) опустил все gh-runner-* до 1G/1CPU ->
-# job test на acf-раннерах ловит SIGKILL ffmpeg (OOM) в test_publish_gated. Эталон лимита = 4g/4cpu
+# job test на acf-раннерах ловит SIGKILL ffmpeg (OOM) в test_publish_gated. Эталон лимита = 6g/4cpu
 # (pc-ops.yml, runner-unbreak.yml, swap_runner ниже). Каждый цикл возвращаем эталон; update живой, без рестарта.
 # ponytail: только acf-раннеры; другие репо — добавить имя в список.
 ACF_RUNNERS='gh-runner-acf-release gh-runner-aicontent-factory gh-runner-acf-ci'
 enforce_limits() {
   for n in $ACF_RUNNERS; do
     m=$(docker inspect -f '{{.HostConfig.Memory}}' "$n" 2>/dev/null) || continue
-    [ "$m" -ge 4294967296 ] && continue
-    docker update --memory 4g --memory-swap 4g --cpus 4 "$n" >/dev/null 2>&1 \
-      && echo "RUNNER LIMITS RESTORED $n mem=$m -> 4g $(date -u +%FT%TZ)" || echo "RUNNER LIMITS RESTORE FAILED $n $(date -u +%FT%TZ)"
+    [ "$m" -ge 6442450944 ] && continue
+    docker update --memory 6g --memory-swap 6g --cpus 4 "$n" >/dev/null 2>&1 \
+      && echo "RUNNER LIMITS RESTORED $n mem=$m -> 6g $(date -u +%FT%TZ)" || echo "RUNNER LIMITS RESTORE FAILED $n $(date -u +%FT%TZ)"
   done
 }
 while true; do
