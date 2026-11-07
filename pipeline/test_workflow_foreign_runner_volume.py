@@ -12,7 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 WFS = ROOT / ".github/workflows"
-RUNNER_ADMIN = {"pc-ops.yml", "runner-unbreak.yml"}  # создают контейнеры раннеров
+RUNNER_ADMIN = {"pc-ops.yml", "runner-unbreak.yml", "create-repo-runner.yml"}  # создают контейнеры раннеров
 BAD = re.compile(r"-v\s+\"?(gh-runner-[\w.$-]*-work|\$\{?VOL\}?)\"?:")
 
 
