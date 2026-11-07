@@ -121,6 +121,23 @@ jobs:
             -e POSTGRES_PASSWORD=postiz-local-pw -e POSTGRES_USER=postiz-user -e POSTGRES_DB=postiz-db-local \
             -v /run/desktop/mnt/host/c/dockerlocal/postiz/pg-data:/var/lib/postgresql/data postgres:17-alpine
           docker run -d --name postiz-redis --restart unless-stopped --network postiz-net redis:7-alpine
+          # root-cause: t_1d4fa058 follow-up — Postiz v2 backend требует Temporal (grpc 7233);
+          # без него backend падает "Backend failed to start on port 3000" / grpc
+          # ECONNREFUSED ::1:7233, pm2 при этом online — контейнер Up, сервис мёртв.
+          # Lean temporal-стек (как в postiz docker-compose): temporal-postgresql + temporal,
+          # без elasticsearch/admin-tools/ui.
+          docker run -d --name temporal-postgresql --restart unless-stopped --network postiz-net \
+            -e POSTGRES_PASSWORD=temporal -e POSTGRES_USER=temporal postgres:16
+          docker run -d --name temporal --restart unless-stopped --network postiz-net \
+            -e DB=postgres12 -e DB_PORT=5432 -e POSTGRES_USER=temporal -e POSTGRES_PWD=temporal \
+            -e POSTGRES_SEEDS=temporal-postgresql -e TEMPORAL_NAMESPACE=default \
+            temporalio/auto-setup:1.28.1
+          for i in $(seq 1 60); do
+            sleep 5
+            if docker logs --tail 300 temporal 2>&1 | grep -q 'Started frontend'; then break; fi
+          done
+          echo "=== temporal ready check ==="
+          docker logs --tail 300 temporal 2>&1 | grep -q 'Started frontend' || { echo "::error::temporal frontend not started"; docker logs --tail 60 temporal 2>&1; exit 1; }
           # YOUTUBE_TOKEN_JSON — authorized_user creds (Desktop OAuth client владельца),
           # содержит client_id/client_secret. Postiz может переиспользовать тот же client,
           # но нужен ОДИН ручной шаг владельца: добавить Web redirect URI в GCP Console
@@ -141,6 +158,7 @@ jobs:
             -e JWT_SECRET="$(head -c32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9')" \
             -e DATABASE_URL="postgresql://postiz-user:postiz-local-pw@postiz-postgres:5432/postiz-db-local" \
             -e REDIS_URL="redis://postiz-redis:6379" -e IS_GENERAL=true -e DISABLE_REGISTRATION=false \
+            -e TEMPORAL_ADDRESS="temporal:7233" \
             -e STORAGE_PROVIDER=local -e UPLOAD_DIRECTORY=/uploads -e NEXT_PUBLIC_UPLOAD_DIRECTORY=/uploads \
             -e YOUTUBE_CLIENT_ID="$YT_ID" -e YOUTUBE_CLIENT_SECRET="$YT_SECRET" \
             -v /run/desktop/mnt/host/c/dockerlocal/postiz/uploads:/uploads \
@@ -153,6 +171,14 @@ jobs:
           done
           echo "=== postiz containers ==="
           docker ps --filter name=postiz --format '{{.Names}} {{.Status}}'
+          # assertion: backend реально поднялся (контейнер Up != сервис жив): умирающие
+          # pm2 пишут "Backend failed to start on port 3000" и остаётся online
+          sleep 30
+          if docker logs --tail 500 postiz 2>&1 | grep -q "Backend failed to start"; then
+            echo "::error::postiz backend failed to start (grpc/temporal not reachable)"
+            docker logs --tail 100 postiz 2>&1 | tail -60
+            exit 1
+          fi
           echo "Redirect URI для Google Cloud Console (OAuth client -> Authorized redirect URIs -> добавить):"
           echo "  http://localhost:5070/api/integrations/social/youtube/callback"
 
