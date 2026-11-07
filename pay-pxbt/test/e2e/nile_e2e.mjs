@@ -21,8 +21,9 @@ const need = (k) => { const v = e[k]; if (!v) { console.error(`nile e2e: missing
 const PAYER_PRIV = need('PAYER_PRIV');
 const MERCHANT = need('MERCHANT');
 const USDT = need('NILE_USDT_CONTRACT');
-const { findPayments } = await import(new URL('../../../functions/lib/paycheck.js', import.meta.url).href);
+// база tronscan читается при импорте модуля — переопределение обязано быть ДО него
 globalThis.TRONSCAN_BASE_ENV = () => e.NILE_TRONSCAN || 'https://nileapi.tronscan.org';
+const { findPayments } = await import(new URL('../../../functions/lib/paycheck.js', import.meta.url).href);
 
 // --- keccak256 (fIPS-независимый, padding 0x01) — без зависимостей
 function keccak256(data) {
@@ -66,7 +67,7 @@ function keccak256(data) {
 
 // --- secp256k1 (pubkey derive + ECDSA sign RFC6979) — без зависимостей
 const P = (1n << 256n) - 0x1000003d1n;
-const N = 0xfffffffffffffffffffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
+const N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141n;
 const Gx = 0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798n;
 const Gy = 0x483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8n;
 const G = [Gx, Gy];
@@ -110,7 +111,8 @@ function ecdsaSign(privBig, msgHash) {
     if (r === 0n) { continue; }
     const s = mod(invm(k, N) * (z + r * privBig) % N, N);
     if (s === 0n) { continue; }
-    return { r, s: s > N / 2n ? N - s : s, rec: (R[1] & 1n) | (R[0] >= N ? 2n : 0n) };
+    const half = s > N / 2n;
+    return { r, s: half ? N - s : s, rec: ((R[1] & 1n) | (R[0] >= N ? 2n : 0n)) ^ (half ? 1n : 0n) };
   }
 }
 
@@ -161,19 +163,24 @@ const createdMs = Date.now();
 console.log('invoice(local): dueMicro =', dueMicro.toString());
 
 // --- 2) перевод ровно dueMicro USDT мерчанту
-const param = 'a9059cbb' + '0'.repeat(24) + merchantBytes.subarray(1, 21).toString('hex') + dueMicro.toString(16).padStart(64, '0');
+// селектор a9059cbb узел добавляет сам — в parameter только аргументы
+const param = '0'.repeat(24) + merchantBytes.subarray(1, 21).toString('hex') + dueMicro.toString(16).padStart(64, '0');
 const tx = await post('/wallet/triggersmartcontract', {
   owner_address: PAYER, contract_address: USDT, function_selector: 'transfer(address,uint256)',
   parameter: param, fee_limit: 100_000_000, call_value: 0, visible: true,
 });
 assert.ok(tx.transaction && tx.result?.result !== false, 'trigger: ' + JSON.stringify(tx).slice(0, 300));
 const raw = tx.transaction;
-const hash = keccak256(Buffer.from(raw.raw_data_hex, 'hex'));
-const { r, s } = ecdsaSign(privBig, hash);
-const der = (n) => { const h = n.toString(16); let b = Buffer.from(h.length % 2 ? '0' + h : h, 'hex'); while (b.length > 1 && b[0] === 0) b = b.subarray(1); if (b[0] & 0x80) b = Buffer.concat([Buffer.from([0]), b]); return b; };
-const sig = Buffer.concat([Buffer.from([0x30, der(r).length + der(s).length + 4, 2, der(r).length]), der(r), Buffer.from([2, der(s).length]), der(s)]);
-raw.signature = [sig.toString('hex')];
-const bcast = await post('/wallet/broadcasttransaction', raw);
+const hash = crypto.createHash('sha256').update(Buffer.from(raw.raw_data_hex, 'hex')).digest(); // TRON: txID = sha256(raw_data)
+const { r, s, rec } = ecdsaSign(privBig, hash);
+const hx = (n) => n.toString(16).padStart(64, '0');
+const mk = (v) => Buffer.from(hx(r) + hx(s) + v.toString(16).padStart(2, '0'), 'hex').toString('hex');
+let bcast = null;
+for (const v of [Number(rec & 1n), Number(rec & 1n) ^ 1]) {
+  raw.signature = [mk(v)];
+  bcast = await post('/wallet/broadcasttransaction', raw);
+  if (bcast.result === true) break;
+}
 assert.strictEqual(bcast.result, true, 'broadcast: ' + JSON.stringify(bcast));
 console.log('nile tx:', bcast.txid);
 
