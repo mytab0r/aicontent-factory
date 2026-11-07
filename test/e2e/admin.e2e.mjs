@@ -361,6 +361,8 @@ await scenario('S6 evm: закрыл модалку — кнопка актив�
             getState: () => st,
             open: async () => { st.open = true; },
             close: async () => { st.open = false; },
+            //.getAddress: не даём appkitEvm ждать addr вечно — закрываемся сразу после close()
+            getAccount: () => (st.open ? null : { address: "0x123", isConnected: true }),
           },
         };
       });
