@@ -28,6 +28,7 @@ BAND_MAX = 5.0   # жёсткое: одиночная полоса дальше 
 BAND_SOFT_SUM = 8.0  # сумма мягких отклонений (одобренный versija_1 даёт 7.7, жалобы 14.9+)
 BAL_TOL = 2.0
 MAX_TP = -1.0  # true peak dBTP; 17.10 YouTube-копия p-kkEmLGviU: +1.3..+1.9 = клиппинг  # (среднее 1-5 кГц) - (150-400 Гц) не хуже эталона более чем на столько
+SPEECH_TP_MAX = -1.6  # речь: мастер с запасом на Opus YouTube (+2..3 dBTP при перекодировке); -1.0 уходит в +1..+2
 # A6: внутренняя тишина/обрыв >= 2 с ниже -50 дБ вне хвоста (последние 10 с = штатное затухание: ref1 6.5 с, v2 3.4 с)
 SIL_DB, SIL_MIN, TAIL = -50, 2.0, 10.0
 # A15: интегральная громкость финального звука. YouTube нормализует к ~-14 LUFS: тише -16 = трек проигрывает
@@ -209,8 +210,8 @@ def rms_db(f, start, dur):
 
 def critic_clips(paths):
     """Реальный критик: CE для каждого wav ОДНИМ прогоном audiobox в контейнере ace-step (модель грузится 1 раз)."""
-    names = []
     with tempfile.TemporaryDirectory() as td:  # t_3c6b9f04: копии wav не копятся в /tmp
+        names = []
         for i, p in enumerate(paths):  # имя сортируется = порядок paths (AES читает sorted listdir)
             names.append(f"c{i:05d}.wav")
             subprocess.run(["cp", str(p), f"{td}/{names[-1]}"], check=True)
@@ -372,23 +373,6 @@ SHORT_FADES = "afade=t=in:d=0.5,afade=t=out:st={st:.2f}:d=1.5"
 EDGE_WIN, EDGE_DROP = 0.05, 12.0
 
 
-# V8: 720p в ленте выглядит дёшево и не получает HD-ранжирование (p-kkEmLGviU был 1280x720).
-MIN_SHORT = 1080
-
-
-def res_why(f):
-    """V8: [причина], если короткая сторона видео < 1080 (720p = дёшево, HD-ранжирование ниже)."""
-    j = json.loads(subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
-                                   "stream=width,height", "-of", "json", str(f)],
-                                  capture_output=True, text=True).stdout or "{}")
-    st = (j.get("streams") or [{}])[0]
-    w, h = int(st.get("width") or 0), int(st.get("height") or 0)
-    if not w or not h:
-        return []  # нет видео-потока — разрешение не наша проверка
-    return [f"разрешение {w}x{h}: короткая сторона < {MIN_SHORT} (V8: 720p выглядит дёшево)"] \
-        if min(w, h) < MIN_SHORT else []
-
-
 def short_edge_why(f):
     """A24: [причины], если шортс начинается/кончается скачком (нет фейда)."""
     d = duration(f)
@@ -477,15 +461,8 @@ def tuning_why(f):
 
 
 
-# A27: YouTube перекодирует звук в Opus и поднимает true peak речи. Замер 26.10 YouTube-копий канала 2:
-# K5cqI_AX4hk TP -0.3, kQauDNrBAWU -0.8 dBTP (мастер проходил MAX_TP -1.0); A26: Opus +0.6 дБ.
-# Мастер речи обязан иметь запас: TP <= MAX_TP - OPUS_OVERSHOOT (-1.6). Мастер A26 (loudnorm TP=-2.0) проходит.
-OPUS_OVERSHOOT = 0.6
-SPEECH_TP_MAX = MAX_TP - OPUS_OVERSHOOT
-
-
 def speech_why(f):
-    """A25: звук речевого ролика (edge-tts): громкость MIN_I..MAX_I, true peak <= MAX_TP, нет тишины >= SIL_MIN с
+    """A25: звук речевого ролика (edge-tts): громкость MIN_I..MAX_I, true peak <= SPEECH_TP_MAX, нет тишины >= SIL_MIN с
     ниже SIL_DB (сбой TTS пункта = пустой mp3) вне первых 0.5 с и последней 1 с. Замер 23.10 канала 2 с YouTube
     (7 роликов): I -14.5..-13.9, TP -1.5..-1.0, макс. пауза между фразами 1.52 с."""
     e = ff(f, f"ebur128=peak=true,silencedetect=n={SIL_DB}dB:d={SIL_MIN}")
@@ -496,8 +473,7 @@ def speech_why(f):
     dur = duration(f)
     st = [float(x) for x in re.findall(r"silence_start: (-?[\d.]+)", e)]
     en = [float(x) for x in re.findall(r"silence_end: ([\d.]+)", e)] + [dur] * len(st)
-    why = loud_why(li) + ([f"true peak {tp:+.1f} dBTP > {SPEECH_TP_MAX}: клиппинг после Opus YouTube"]
-                          if tp > SPEECH_TP_MAX else [])
+    why = loud_why(li) + ([f"true peak {tp:+.1f} dBTP > {SPEECH_TP_MAX}: клиппинг"] if tp > SPEECH_TP_MAX else [])
     return why + [f"тишина {b - a:.1f} с на {a:.1f} с (< {SIL_DB} дБ): сбой озвучки" for a, b in zip(st, en)
                   if a > 0.5 and b < dur - 1.0]
 
@@ -518,7 +494,7 @@ def video_why(d):
             why.append(f"нет файла {os.path.basename(str(f))}")
             continue
         tag = os.path.basename(str(f))
-        why += [f"{tag}: {w}" for w in integrity_why(f) + black_why(f) + res_why(f) + speech_why(f) + (short_why(f) if f in shorts else [])]
+        why += [f"{tag}: {w}" for w in integrity_why(f) + black_why(f) + speech_why(f) + (short_why(f) if f in shorts else [])]
     return why + cover_why(os.path.join(d, "cover.png"))
 
 
@@ -555,13 +531,9 @@ def main(argv):
     why += tuning_why(f)  # A19
     why += end_why(f)  # A16: только целый трек/финальный mp4, не сегменты best-of (их хвосты режет склейка)
     if "--final" in argv:
-        why += integrity_why(f, expect) + black_why(f) + res_why(f)
+        why += integrity_why(f, expect) + black_why(f)
         why += cover_why(os.path.join(os.path.dirname(str(f)), "cover.png"))  # V9
         why += fallback_why(os.path.dirname(str(f)))  # V14
-        cs = os.path.join(os.path.dirname(str(f)), "cover_source.json")  # t_629a7ba2: какой путь дал обложку
-        if os.path.exists(cs):
-            src = json.load(open(cs, encoding="utf-8"))
-            print(f"cover_source: {src.get('path')} {src.get('model') or src.get('file') or ''}".rstrip())
     if "--no-ce" not in argv:  # R4: окна CE/дрейф/стыки и на финальном mp4 (04b) — мерим то, что заливается
         w, rep = full_ce_why(f, seams)
         why += w

@@ -115,6 +115,7 @@ async function appkitEvm() {
     if (isTelegramWebView()) {
       throw Object.assign(new Error('кошелёк не найден'), { nowallet: true });
     }
+    log('✘ кошелёк не найден — открываю WalletConnect');
     await m.open();
     // Модалку закрыли — выходим сразу ({code:4001,connect:true}), иначе кнопка висит disabled до 180 с.
     for (let t = 0; !addr(); t += 500) {
