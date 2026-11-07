@@ -110,7 +110,7 @@ jobs:
   # System.AggregateException "… (An error occurred while sending the request.)" без реальной
   # ошибки шагов. Проверяем логи упавших jobs текущего прогона и перезапускаем совпавшие.
   runner-restore:
-    needs: [test, pay-image-smoke, e2e-admin, ci-bypass-lint]
+    needs: [test, ci-bypass-lint]
     if: ${{ !cancelled() }}
     runs-on: [self-hosted, ci]
     permissions:
