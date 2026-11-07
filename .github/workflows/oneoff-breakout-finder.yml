@@ -1,0 +1,40 @@
+name: oneoff-breakout-finder
+# S1 ch2 (t_2918b2ce): read-only YouTube Data API (search/channels/videos), хиты >=10x медианы
+# молодых каналов + занятость идей по топ-10. Результат = JSON в логе между маркерами (артефакты не используем).
+# push в exp/breakout-*: нет config/ch2_ideas.json -> scan, есть -> check. На master — только ручной dispatch.
+on:
+  push:
+    branches: ["exp/breakout-*"]
+    paths: ["scripts/breakout_finder.py", "config/ch2_ideas.json", ".github/workflows/oneoff-breakout-finder.yml"]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "scan | check"
+        required: true
+        default: scan
+      args:
+        description: "доп. аргументы (бюджет квоты на весь S1 <= 3000 ед.)"
+        required: false
+        default: "--budget 950"
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  run:
+    runs-on: [self-hosted, release]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: breakout_finder
+        env:
+          YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
+          MODE: ${{ inputs.mode }}
+          ARGS: ${{ inputs.args }}
+        run: |
+          set -e
+          if [ -z "$MODE" ]; then
+            if [ -f config/ch2_ideas.json ]; then MODE=check; ARGS="--budget 2050"; else MODE=scan; ARGS="--budget 950 --max-channels 7"; fi
+          fi
+          python3 scripts/breakout_finder.py "$MODE" $ARGS

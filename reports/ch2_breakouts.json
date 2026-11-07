@@ -1,0 +1,1008 @@
+{
+ "task": "t_2918b2ce",
+ "generated": "2026-10-23T11:28:09Z",
+ "method": {
+  "api": "YouTube Data API v3 read-only: search.list/channels.list/videos.list",
+  "seed_queries": "how did ancient humans|why it sucked to be",
+  "window_days": 30,
+  "channel_filter": "age<365d and views of last-30d uploads >=500k (lower bound: sum of views of channel videos published in 30d)",
+  "breakout_rule": "views >= 10 x median of channel's last 50 uploads",
+  "occupancy_rule": "top-10 search: any >50k = taken; all <100 = dead; max <1000 = dead (copies flopped); else free",
+  "runs": {
+   "scan": "https://github.com/mytab0r/aicontent-factory/actions/runs/39945368319",
+   "check": "https://github.com/mytab0r/aicontent-factory/actions/runs/39946536760"
+  },
+  "quota": {
+   "scan": 911,
+   "check": 2020,
+   "total": 2931,
+   "limit": 3000
+  }
+ },
+ "channels": [
+  {
+   "channel_id": "UCdUGzALyAlr6XEZwFWHj1FQ",
+   "channel": "Relic Explains",
+   "created": "2026-02-25T16:26:24.751846Z",
+   "age_days": 239,
+   "subs": 12800,
+   "videos_total": 63,
+   "views_30d_lower_bound": 4774394,
+   "sample": 50,
+   "median_views": 2117.5
+  },
+  {
+   "channel_id": "UCPHYLJ0gdwUx6b0-Aj67YIA",
+   "channel": "MadeMind🧠🏭",
+   "created": "2026-09-09T16:34:23.872354Z",
+   "age_days": 43,
+   "subs": 1850,
+   "videos_total": 23,
+   "views_30d_lower_bound": 996848,
+   "sample": 23,
+   "median_views": 857.0
+  },
+  {
+   "channel_id": "UCe-uK6pOf12Slgw4grbxRAg",
+   "channel": "Stickstory",
+   "created": "2026-07-28T06:35:57.647621Z",
+   "age_days": 87,
+   "subs": 3140,
+   "videos_total": 42,
+   "views_30d_lower_bound": 922107,
+   "sample": 42,
+   "median_views": 283.0
+  },
+  {
+   "channel_id": "UC0kxHrdeg0mDPmgWCR_aXyQ",
+   "channel": "Whatlume ",
+   "created": "2026-06-12T09:43:30.025588Z",
+   "age_days": 133,
+   "subs": 1660,
+   "videos_total": 73,
+   "views_30d_lower_bound": 710003,
+   "sample": 50,
+   "median_views": 2738.5
+  },
+  {
+   "channel_id": "UCofDJBELO-cQNNcUb-mjZAg",
+   "channel": "Ottoman Days",
+   "created": "2026-09-30T09:55:14.451901Z",
+   "age_days": 23,
+   "subs": 1850,
+   "videos_total": 11,
+   "views_30d_lower_bound": 619166,
+   "sample": 11,
+   "median_views": 13609.0
+  },
+  {
+   "channel_id": "UCQG1wqGihdlBLabhTuLvs0w",
+   "channel": "Reality Infinite",
+   "created": "2026-09-05T09:07:20.589659Z",
+   "age_days": 48,
+   "subs": 2830,
+   "videos_total": 8,
+   "views_30d_lower_bound": 479946,
+   "sample": 8
+  },
+  {
+   "channel_id": "UCaL6W6VZ9Vei4uCR698_44g",
+   "channel": "Bro Said So",
+   "created": "2026-02-10T18:57:15.174828Z",
+   "age_days": 254,
+   "subs": 1360,
+   "videos_total": 28,
+   "views_30d_lower_bound": 406766,
+   "sample": 28
+  }
+ ],
+ "hits": [
+  {
+   "channel": "Stickstory",
+   "channel_median_views": 283.0,
+   "video": "What Did Ancient Humans Do For Pleasure?",
+   "url": "https://www.youtube.com/watch?v=zK2jFCC3BhA",
+   "views": 916479,
+   "multiple": 3238.44,
+   "question_template": "What ancient humans actually did",
+   "published": "2026-09-23T16:25:04Z",
+   "channel_age_days": 87
+  },
+  {
+   "channel": "Relic Explains",
+   "channel_median_views": 2117.5,
+   "video": "Why Did Humans Start Wearing Clothes?",
+   "url": "https://www.youtube.com/watch?v=H_j0YTL_hwM",
+   "views": 4039925,
+   "multiple": 1907.87,
+   "question_template": "Why did humans start X",
+   "published": "2026-10-06T17:00:39Z",
+   "channel_age_days": 239
+  },
+  {
+   "channel": "MadeMind🧠🏭",
+   "channel_median_views": 857.0,
+   "video": "How Did Early Humans Build Their First Homes? 🌧️🛖 #shorts",
+   "url": "https://www.youtube.com/watch?v=eH8GAtnwr9I",
+   "views": 882220,
+   "multiple": 1029.43,
+   "question_template": "How did humans X",
+   "published": "2026-10-16T14:31:16Z",
+   "channel_age_days": 43
+  },
+  {
+   "channel": "Whatlume ",
+   "channel_median_views": 2738.5,
+   "video": "How Did Ancient Humans Sleep With Thousands Of Mosquitoes Around?",
+   "url": "https://www.youtube.com/watch?v=gfQwTOilk8o",
+   "views": 648984,
+   "multiple": 236.99,
+   "question_template": "How did humans X",
+   "published": "2026-09-23T21:00:29Z",
+   "channel_age_days": 133
+  },
+  {
+   "channel": "MadeMind🧠🏭",
+   "channel_median_views": 857.0,
+   "video": "How Did Early Humans Survive the Night? 🌙🔥#shorts",
+   "url": "https://www.youtube.com/watch?v=EZt2AhQ6sxw",
+   "views": 97964,
+   "multiple": 114.31,
+   "question_template": "How did humans X",
+   "published": "2026-10-18T13:42:04Z",
+   "channel_age_days": 43
+  },
+  {
+   "channel": "Relic Explains",
+   "channel_median_views": 2117.5,
+   "video": "How Did Humans Invent the Toilet?",
+   "url": "https://www.youtube.com/watch?v=3jH6KyQ-wWA",
+   "views": 242003,
+   "multiple": 114.29,
+   "question_template": "How did humans X",
+   "published": "2026-10-16T17:00:13Z",
+   "channel_age_days": 239
+  },
+  {
+   "channel": "Relic Explains",
+   "channel_median_views": 2117.5,
+   "video": "Why Did Humans Start Hiding Sex-and When?",
+   "url": "https://www.youtube.com/watch?v=Bne68fpdiB0",
+   "views": 208975,
+   "multiple": 98.69,
+   "question_template": "Why did humans start X",
+   "published": "2026-10-08T17:00:12Z",
+   "channel_age_days": 239
+  },
+  {
+   "channel": "Stickstory",
+   "channel_median_views": 283.0,
+   "video": "How The Ancient Humans Survived Ice Age? Top Creaziest Methods.",
+   "url": "https://www.youtube.com/watch?v=wIbT13ccfdI",
+   "views": 14888,
+   "multiple": 52.61,
+   "question_template": "How did humans X",
+   "published": "2026-09-17T19:00:25Z",
+   "channel_age_days": 87
+  },
+  {
+   "channel": "Ottoman Days",
+   "channel_median_views": 13609.0,
+   "video": "Why It Sucked to Be the Sultan's Daughter (in the Ottoman Empire)",
+   "url": "https://www.youtube.com/watch?v=CTCTAW5o5Zk",
+   "views": 426373,
+   "multiple": 31.33,
+   "question_template": "Why it sucked to be X",
+   "published": "2026-10-01T20:45:02Z",
+   "channel_age_days": 23
+  },
+  {
+   "channel": "Stickstory",
+   "channel_median_views": 283.0,
+   "video": "How Did Ancient Women Handle Their Periods? Top Used Techniques.",
+   "url": "https://www.youtube.com/watch?v=0j7rXFVueCI",
+   "views": 8433,
+   "multiple": 29.8,
+   "question_template": "How did humans X",
+   "published": "2026-09-22T21:35:16Z",
+   "channel_age_days": 87
+  },
+  {
+   "channel": "Relic Explains",
+   "channel_median_views": 2117.5,
+   "video": "What Evolution Made Women Actually Want. (Why Women Never Want Alpha Male)",
+   "url": "https://www.youtube.com/watch?v=JUqPaPgxt8U",
+   "views": 52826,
+   "multiple": 24.95,
+   "question_template": "other",
+   "published": "2026-10-12T17:00:21Z",
+   "channel_age_days": 239
+  },
+  {
+   "channel": "Relic Explains",
+   "channel_median_views": 2117.5,
+   "video": "How Did Ancient Humans Know Incest Was Wrong?",
+   "url": "https://www.youtube.com/watch?v=3C8MGoMqFmM",
+   "views": 37503,
+   "multiple": 17.71,
+   "question_template": "How did humans X",
+   "published": "2026-10-02T17:00:09Z",
+   "channel_age_days": 239
+  },
+  {
+   "channel": "Stickstory",
+   "channel_median_views": 283.0,
+   "video": "What Did Ancient Humans Actually Do All Day?",
+   "url": "https://www.youtube.com/watch?v=z_CHZydLXrE",
+   "views": 4717,
+   "multiple": 16.67,
+   "question_template": "What ancient humans actually did",
+   "published": "2026-09-15T18:00:24Z",
+   "channel_age_days": 87
+  },
+  {
+   "channel": "Stickstory",
+   "channel_median_views": 283.0,
+   "video": "Ancient Humans Were Easy Prey — Why Animals Still Fear Humans",
+   "url": "https://www.youtube.com/watch?v=mAIT6Pza9_o",
+   "views": 3911,
+   "multiple": 13.82,
+   "question_template": "other",
+   "published": "2026-09-19T17:30:06Z",
+   "channel_age_days": 87
+  },
+  {
+   "channel": "Relic Explains",
+   "channel_median_views": 2117.5,
+   "video": "How An Inca Girl's Hair Recorded Her Last Year 🏔️",
+   "url": "https://www.youtube.com/watch?v=aOzdp0Gw-Rc",
+   "views": 23684,
+   "multiple": 11.18,
+   "question_template": "other",
+   "published": "2026-10-13T20:00:28Z",
+   "channel_age_days": 239
+  },
+  {
+   "channel": "Whatlume ",
+   "channel_median_views": 2738.5,
+   "video": "How Ancient Humans Drank Dirty River Water & Survived Without Filters",
+   "url": "https://www.youtube.com/watch?v=g4uSiSb8uH8",
+   "views": 29037,
+   "multiple": 10.6,
+   "question_template": "How did humans X",
+   "published": "2026-09-06T21:00:34Z",
+   "channel_age_days": 133
+  }
+ ],
+ "ideas": [
+  {
+   "title": "How Did Ancient Humans Brush Their Teeth?",
+   "template": "How did humans X",
+   "source_hit": "https://www.youtube.com/watch?v=eH8GAtnwr9I",
+   "verdict": "taken",
+   "top10_views": [
+    63080596,
+    1982501,
+    443,
+    196,
+    58,
+    57,
+    49,
+    43,
+    17,
+    4
+   ],
+   "top3": [
+    {
+     "title": "Why Our Ancestors Didn't Need To Brush Their Teeth 🤨",
+     "views": 63080596,
+     "channel": "Zack D. Films"
+    },
+    {
+     "title": "Why Didn't Our Ancestors Have To BRUSH Their Teeth? 🪥🦷",
+     "views": 1982501,
+     "channel": "The Bentist"
+    },
+    {
+     "title": "How Did Ancient Humans Brush Their Teeth?",
+     "views": 443,
+     "channel": "Why History?"
+    }
+   ]
+  },
+  {
+   "title": "Why Did Humans Start Eating Cooked Meat?",
+   "template": "Why did humans start X",
+   "source_hit": "https://www.youtube.com/watch?v=H_j0YTL_hwM",
+   "verdict": "taken",
+   "top10_views": [
+    8729234,
+    786497,
+    59161,
+    10602,
+    6746,
+    1137,
+    190,
+    31,
+    7,
+    4
+   ],
+   "top3": [
+    {
+     "title": "The Hidden Reason Why Humans Eat Meat",
+     "views": 8729234,
+     "channel": "Colossal Biosciences"
+    },
+    {
+     "title": "When did our ancestors start cooking? #pbseons #evolution #science",
+     "views": 786497,
+     "channel": "PBS Eons"
+    },
+    {
+     "title": "When did humans start cooking? | BBC Timestamp",
+     "views": 59161,
+     "channel": "BBC Timestamp"
+    }
+   ]
+  },
+  {
+   "title": "Why It Sucked To Be A Pyramid Worker",
+   "template": "Why it sucked to be X",
+   "source_hit": "https://www.youtube.com/watch?v=CTCTAW5o5Zk",
+   "verdict": "free",
+   "top10_views": [
+    47437,
+    597,
+    176,
+    32,
+    29,
+    20,
+    15,
+    11,
+    8,
+    4
+   ],
+   "top3": [
+    {
+     "title": "Pourquoi c'est horrible de construire les pyramides",
+     "views": 47437,
+     "channel": "TRIBANUU"
+    },
+    {
+     "title": "Why It SUCKS To Be A Pyramid Builder In Ancient Egypt",
+     "views": 597,
+     "channel": "Terrible Timelines"
+    },
+    {
+     "title": "Why It Sucked to Be an Ancient Egyptian Pyramid Builder",
+     "views": 176,
+     "channel": "I Was There"
+    }
+   ]
+  },
+  {
+   "title": "What Did Ancient Humans Actually Do When They Got Sick?",
+   "template": "What ancient humans actually did",
+   "source_hit": "https://www.youtube.com/watch?v=zK2jFCC3BhA",
+   "verdict": "free",
+   "top10_views": [
+    4321,
+    774,
+    77,
+    70,
+    6,
+    5,
+    5,
+    2,
+    1,
+    0
+   ],
+   "top3": [
+    {
+     "title": "What Did Ancient Humans Do When They Got Sick",
+     "views": 4321,
+     "channel": "Simply Painted"
+    },
+    {
+     "title": "What Ancient Humans Actually Did When They Got Sick",
+     "views": 774,
+     "channel": "The Stick Archive"
+    },
+    {
+     "title": "What Did Ancient Humans Do When They Got Sick?",
+     "views": 77,
+     "channel": "Historycraft"
+    }
+   ]
+  },
+  {
+   "title": "Why Did Humans Start Kissing?",
+   "template": "Why did humans start X",
+   "source_hit": "https://www.youtube.com/watch?v=H_j0YTL_hwM",
+   "verdict": "taken",
+   "top10_views": [
+    30592229,
+    34407,
+    5107,
+    331,
+    172,
+    158,
+    23,
+    17,
+    14,
+    13
+   ],
+   "top3": [
+    {
+     "title": "Why Do We Kiss?",
+     "views": 30592229,
+     "channel": "Vsauce"
+    },
+    {
+     "title": "Why do humans kiss? - BBC REEL",
+     "views": 34407,
+     "channel": "BBC Global"
+    },
+    {
+     "title": "Why Did Humans Start Kissing (science based)",
+     "views": 5107,
+     "channel": "Nerr"
+    }
+   ]
+  },
+  {
+   "title": "How Did Ancient Humans Keep Food From Rotting?",
+   "template": "How did humans X",
+   "source_hit": "https://www.youtube.com/watch?v=eH8GAtnwr9I",
+   "verdict": "dead",
+   "top10_views": [
+    764,
+    638,
+    498,
+    277,
+    115,
+    25,
+    16,
+    4,
+    4,
+    0
+   ],
+   "top3": [
+    {
+     "title": "How Did Ancient Humans Keep Food From Rotting?",
+     "views": 764,
+     "channel": "Primitive X"
+    },
+    {
+     "title": "How Did Ancient Humans Keep Food From Rotting?",
+     "views": 638,
+     "channel": "When We Were Few"
+    },
+    {
+     "title": "How Did Ancient Humans Keep Food From Rotting?",
+     "views": 498,
+     "channel": "Primal Explainer"
+    }
+   ]
+  },
+  {
+   "title": "What Did Ancient Humans Do When It Rained For Days?",
+   "template": "What ancient humans actually did",
+   "source_hit": "https://www.youtube.com/watch?v=zK2jFCC3BhA",
+   "verdict": "taken",
+   "top10_views": [
+    1835856,
+    113496,
+    1158,
+    281,
+    252,
+    146,
+    127,
+    39,
+    1,
+    1
+   ],
+   "top3": [
+    {
+     "title": "What Did Ancient Humans Do When It Rained All Week?",
+     "views": 1835856,
+     "channel": "Ink Explainer"
+    },
+    {
+     "title": "How Did Prehistoric People Sleep During Torrential Rain in the Stone Age | Relaxing History",
+     "views": 113496,
+     "channel": "Boring History Secrets "
+    },
+    {
+     "title": "What Did Ancient Humans Do When It Rained For Days?",
+     "views": 1158,
+     "channel": "History Doodles"
+    }
+   ]
+  },
+  {
+   "title": "Why It Sucked To Be A Viking Child",
+   "template": "Why it sucked to be X",
+   "source_hit": "https://www.youtube.com/watch?v=CTCTAW5o5Zk",
+   "verdict": "taken",
+   "top10_views": [
+    763429,
+    701354,
+    381907,
+    379498,
+    26045,
+    210,
+    205,
+    110,
+    58,
+    13
+   ],
+   "top3": [
+    {
+     "title": "Your Life as a Viking Berserker",
+     "views": 763429,
+     "channel": "StickTory"
+    },
+    {
+     "title": "What Was Life of a Viking Warrior Like?",
+     "views": 701354,
+     "channel": "The Infographics Show"
+    },
+    {
+     "title": "Why It Sucked to Be a Viking",
+     "views": 381907,
+     "channel": "Lost Legacy"
+    }
+   ]
+  },
+  {
+   "title": "What Did Ancient Humans Actually Eat For Breakfast?",
+   "template": "What ancient humans actually did",
+   "source_hit": "https://www.youtube.com/watch?v=zK2jFCC3BhA",
+   "verdict": "taken",
+   "top10_views": [
+    4909433,
+    2238769,
+    1832756,
+    970940,
+    518701,
+    1061,
+    229,
+    73,
+    20,
+    2
+   ],
+   "top3": [
+    {
+     "title": "The Working Man's Breakfast",
+     "views": 4909433,
+     "channel": "Townsends"
+    },
+    {
+     "title": "Remembering the care free days of eating breakfast in the Middle Ages.",
+     "views": 2238769,
+     "channel": "Tasting History with Max Miller"
+    },
+    {
+     "title": "Did Medieval People Eat Breakfast?",
+     "views": 1832756,
+     "channel": "Tasting History with Max Miller"
+    }
+   ]
+  },
+  {
+   "title": "Why Did Humans Start Shaking Hands?",
+   "template": "Why did humans start X",
+   "source_hit": "https://www.youtube.com/watch?v=H_j0YTL_hwM",
+   "verdict": "taken",
+   "top10_views": [
+    67637544,
+    4997684,
+    504249,
+    55782,
+    365,
+    50,
+    44,
+    36,
+    6,
+    3
+   ],
+   "top3": [
+    {
+     "title": "I Tried the “Devil’s Handshake” Device.. 😭 #shorts",
+     "views": 67637544,
+     "channel": "Sean Andrew"
+    },
+    {
+     "title": "When you’re about to fight and your opponent’s hands start shaking..#shorts #viral",
+     "views": 4997684,
+     "channel": "Bwag"
+    },
+    {
+     "title": "When the opponent you’re about to fight hands start shaking. #shorts",
+     "views": 504249,
+     "channel": "Gitz"
+    }
+   ]
+  },
+  {
+   "title": "How Did Ancient Humans Tell Time Without Clocks?",
+   "template": "How did humans X",
+   "source_hit": "https://www.youtube.com/watch?v=eH8GAtnwr9I",
+   "verdict": "taken",
+   "top10_views": [
+    1018927,
+    215206,
+    42431,
+    15926,
+    418,
+    164,
+    84,
+    56,
+    8,
+    0
+   ],
+   "top3": [
+    {
+     "title": "A Brief History Of (Keeping) Time",
+     "views": 1018927,
+     "channel": "Be Smart"
+    },
+    {
+     "title": "A Brief History of Timekeeping | How Humans Began Telling Time | EXPLORE MODE",
+     "views": 215206,
+     "channel": "Explore Mode"
+    },
+    {
+     "title": "How Did People Tell Time Before Clocks Existed?.#AncientTechnology #WaterClock #HistoryFacts #facts",
+     "views": 42431,
+     "channel": "FACTZAPE "
+    }
+   ]
+  },
+  {
+   "title": "How Did Ancient Humans Treat Broken Bones?",
+   "template": "How did humans X",
+   "source_hit": "https://www.youtube.com/watch?v=eH8GAtnwr9I",
+   "verdict": "free",
+   "top10_views": [
+    2247,
+    1349,
+    1243,
+    65,
+    61,
+    45,
+    28,
+    9,
+    7,
+    4
+   ],
+   "top3": [
+    {
+     "title": "How Did Ancient Humans Survive Broken Bones Without Doctors",
+     "views": 2247,
+     "channel": "The Construct documentaries"
+    },
+    {
+     "title": "🦴 How Did Ancient Humans Treat Broken Bones?",
+     "views": 1349,
+     "channel": "Prehistory Explanation"
+    },
+    {
+     "title": "How Did Ancient Humans Treat Broken Bones?",
+     "views": 1243,
+     "channel": "GoGo History "
+    }
+   ]
+  },
+  {
+   "title": "Why It Sucked To Be A Medieval Night Soil Man",
+   "template": "Why it sucked to be X",
+   "source_hit": "https://www.youtube.com/watch?v=CTCTAW5o5Zk",
+   "verdict": "taken",
+   "top10_views": [
+    35411267,
+    13922536,
+    8529750,
+    2850816,
+    2398421,
+    197968,
+    2580,
+    56,
+    4,
+    2
+   ],
+   "top3": [
+    {
+     "title": "semaluhtounuyulohowwah",
+     "views": 35411267,
+     "channel": "Shannx"
+    },
+    {
+     "title": "Roman Shaving was Brutal! - Extra History #shorts",
+     "views": 13922536,
+     "channel": "Extra History"
+    },
+    {
+     "title": "The Brothers Grimm: The Mud Monster",
+     "views": 8529750,
+     "channel": "Binge Society"
+    }
+   ]
+  },
+  {
+   "title": "What Did Ancient Humans Actually Do With Their Dead?",
+   "template": "What ancient humans actually did",
+   "source_hit": "https://www.youtube.com/watch?v=zK2jFCC3BhA",
+   "verdict": "taken",
+   "top10_views": [
+    15481543,
+    8090492,
+    3409079,
+    2785243,
+    451781,
+    413330,
+    129,
+    48,
+    27,
+    4
+   ],
+   "top3": [
+    {
+     "title": "What Did Ancient Humans Actually Do All Day?",
+     "views": 15481543,
+     "channel": "Ink Explainer"
+    },
+    {
+     "title": "What Did Ancient Humans Do at Night?",
+     "views": 8090492,
+     "channel": "Zenn"
+    },
+    {
+     "title": "What Did Ancient Humans Do all Day Before Jobs Existed?",
+     "views": 3409079,
+     "channel": "Axen"
+    }
+   ]
+  },
+  {
+   "title": "Why Did Humans Start Wearing Shoes?",
+   "template": "Why did humans start X",
+   "source_hit": "https://www.youtube.com/watch?v=H_j0YTL_hwM",
+   "verdict": "free",
+   "top10_views": [
+    1186,
+    556,
+    33,
+    26,
+    13,
+    11,
+    6,
+    6,
+    3,
+    0
+   ],
+   "top3": [
+    {
+     "title": "Why Did Humans Start Wearing Shoes  The Surprising Story Behind Footwear Evolution #ancienthumans",
+     "views": 1186,
+     "channel": "The Curious Epoch"
+    },
+    {
+     "title": "इंसानों ने जूते पहनना क्यों शुरू किया? | Why Did Humans Start Wearing Shoes?",
+     "views": 556,
+     "channel": "CureN "
+    },
+    {
+     "title": "Why Did Humans Start Wearing Shoes?",
+     "views": 33,
+     "channel": "Denn"
+    }
+   ]
+  },
+  {
+   "title": "How Did Ancient Humans Deal With Toothaches?",
+   "template": "How did humans X",
+   "source_hit": "https://www.youtube.com/watch?v=eH8GAtnwr9I",
+   "verdict": "free",
+   "top10_views": [
+    6270,
+    352,
+    29,
+    21,
+    15,
+    12,
+    8,
+    7,
+    5,
+    0
+   ],
+   "top3": [
+    {
+     "title": "How Did Ancient Humans Deal With Toothaches?",
+     "views": 6270,
+     "channel": "Whatly"
+    },
+    {
+     "title": "HOW DID ANCIENT HUMANS DEAL WITH TOOTHACHES?",
+     "views": 352,
+     "channel": "Nervous Ancestor"
+    },
+    {
+     "title": "How Did Ancient Humans Deal With Toothaches?",
+     "views": 29,
+     "channel": "Based On Humans"
+    }
+   ]
+  },
+  {
+   "title": "How Did Ancient Humans Survive Without Salt?",
+   "template": "How did humans X",
+   "source_hit": "https://www.youtube.com/watch?v=eH8GAtnwr9I",
+   "verdict": "taken",
+   "top10_views": [
+    53203,
+    15972,
+    1196,
+    875,
+    710,
+    550,
+    96,
+    8,
+    1,
+    0
+   ],
+   "top3": [
+    {
+     "title": "How Did Ancient Humans Survive Without Salt?",
+     "views": 53203,
+     "channel": "Boneink"
+    },
+    {
+     "title": "How Did Ancient Humans Survive Without Salt?",
+     "views": 15972,
+     "channel": "Deep Epoch"
+    },
+    {
+     "title": "How Did Ancient Humans Survive Without Salt?  #shorts #ancienthistory",
+     "views": 1196,
+     "channel": "Before Us"
+    }
+   ]
+  },
+  {
+   "title": "Why It Sucked To Be A Caveman In Winter",
+   "template": "Why it sucked to be X",
+   "source_hit": "https://www.youtube.com/watch?v=CTCTAW5o5Zk",
+   "verdict": "taken",
+   "top10_views": [
+    55755141,
+    16236644,
+    13922536,
+    7750890,
+    4977047,
+    79926,
+    1244,
+    433,
+    275,
+    5
+   ],
+   "top3": [
+    {
+     "title": "What To Do If You’re Lost In A Cave 😨",
+     "views": 55755141,
+     "channel": "Zack D. Films"
+    },
+    {
+     "title": "Why The Ice Age Sucked...",
+     "views": 16236644,
+     "channel": "Hoodie Guy"
+    },
+    {
+     "title": "Roman Shaving was Brutal! - Extra History #shorts",
+     "views": 13922536,
+     "channel": "Extra History"
+    }
+   ]
+  },
+  {
+   "title": "What Did Cavemen Actually Do On A Date?",
+   "template": "What ancient humans actually did",
+   "source_hit": "https://www.youtube.com/watch?v=zK2jFCC3BhA",
+   "verdict": "taken",
+   "top10_views": [
+    5930893,
+    2785243,
+    85,
+    76,
+    72,
+    69,
+    43,
+    17,
+    7,
+    5
+   ],
+   "top3": [
+    {
+     "title": "Paleoanthropologist Answers Caveman Questions From Twitter | Tech Support | WIRED",
+     "views": 5930893,
+     "channel": "WIRED"
+    },
+    {
+     "title": "What Did Early Humans ACTUALLY Do All Day? | History for Sleep",
+     "views": 2785243,
+     "channel": "Sleepy Time Historian"
+    },
+    {
+     "title": "How Did Cavemen Get a Date",
+     "views": 85,
+     "channel": "Think It Deep "
+    }
+   ]
+  },
+  {
+   "title": "Why Did Humans Start Sleeping In Beds?",
+   "template": "Why did humans start X",
+   "source_hit": "https://www.youtube.com/watch?v=H_j0YTL_hwM",
+   "verdict": "free",
+   "top10_views": [
+    7411,
+    4921,
+    634,
+    211,
+    153,
+    140,
+    83,
+    12,
+    8,
+    6
+   ],
+   "top3": [
+    {
+     "title": "How Did Ancient Humans Start Sleeping in Beds?",
+     "views": 7411,
+     "channel": "Markus 2.0"
+    },
+    {
+     "title": "When Did Humans Start Sleeping in Beds?",
+     "views": 4921,
+     "channel": "History of Simple Things"
+    },
+    {
+     "title": "Why Did Early Humans Sleep on Ash?",
+     "views": 634,
+     "channel": "The Way Behind It "
+    }
+   ]
+  }
+ ],
+ "ideas_unchecked_quota": [
+  "How Did Ancient Humans Wash Without Soap?",
+  "How Did Ancient Humans Cut Their Hair?",
+  "How Did Ancient Humans Find Their Way At Night?",
+  "How Did Ancient Humans Stay Cool In Summer?",
+  "Why Did Humans Start Drinking Milk?",
+  "Why It Sucked To Be A Medieval Tooth Puller",
+  "Why It Sucked To Be A Roman Gladiator's Wife",
+  "What Did Ancient Humans Actually Do For Fun At Night?",
+  "Why Did Humans Start Keeping Dogs?",
+  "Why Did Humans Start Counting?"
+ ],
+ "summary": {
+  "hits": 16,
+  "hit_channels": 5,
+  "ideas_checked": 20,
+  "free": [
+   "Why It Sucked To Be A Pyramid Worker",
+   "What Did Ancient Humans Actually Do When They Got Sick?",
+   "How Did Ancient Humans Treat Broken Bones?",
+   "Why Did Humans Start Wearing Shoes?",
+   "How Did Ancient Humans Deal With Toothaches?",
+   "Why Did Humans Start Sleeping In Beds?"
+  ],
+  "dead": [
+   "How Did Ancient Humans Keep Food From Rotting?"
+  ],
+  "taken": 13
+ }
+}
