@@ -210,13 +210,13 @@ def rms_db(f, start, dur):
 
 def critic_clips(paths):
     """Реальный критик: CE для каждого wav ОДНИМ прогоном audiobox в контейнере ace-step (модель грузится 1 раз)."""
-    td = tempfile.mkdtemp()
-    names = []
-    for i, p in enumerate(paths):  # имя сортируется = порядок paths (AES читает sorted listdir)
-        names.append(f"c{i:05d}.wav")
-        subprocess.run(["cp", str(p), f"{td}/{names[-1]}"], check=True)
-    subprocess.run(["docker", "exec", "ace-step", "sh", "-c", "rm -rf /app/output/qg && mkdir -p /app/output/qg"], check=True)
-    subprocess.run(["docker", "cp", f"{td}/.", "ace-step:/app/output/qg/in"], check=True)
+    with tempfile.TemporaryDirectory() as td:  # t_3c6b9f04: копии wav не копятся в /tmp
+        names = []
+        for i, p in enumerate(paths):  # имя сортируется = порядок paths (AES читает sorted listdir)
+            names.append(f"c{i:05d}.wav")
+            subprocess.run(["cp", str(p), f"{td}/{names[-1]}"], check=True)
+        subprocess.run(["docker", "exec", "ace-step", "sh", "-c", "rm -rf /app/output/qg && mkdir -p /app/output/qg"], check=True)
+        subprocess.run(["docker", "cp", f"{td}/.", "ace-step:/app/output/qg/in"], check=True)
     out = subprocess.run(["docker", "exec", "ace-step", "sh", "-c", AES], capture_output=True, text=True, timeout=3000)
     res = {l.split("\t")[0]: json.loads(l.split("\t")[1])["CE"] for l in out.stdout.splitlines() if "\t" in l}
     want = ["in/" + n for n in names]
@@ -234,11 +234,11 @@ def _critic(paths, critic):
 
 def window_report(f, seams=(), critic=None):
     """CE по всем окнам WIN + окну ±SEAM_HALF и RMS по сторонам каждого стыка. Сбой критика = исключение."""
-    dur, td = duration(f), tempfile.mkdtemp()
-    ws = windows(dur)
-    clips = [cut(f, s, l, f"{td}/w{i:05d}.wav") for i, (s, l) in enumerate(ws)]
-    clips += [cut(f, t - SEAM_HALF, 2 * SEAM_HALF, f"{td}/s{i:05d}.wav") for i, t in enumerate(seams)]
-    ce = _critic(clips, critic)
+    ws = windows(duration(f))
+    with tempfile.TemporaryDirectory() as td:  # t_3c6b9f04: w/s000NN.wav (до 620 MB) удаляются и при сбое
+        clips = [cut(f, s, l, f"{td}/w{i:05d}.wav") for i, (s, l) in enumerate(ws)]
+        clips += [cut(f, t - SEAM_HALF, 2 * SEAM_HALF, f"{td}/s{i:05d}.wav") for i, t in enumerate(seams)]
+        ce = _critic(clips, critic)
     return {"wins": [(s, round(c, 3)) for (s, _), c in zip(ws, ce)],
             "seams": [{"t": t, "ce": round(c, 3), "rms_l": round(rms_db(f, t - SEAM_HALF, min(SEAM_HALF, t)), 2),
                        "rms_r": round(rms_db(f, t, SEAM_HALF), 2)} for t, c in zip(seams, ce[len(ws):])]}
@@ -256,12 +256,13 @@ def full_ce_why(f, seams=(), critic=None):
 def ce_windows_batch(files, critic=None):
     """Гейт сегмента час-микса (gated_gen/best-of): CE КАЖДОГО окна WIN каждого файла одним прогоном критика.
     Возврат [[ce окна, ...], ...] в порядке files; min() = R1 сегмента. Ошибка критика = исключение."""
-    td, clips, n = tempfile.mkdtemp(), [], []
-    for fi, f in enumerate(files):
-        ws = windows(duration(f))
-        clips += [cut(f, s, l, f"{td}/f{fi:03d}w{i:04d}.wav") for i, (s, l) in enumerate(ws)]
-        n.append(len(ws))
-    ce, out = _critic(clips, critic), []
+    clips, n, out = [], [], []
+    with tempfile.TemporaryDirectory() as td:
+        for fi, f in enumerate(files):
+            ws = windows(duration(f))
+            clips += [cut(f, s, l, f"{td}/f{fi:03d}w{i:04d}.wav") for i, (s, l) in enumerate(ws)]
+            n.append(len(ws))
+        ce = _critic(clips, critic)
     for k in n:
         out, ce = out + [ce[:k]], ce[k:]
     return out
@@ -274,11 +275,12 @@ def ce_scores(f):
 def ce_batch(files, critic=None):
     """t_b4006a6e (best-of сегментов): CE 3 отрывков по 30 с (10/50/90 %) на трек одним прогоном критика.
     Возврат [[c,c,c], ...] в порядке files. Ошибка критика = исключение (FAIL)."""
-    td, clips = tempfile.mkdtemp(), []
-    for fi, f in enumerate(files):
-        dur = duration(f)
-        clips += [cut(f, dur * frac - 15, 30, f"{td}/t{fi:03d}c{i}.wav") for i, frac in enumerate((0.1, 0.5, 0.9))]
-    ce = _critic(clips, critic)
+    clips = []
+    with tempfile.TemporaryDirectory() as td:
+        for fi, f in enumerate(files):
+            dur = duration(f)
+            clips += [cut(f, dur * frac - 15, 30, f"{td}/t{fi:03d}c{i}.wav") for i, frac in enumerate((0.1, 0.5, 0.9))]
+        ce = _critic(clips, critic)
     return [ce[3 * i:3 * i + 3] for i in range(len(files))]
 
 
