@@ -12,8 +12,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && ln -sf /usr/bin/python3 /usr/bin/python \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+# root-cause: t_a929cfc3 — pip 22.0.2 из jammy python3-venv не докачивает: обрыв на ~800 MB
+# torch-wheel валил слой (TimeoutError). pip>=26.2 докачивает по Range. Гард: pipeline/test_dockerfile_pip_resume.py
+RUN python -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir "pip==26.2.2"
+ENV PATH="/opt/venv/bin:$PATH" \
+    PIP_RESUME_RETRIES=20
 
 WORKDIR /app
 # Пин к известному апстрим-коммиту (main на 2026-10-09)
