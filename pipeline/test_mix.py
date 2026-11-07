@@ -428,6 +428,8 @@ def test_edge_match_measures_crossfaded_seam_like_gate():
     seams = [{"t": t, "ce": 9.0, "rms_l": qg.rms_db(out, t - qg.SEAM_HALF, qg.SEAM_HALF),
               "rms_r": qg.rms_db(out, t, qg.SEAM_HALF)} for t in ts]
     assert qg.seam_why(seams) == [], seams
+    # t_2be41a12: запас 1 дБ до порога R3 — остаток ~3 дБ (xfade-fallback 3.12) проходил/падал от окружения
+    assert all(abs(x["rms_l"] - x["rms_r"]) <= qg.SEAM_RMS_MAX - 1 for x in seams), seams
 
 
 def test_edge_match_quiet_intro_full_gain_in_gate_window():
