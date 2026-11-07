@@ -48,7 +48,7 @@ jobs:
             -e RUNNER_WORKDIR=/tmp/runner/$CNAME \
             -e CONFIGURED_ACTIONS_RUNNER_FILES_DIR=/runner/data \
             -e DISABLE_AUTOMATIC_DEREGISTRATION=true \
-            -e ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE=/opt/actions-archive-cache \
+            -e ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE=/opt/actions-archive-cache -v gh-actions-archive-cache:/opt/actions-archive-cache \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v gh-runner-$CNAME-data:/runner/data \
             -v gh-runner-$CNAME-work:/tmp/runner/$CNAME \
