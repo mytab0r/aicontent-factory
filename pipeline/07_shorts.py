@@ -109,7 +109,7 @@ def analyze(track: Path) -> list[tuple[float, float]]:
     return pick_windows(rms, sr / hop, onsets, len(y) / sr)
 
 
-from quality_gate import LUFS_TARGET, SHORT_FADES, SHORT_FADE_OUT  # A24: фейды и их проверка из одного места
+from quality_gate import LUFS_TARGET, SHORT_FADES, SHORT_FADE_OUT, SPEECH_TP_MAX, encode_aac_tp  # A24: фейды и их проверка из одного места
 
 
 def render(image: Path, track: Path, start: float, end: float, out: Path) -> None:
@@ -120,14 +120,24 @@ def render(image: Path, track: Path, start: float, end: float, out: Path) -> Non
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(image), "-filter_complex", vf,
                     "-frames:v", "1", str(frame)], check=True)
     dur = f"{end - start:.2f}"
+    # t_f5e84e62: AAC-кодер поднимает true peak после лимитера (замер: WAV -1.5 -> +0.1 dBTP при aac 192k).
+    # Поэтому видео собираем с WAV-звуком (громкость+фейд), затем AAC кодируется с замером TP и муксится -c:a copy.
+    af = (f"loudnorm=I={LUFS_TARGET:g}:TP=-1.5:LRA=11," + SHORT_FADES.format(st=end - start - SHORT_FADE_OUT))  # A24
+    tmp = out.with_suffix(".mux.mp4")
     subprocess.run([
         "ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-r", "30", "-i", str(frame),
         "-ss", f"{start:.2f}", "-t", dur, "-i", str(track), "-map", "0:v", "-map", "1:a",
-        "-af", f"loudnorm=I={LUFS_TARGET:g}:TP=-1.5:LRA=11," + SHORT_FADES.format(st=end - start - SHORT_FADE_OUT),  # A24
-        "-ar", "48000",
+        "-af", af, "-ar", "48000",
         "-c:v", "libx264", "-preset", "veryfast", "-tune", "stillimage", "-pix_fmt", "yuv420p", "-threads", "4",
-        "-c:a", "aac", "-b:a", "192k", "-t", dur, str(out),
+        "-c:a", "pcm_s16le", "-t", dur, str(tmp),
     ], check=True)
+    wav, aac = out.with_suffix(".wav"), out.with_suffix(".m4a")
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(tmp), "-vn", "-c:a", "pcm_s16le", str(wav)], check=True)
+    encode_aac_tp(wav, aac, "192k", SPEECH_TP_MAX)
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(tmp), "-i", str(aac), "-map", "0:v", "-map", "1:a",
+                    "-c:v", "copy", "-c:a", "copy", "-t", dur, str(out)], check=True)
+    for f in (tmp, wav, aac):
+        Path(f).unlink(missing_ok=True)
 
 
 def next_hook(state_dir: Path | None = None) -> str:

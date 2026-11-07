@@ -18,7 +18,7 @@ import sys
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
 
-from quality_gate import LUFS_TARGET
+from quality_gate import LUFS_TARGET, SPEECH_TP_MAX, encode_aac_tp
 
 ROOT = Path(__file__).resolve().parent.parent
 STATE = ROOT / ".state"
@@ -634,8 +634,16 @@ def _render_job(args):
 def concat(parts: list, out: Path) -> Path:
     lst = out.with_suffix(".txt")
     lst.write_text("".join(f"file '{Path(p).resolve()}'\n" for p in parts))
+    # t_f5e84e62: громкость -> WAV, AAC с замером TP после кодера, mux -c:a copy (loudnorm TP=-2
+    # не видит овершут AAC: WAV -1.5 -> +0.1 dBTP после aac 192k).
+    wav, aac = out.with_suffix(".wav"), out.with_suffix(".m4a")
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(lst),
-                    "-af", f"loudnorm=I={LUFS_TARGET:g}:TP=-2.0", "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", str(out)], check=True)
+                    "-af", f"loudnorm=I={LUFS_TARGET:g}:TP=-2.0", "-c:a", "pcm_s16le", str(wav)], check=True)
+    encode_aac_tp(wav, aac, "160k", SPEECH_TP_MAX)
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(lst),
+                    "-i", str(aac), "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "copy", str(out)], check=True)
+    wav.unlink(missing_ok=True)
+    aac.unlink(missing_ok=True)
     return out
 
 
