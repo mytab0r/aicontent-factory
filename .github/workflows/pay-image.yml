@@ -7,10 +7,15 @@ on:
     branches: [master, main]
   # ручной ребилд :latest из выбранной ветки (github.sha), без stale-guard
   workflow_dispatch:
+  # развязка от общего ci: pay/ImageInputs меняются -> push-path деплой без контент-тестов (t_pay-decouple)
+  push:
+    branches: [master]
+    paths: ["deploy/pay-page/**", "functions/**", "config/payment-providers.json"]
 jobs:
   build-push:
     if: >-
       github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push' ||
       (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: [self-hosted, release]
     permissions:
@@ -37,6 +42,7 @@ jobs:
           IMAGE_INPUTS: "deploy/pay-page/ functions/ config/payment-providers.json"
         run: |
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then echo "ok=true" >> "$GITHUB_OUTPUT"; echo "workflow_dispatch: guard пропущен, собираю $SHA"; exit 0; fi
+          if [ "$GITHUB_EVENT_NAME" = push ]; then echo "ok=true" >> "$GITHUB_OUTPUT"; echo "push-path: guard пропущен, head_sha == HEAD"; exit 0; fi
           for n in 1 2 3; do
             cmp=$(curl -sf -H "Authorization: Bearer $GH_TOKEN" "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/compare/$SHA...$BRANCH") && break
             [ $n = 3 ] && { echo "compare $SHA...$BRANCH не ответил"; exit 1; }; sleep $((n*10))
@@ -95,6 +101,10 @@ jobs:
           B=$(sed -n 's/^FROM //p' deploy/pay-page/Dockerfile | head -1)
           # stdin, не bind-mount: демон Docker Desktop не видит FS раннера
           docker run --rm -i "$B" sh -c 'cat > /tmp/s.mjs && node --check /tmp/s.mjs' < deploy/pay-page/server.mjs
+          # push-path сборка идёт мимо e2e-admin: синтаксис каждого functions/*.js проверяем здесь (t_pay-decouple)
+          for f in $(git ls-files 'functions/*.js' 'functions/**/*.js'); do
+            docker run --rm -i "$B" sh -c 'cat > /tmp/s.js && node --check /tmp/s.js' < "$f" || { echo "::error::SyntaxError: $f"; exit 1; }
+          done
       - name: build + push (retry on registry transport errors only)
         if: steps.fresh.outputs.ok == 'true'
         run: |

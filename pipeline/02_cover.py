@@ -18,10 +18,13 @@ from common import router_post, latest_run_dir
 
 # (модель, размеры по порядку). flux-1-schnell (Cloudflare) не принимает size вовсе -> None.
 SIZE = "1536x1024"  # горизонталь под 16:9; квадрат 04 обрежет. Эталон формата (используют тесты).
-MODELS = [
+_DEFAULT_MODELS = [
     ("cx/gpt-image-1.5", [SIZE, "1024x1024"]),
     ("cf/@cf/black-forest-labs/flux-1-schnell", [None]),
 ]
+MODELS = json.loads(os.environ.get("ACF_COVER_MODELS", "[]")) or _DEFAULT_MODELS
+# ponytail: 401/403/404 — без права/модель не найдена на роутере, ретраи только жгут лимиты; 408/5xx/429 — временно/перезагрузка
+_AUTH_FAIL = ("HTTP 401", "HTTP 403", "HTTP 404", "HTTP 408")
 RETRY_MAX_WAIT = 60  # ждём «reset after Ns» только если окно короткое; дольше -> следующая модель
 BANK_DIR = Path(__file__).resolve().parent.parent / "assets" / "cover_bank"
 # единый узнаваемый стиль канала: меняется только сцена из idea.json.
@@ -84,6 +87,9 @@ def generate(prompt: str, out_path, log: list):
                     err = str(e)[:200]
                     log.append({"model": model, "size": size, "attempt": attempt, "error": err})
                     print(f"cover {model} {size or 'default'} #{attempt}: {err}")
+                    # Не тратим лимиты на 401/403/404/408 для конкретной модели — переключаемся дальше по цепочке.
+                    if any(marker in err for marker in _AUTH_FAIL):
+                        break
                     m = re.search(r"reset after (?:(\d+)m )?(\d+)s", err) if "429" in err else None
                     wait = (int(m.group(1) or 0) * 60 + int(m.group(2)) + 2) if m else None
                     if attempt == 1 and wait is not None and wait <= RETRY_MAX_WAIT:
@@ -91,6 +97,8 @@ def generate(prompt: str, out_path, log: list):
                         time.sleep(wait)
                         continue
                     break
+            if any(marker in log[-1].get("error", "") for marker in _AUTH_FAIL):
+                continue  # следующая модель, не застреваем на 401/403/404/408
             if "429" in log[-1].get("error", ""):
                 break  # лимит модели: другой размер не поможет -> следующая модель
     return None

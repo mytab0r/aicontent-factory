@@ -77,7 +77,9 @@ swap_runner() {
     -v /var/run/docker.sock:/var/run/docker.sock -v "$n-data:/runner/data" \
     -v gh-runner-aicontent-factory-tools:/opt/hostedtoolcache \
     -v "$n-tmp:/tmp" -v "$n-cache:/root/.cache" \
-    -v gh-runner-uv-cache:/tmp/acf-uv-cache -v gh-runner-xlv:/tmp/xlv -v "$n-work:$work" \
+    -v /work/docker-caches/acf-uv-cache:/tmp/acf-uv-cache -v /work/docker-caches/xlv:/tmp/xlv \
+    -v /work/docker-caches/runner-work/$(basename "$work"):$work \
+    -e RUNNER_EPHEMERAL=1 \
     "$tag" >/dev/null
   rm -f "$envf"
   ok=0; for i in $(seq 1 60); do docker logs "$n" 2>&1 | grep -q "Listening for Jobs" && { ok=1; break; }; sleep 5; done

@@ -24,6 +24,7 @@ import * as invoiceApi from '../../functions/api/invoice/[[id]].js';
 import * as invoicePage from '../../functions/i/[[id]].js';
 import * as tonManifest from '../../functions/tonconnect-manifest.json.js';
 import * as payPage from '../../functions/pay/index.js';
+import * as userPage from '../../functions/u/[[id]].js';
 import * as tarot from '../../functions/tarot/index.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -148,6 +149,12 @@ export function makeServer({ dataDir, ownerEmail, apiToken, accessTeam, accessAu
     if ((mm = p.match(/^\/api\/invoice\/([A-Za-z0-9]{1,64})$/))) {
       const h = { GET: invoiceApi.onRequestGet, POST: invoiceApi.onRequestPost, PUT: invoiceApi.onRequestPut }[m];
       return h ? h(ctx({ id: mm[1] })) : json({ error: 'method' }, 405);
+    }
+
+    // публичное: личная страница оплаты /u/<адрес получателя> (id = адрес из реестра/кошелька клиента)
+    if (p === '/u' || p.startsWith('/u/')) {
+      if (m !== 'GET') return json({ error: 'method' }, 405);
+      return userPage.onRequestGet(ctx({ id: decodeURIComponent(p.slice(3).replace(/^\//, '')) }));
     }
 
     // публичное: адрес из реестра для агентов (t_705becfe)

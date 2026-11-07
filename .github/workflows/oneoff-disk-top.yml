@@ -1,0 +1,20 @@
+name: oneoff-disk-top
+# t_629a7ba2: C: 29.6G < пола 30G -> bank_release nobank -> 04b не запускается.
+# Все каталоги acf-out моложе 7 суток, поэтому штатный ретеншн (#355) ничего не снял.
+# Снимаем acf-out старше 2 суток (регенерируемое, ссылки на прогоны в TG), keep-каталоги не трогаем.
+on:
+  push:
+    branches: [ops/dtop]
+  workflow_dispatch:
+jobs:
+  top:
+    runs-on: [self-hosted, release]
+    timeout-minutes: 15
+    steps:
+      - name: prune acf-out older than 2 days
+        run: |
+          docker run --rm -v /run/desktop/mnt/host/c:/c alpine:3.20 sh -c '
+            df -h /c | tail -1
+            find /c/dockerlocal/acf-out -mindepth 1 -maxdepth 1 -type d -mtime +2 ! -exec test -e {}/keep \; -print -exec rm -rf {} + | wc -l
+            df -h /c | tail -1
+          '
