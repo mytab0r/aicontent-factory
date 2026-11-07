@@ -428,7 +428,10 @@ def group_counts(genre, docker_sh, now=None):
     return out
 
 
-def main():
+def main(max_iter=40, busy=None):
+    """Один прогон наполнения -> (в банке, цель). bank_fill_worker зовёт max_iter=1: сегмент в банке
+    до следующей генерации, группы/промпт/статистика пересчитываются на каждый сегмент."""
+    busy = busy or release_busy
     genre = os.environ.get("GENRE", "anime lofi")
     target = int(os.environ.get("BANK_TARGET", "30"))
     d = f"{BANK_ROOT}/{slug(genre)}"
@@ -442,7 +445,7 @@ def main():
     music = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(music)
 
-    music.ace_restart = restart_guard(release_busy, music.ace_restart)
+    music.ace_restart = restart_guard(busy, music.ace_restart)
 
     from quality_gate import ce_windows_batch, objective
     prompt, ref = music.GENRE_PROMPTS[genre], os.environ.get("ACE15_REF_AUDIO") or None
@@ -489,7 +492,7 @@ def main():
         ref = None
     run_dir = Path(tempfile.mkdtemp(prefix="bank_"))
     def scores(paths):
-        return guarded_scores(paths, release_busy, ce_windows_batch)
+        return guarded_scores(paths, busy, ce_windows_batch)
 
     pending = []  # R4: исходы кандидатов текущего сегмента
 
@@ -531,8 +534,13 @@ def main():
             kb = 0  # du недоступен: лимит не проверить, пол C: проверяется всё равно
         return guard_reason(kb, disk_gate_rc())
 
-    n = fill(target, have, gen, put, release_busy, deadline=deadline, guard=guard)
+    try:
+        n = fill(target, have, gen, put, busy, max_iter=max_iter, deadline=deadline, guard=guard)
+    finally:
+        import shutil
+        shutil.rmtree(run_dir, ignore_errors=True)  # воркер вечный: tmp не копится
     print(f"банк {genre}: {n} сегментов (цель {target})")
+    return n, target
 
 
 if __name__ == "__main__":
