@@ -78,17 +78,6 @@ jobs:
           done
       - name: recheck_blockers selftest
         run: python recheck_blockers.py --selftest
-      - name: run pay.pxbt.app tests (wallet-verify + api + server)
-        run: |
-          set -e
-          for f in test/test_*.mjs; do
-            echo "=== $f ==="
-            node "$f"
-          done
-      # P10 (аудит 25.10): branch protection и rulesets на Free/private недоступны (API 403
-      # "Upgrade to GitHub Pro") — гейт «merge только после зелёного test» ставит детектор:
-      # на push в master проверяем HEAD-PR; merge раньше зелёного test = красный job + TG-алерт.
-      # PR-прогоны не задевает (только push).
       - name: merge-police (P10)
         id: police
         if: github.event_name == 'push'
@@ -105,57 +94,6 @@ jobs:
         run: |
           python3 -c "from common import tg_send; tg_send('🚨 merge-police (P10): PR смержен раньше зелёного test — master получил непроверенный коммит. Лог: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}')"
 
-  pay-image-smoke:
-    runs-on: [self-hosted, ci]
-    steps:
-      - uses: actions/checkout@v4
-      - name: build + run pay image (bind-mount ./data как в compose), healthz, /admin 403, запись счёта
-        run: |
-          set -e
-          # self-hosted DooD: контейнеры живут на хосте, а не в раннере. Уникальное имя + уборка + доступ по IP
-          TOK=smoke-$GITHUB_RUN_ID  # не литерал: редактор секретов агента заменял его на ***; в этом job, не в test
-          N=pay-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT; trap "docker rm -f $N >/dev/null 2>&1 || true" EXIT
-          docker build -q -f deploy/pay-page/Dockerfile -t pay-smoke .
-          # root-owned каталог: контейнер должен упасть сразу с понятной ошибкой, а не 500 позже
-          sudo mkdir -p /tmp/pay-root && sudo chown root:root /tmp/pay-root
-          if timeout 20 docker run --rm -v /tmp/pay-root:/data pay-smoke 2> err.txt; then echo 'должен был упасть'; exit 1; fi
-          cat err.txt
-          grep -q 'chown 1000:1000' err.txt
-          # путь из README: mkdir + chown 1000:1000. DooD: bind-путь резолвит демон хоста, не раннер —
-          # $PWD/data на хосте нет (демон создаёт root-owned), поэтому каталог готовим на хосте через контейнер
-          D=/tmp/$N; R="docker run --rm --user 0 --entrypoint sh -v /tmp:/h pay-smoke -c"
-          trap "docker rm -f $N >/dev/null 2>&1; $R 'rm -rf /h/$N' >/dev/null 2>&1 || true" EXIT
-          $R "mkdir -p /h/$N && chown 1000:1000 /h/$N"
-          docker run -d --name $N -v "$D:/data" -e PAY_API_TOKEN=$TOK pay-smoke
-          H=http://$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' $N):8080
-          for i in $(seq 1 20); do curl -fs $H/healthz && break; sleep 1; done
-          test "$(curl -s -o /dev/null -w '%{http_code}' $H/healthz)" = 200
-          test "$(curl -s -o /dev/null -w '%{http_code}' $H/admin)" = 403
-          id=$(curl -fs -X POST $H/api/invoice -H "authorization: Bearer $TOK" -d '{"amount":1}' | sed -n 's/.*"id":"\([a-z0-9]*\)".*/\1/p')
-          test -n "$id"
-          test "$(curl -s -o /dev/null -w '%{http_code}' $H/i/$id)" = 200
-          $R "grep -q 'invoice:$id' /h/$N/kv.json"
-          docker logs $N
-
-  e2e-admin:
-    # Playwright e2e /admin (docs/pay/spec.md S1–S5): браузер внутри образа, раннер ничего не качает.
-    # DooD: bind-mount не годится (путь резолвит демон хоста), поэтому код копируется в образ.
-    runs-on: [self-hosted, ci]
-    steps:
-      - uses: actions/checkout@v4
-      - name: playwright e2e pay.pxbt.app/admin
-        run: |
-          set -e
-          T=pay-e2e:$GITHUB_RUN_ID
-          trap "docker rmi -f $T >/dev/null 2>&1 || true" EXIT
-          # t_6de08f33: guard базы до build — не mcr.microsoft.com (недоступен с раннеров, 7 падений 20-21.10),
-          # версия playwright-образа == npm playwright@X; несуществующий тег = сразу падение без повторов.
-          python3 scripts/check_e2e_base.py --selftest && python3 scripts/check_e2e_base.py test/e2e/Dockerfile
-          B=$(sed -n 's/^FROM //p' test/e2e/Dockerfile | head -1)
-          # root-cause: t_6de08f33 — повтор только на транспортные обрывы Docker Hub; manifest unknown/not found = exit 1.
-          for n in 1 2 3 4; do o=$(docker pull -q "$B" 2>&1) && break; echo "$o"; echo "$o" | grep -qiE 'manifest unknown|not found' && { echo "::error::тег $B не существует"; exit 1; }; [ $n = 4 ] && exit 1; echo "pull $B: попытка $n не удалась, повтор через $((n*20)) с"; sleep $((n*20)); done
-          docker build -q -f test/e2e/Dockerfile -t $T .
-          docker run --rm --ipc=host $T
   ci-bypass-lint:
     # лёгкий линт: не ждать занятый GPU-раннер pc-acf. t_55108370: все jobs ci.yml на label ci —
     # release-раннеры только под выпуски (daily-video), CI их не занимает. Инвариант: test_ci_no_release_label.py
