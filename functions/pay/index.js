@@ -78,40 +78,78 @@ const NETS = ${inline(nets)};
 const el = (h) => { const d = document.createElement('div'); d.innerHTML = h; return d; };
 const box = document.getElementById('opts');
 if (!NETS.length) box.appendChild(el('<p class="warn">Реквизиты ещё не настроены.</p>'));
-let sel = null, tok = null;
+
 for (const c of NETS) {
-  const b = document.createElement('button');
-  b.className = 'opt'; b.setAttribute('aria-pressed', 'false');
-  b.innerHTML = c.label + (c.warn ? '<small>' + c.warn + '</small>' : '');
-  b.onclick = () => { sel = c; tok = null; show(c, b); };
-  box.appendChild(b);
-}
-function show(c, b) {
-  for (const x of box.children) x.setAttribute('aria-pressed', String(x === b));
-  const tk = document.getElementById('toks'); tk.innerHTML = '';
-  document.getElementById('details').classList.remove('hidden');
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.style.marginTop = '16px';
+  const h = document.createElement('h3');
+  h.style.margin = '0 0 8px';
+  h.textContent = c.label;
+  card.appendChild(h);
   if (c.tokens && c.tokens.length) {
+    const tk = document.createElement('div');
+    tk.style.marginBottom = '8px';
     for (const t of c.tokens) {
       const tb = document.createElement('button');
-      tb.className = 'tok'; tb.textContent = t.label; tb.setAttribute('aria-pressed', 'false');
-      tb.onclick = () => { tok = t; for (const x of tk.children) x.setAttribute('aria-pressed', String(x === tb)); paint(c, t); };
+      tb.className = 'tok';
+      tb.textContent = t.label;
+      tb.style.margin = '4px 6px 4px 0';
+      tb.dataset.contract = t.contract || '';
+      tb.onclick = () => {
+        for (const x of tk.children) x.setAttribute('aria-pressed', 'false');
+        tb.setAttribute('aria-pressed', 'true');
+        paintCard(card, c, t);
+      };
       tk.appendChild(tb);
     }
-    paint(c, null);
-  } else paint(c, null);
+    card.appendChild(tk);
+    paintCard(card, c, c.tokens[0]);
+  } else {
+    paintCard(card, c, null);
+  }
+  box.appendChild(card);
 }
-function paint(c, t) {
+
+function paintCard(card, c, t) {
+  const old = card.querySelector('.addr-row');
+  if (old) old.remove();
+  const row = document.createElement('div');
+  row.className = 'addr-row';
+  row.style.display = 'flex';
+  row.style.flexDirection = 'column';
+  row.style.gap = '8px';
   const parts = ['Отправляйте ТОЛЬКО ' + (t ? t.label + ' в сети ' : '') + c.net];
   if (c.warn) parts.push(c.warn);
   if (t) parts.push('контракт токена: ' + t.contract);
-  document.querySelector('.warn').textContent = '⚠ ' + parts.join(' — ') + ' — при переводе из другой сети средства будут потеряны.';
-  document.getElementById('addr').textContent = c.address;
-  document.getElementById('qr').innerHTML = '';
-  // CDN с QR-библиотекой может не загрузиться: адрес важнее картинки, падать нельзя.
-  if (typeof qrcode !== 'function') return;
-  const qr = qrcode(0, 'M'); qr.addData(c.address); qr.make();
-  document.getElementById('qr').innerHTML = qr.createImgTag(4, 8);
+  const warn = document.createElement('p');
+  warn.className = 'warn';
+  warn.textContent = '⚠ ' + parts.join(' — ') + ' — при переводе из другой сети средства будут потеряны.';
+  row.appendChild(warn);
+  const addr = document.createElement('div');
+  addr.className = 'addr';
+  addr.textContent = c.address;
+  row.appendChild(addr);
+  const qr = document.createElement('div');
+  qr.id = 'qr-' + c.id;
+  row.appendChild(qr);
+  const copyBtn = document.createElement('button');
+  copyBtn.className = 'act';
+  copyBtn.textContent = 'Скопировать адрес';
+  copyBtn.onclick = async () => {
+    try { await navigator.clipboard.writeText(c.address); copyBtn.textContent = 'Скопировано!'; setTimeout(() => copyBtn.textContent = 'Скопировать адрес', 2000); }
+    catch (e) { copyBtn.textContent = c.address; }
+  };
+  row.appendChild(copyBtn);
+  card.appendChild(row);
+  if (typeof qrcode === 'function') {
+    const qrgen = qrcode(0, 'M');
+    qrgen.addData(c.address);
+    qrgen.make();
+    qr.innerHTML = qrgen.createImgTag(4, 8);
+  }
 }
+
 const PROJECT_ID = ${inline(projectId)};
 const APPKIT_NETS = [{ id: 1, name: 'Ethereum', nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: ['https://eth.llamarpc.com'] } } }, { id: 8453, name: 'Base', nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: ['https://mainnet.base.org'] } } }];
 const wcBtn = document.getElementById('wc');
@@ -121,13 +159,11 @@ let appkitP = null;
 async function appkit() {
   if (window.__appkit) return window.__appkit.modal;
   if (!PROJECT_ID) throw new Error('WalletConnect не настроен');
-  // Ленивая загрузка: SDK тянется только по клику, страница остаётся статической.
   appkitP = appkitP || Promise.all([
     import('https://esm.sh/@reown/appkit@1.7.18'),
     import('https://esm.sh/@reown/appkit-adapter-wagmi@1.7.18'),
   ]).then(([{ createAppKit }, { WagmiAdapter }]) => {
     const wagmiAdapter = new WagmiAdapter({ networks: APPKIT_NETS, projectId: PROJECT_ID });
-    // email/socials выкл.: иначе AppKit сверяет allowlist клиентом и бракует запись без схемы -> 'Invalid App Configuration'.
     const modal = createAppKit({ adapters: [wagmiAdapter], networks: APPKIT_NETS, projectId: PROJECT_ID, features: { analytics: false, email: false, socials: false, swaps: false, onramp: false } });
     window.__appkit = { modal, wagmiConfig: wagmiAdapter.wagmiConfig };
     return modal;
@@ -139,16 +175,12 @@ wcBtn.onclick = async () => {
   wcState.textContent = 'Открываю список кошельков…';
   try {
     const modal = await appkit();
+    try { await modal.disconnect(); } catch (e) {}
     await modal.open();
     wcState.textContent = '';
   } catch (e) {
     wcState.textContent = 'Кошелёк не открылся: ' + ((e && e.message) || e) + '. Откройте эту страницу в браузере кошелька (SafePal → Discover).';
-  } finally { wcBtn.disabled = false; }
-};
-document.getElementById('copy').onclick = async () => {
-  if (!sel) return;
-  try { await navigator.clipboard.writeText(sel.address); document.getElementById('done').textContent = 'Адрес скопирован.'; }
-  catch (e) { document.getElementById('done').textContent = sel.address; }
+  } finally { wcBtn.disabled = false };
 };
 </scr` + `ipt>
 </body></html>`;
