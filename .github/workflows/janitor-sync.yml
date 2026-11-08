@@ -19,11 +19,12 @@ on:
 jobs:
   sync:
     runs-on: [self-hosted, release]
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: sync host janitor.sh + recreate docker-janitor
         env:
+          GH_TOKEN: ${{ github.token }}
           ACF_TOKEN: ${{ inputs.acf_token }}
           PXBT_TOKEN: ${{ inputs.pxbt_token }}
           TON_TOKEN: ${{ inputs.ton_token }}
@@ -32,7 +33,6 @@ jobs:
           JANITOR_DIR=C:/Users/magic/hermes-ops/janitor
           docker run --rm -i -v "$JANITOR_DIR:/j" alpine \
             sh -c 'cat > /j/janitor.sh && chmod +x /j/janitor.sh && grep -c UV_NO_SYNC=1 /j/janitor.sh && grep -c purge_crashes /j/janitor.sh' < deploy/gpu-pc/janitor.sh
-          # Always recreate docker-janitor with fresh env vars
           docker rm -f docker-janitor 2>/dev/null || true
           docker run -d --name docker-janitor --restart unless-stopped \
             -e ACF_REG_TOKEN="$ACF_TOKEN" \
@@ -44,6 +44,23 @@ jobs:
           docker logs --tail 3 docker-janitor 2>&1 || true
           grep -c "UV_NO_SYNC=1" "$GITHUB_WORKSPACE/deploy/gpu-pc/janitor.sh"
           if [ "$FIX_RUNNERS" = "true" ] && [ -n "$ACF_TOKEN" ] && [ -n "$PXBT_TOKEN" ] && [ -n "$TON_TOKEN" ]; then
+            echo "== Deleting old GitHub runner registrations =="
+            for rname in pc-gh-runner-acf-release pc-gh-runner-aicontent-factory pc-gh-runner-pxbt-infra pc-gh-runner-tonproxy; do
+              # Find runner ID and delete
+              rid=$(curl -s -H "Authorization: token $GH_TOKEN" "https://api.github.com/repos/mytab0r/aicontent-factory/actions/runners?per_page=100" 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); [print(r['id']) for r in d.get('runners',[]) if r['name']=='$rname']" 2>/dev/null || true)
+              if [ -n "$rid" ]; then
+                curl -s -X DELETE -H "Authorization: token $GH_TOKEN" "https://api.github.com/repos/mytab0r/aicontent-factory/actions/runners/$rid" && echo "Deleted $rname ($rid)"
+              fi
+            done
+            # pxbt-infra and tonproxy use their own repos
+            for repo in pxbt-infra tonproxy; do
+              rname=pc-gh-runner-$repo
+              rid=$(curl -s -H "Authorization: token $GH_TOKEN" "https://api.github.com/repos/mytab0r/$repo/actions/runners?per_page=100" 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); [print(r['id']) for r in d.get('runners',[]) if r['name']=='$rname']" 2>/dev/null || true)
+              if [ -n "$rid" ]; then
+                curl -s -X DELETE -H "Authorization: token $GH_TOKEN" "https://api.github.com/repos/mytab0r/$repo/actions/runners/$rid" && echo "Deleted $rname ($rid) from $repo"
+              fi
+            done
+            sleep 5
             echo "== Recreating crash-running runners =="
             docker rm -f gh-runner-acf-release gh-runner-aicontent-factory gh-runner-pxbt-infra gh-runner-tonproxy 2>/dev/null || true
             docker volume rm -f gh-runner-acf-release-data gh-runner-aicontent-factory-data gh-runner-pxbt-infra-data gh-runner-tonproxy-data 2>/dev/null || true
