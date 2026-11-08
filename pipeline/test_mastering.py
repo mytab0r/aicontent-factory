@@ -64,13 +64,13 @@ with tempfile.TemporaryDirectory() as td:
     a = run_master(raw, out)
     got = measure(out)
     print(f"gate: I={got['i']} LRA={got['lra']} TP={got['tp']} (было I={before['i']} LRA={before['lra']})")
-    assert -15 <= got["i"] <= -13 and got["lra"] <= 8 and got["tp"] <= -1, got
+    assert -15 <= got["i"] <= -13 and got["lra"] <= 8 and got["tp"] <= -3, got
 
     out2 = Path(td) / "mastered2.mp3"
     run_master(out, out2)  # идемпотентность: double loudnorm в час-миксе
     b = measure(out2)
     print(f"double: I={b['i']} LRA={b['lra']} TP={b['tp']}")
-    assert -15 <= b["i"] <= -13 and b["lra"] <= 8 and b["tp"] <= -1, b
+    assert -15 <= b["i"] <= -13 and b["lra"] <= 8 and b["tp"] <= -3, b
 
     # 03_music зовёт master(out_path, out_path): ffmpeg не умеет писать в свой вход
     import shutil
@@ -78,7 +78,7 @@ with tempfile.TemporaryDirectory() as td:
     shutil.copy(out, inplace)
     run_master(inplace, inplace)
     c = measure(inplace)
-    assert -15 <= c["i"] <= -13 and c["lra"] <= 8 and c["tp"] <= -1, c
+    assert -15 <= c["i"] <= -13 and c["lra"] <= 8 and c["tp"] <= -3, c
 
 print("test_mastering OK")
 
@@ -99,7 +99,7 @@ with tempfile.TemporaryDirectory() as td:
     run_master_genre(raw, out, "anime lofi")
     got = measure(out)
     print(f"lofi: I={got['i']} LRA={got['lra']} TP={got['tp']}")
-    assert -15 <= got["i"] <= -13 and got["tp"] <= -1, got
+    assert -15 <= got["i"] <= -13 and got["tp"] <= -3, got
     assert got["lra"] >= 5, f"lofi-мастер раздавил динамику: {got}"
 print("test_mastering lofi OK")
 

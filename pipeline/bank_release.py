@@ -315,8 +315,8 @@ def _music_mod():
     return m
 
 
-LIMIT_DB = -1.5  # t_96de1cc6: потолок alimiter; гейт MAX_TP -1.0, 0.5 дБ запаса на mp3-овершут
-TP_SAFE = -1.2   # после кодирования TP выше -> статический доворот вниз (гейт -1.0 не трогаем)
+LIMIT_DB = -6.0  # t_96de1cc6: потолок alimiter; гейт MAX_TP -3.0, 3 дБ запаса на mp3-овершут
+TP_SAFE = -3.5   # после кодирования TP выше -> статический доворот вниз (гейт -3.0 не трогаем)
 LN_PASSES = 8    # t_2c32a785/t_32ee66e0: рендеров с доводкой остатка громкости после лимитера
 LN_TOL = 0.5     # допуск к LUFS_TARGET (гейт MIN_I..MAX_I = цель -2/+1)
 
@@ -421,14 +421,14 @@ def master_final(track: str, genre: str) -> None:
 
 
 def _norm_segments(paths: list[Path], log=print) -> None:
-    """Привести сегменты к LUFS_TARGET ДО склейки статическим gain + alimiter -1.2 dBFS.
+    """Привести сегменты к LUFS_TARGET ДО склейки статическим gain + alimiter -6.0 dBFS.
     t_5dbfa67a: раньше single-pass loudnorm (динамический режим) давил LRA каждого сегмента
     (фикстура 12.4 -> 6.9, run 40449097418: трек LRA 3.1 < 3.5 при CE 7.2) — тот же класс, что
     t_522ca872 в mastering.master. Внутренние LU-скачки (run 40155188504) выравнивает flatten_blocks
     по сетке гейта A18 на готовой склейке, сегментный компрессор для этого не нужен."""
     import mastering
     from quality_gate import LUFS_TARGET
-    lim = "alimiter=limit=0.813:level=disabled:attack=0.1:release=20:asc=0"  # -1.2 dBFS, как mastering lofi
+    lim = "alimiter=limit=0.5:level=disabled:attack=0.1:release=20:asc=0"  # -6.0 dBFS, как mastering lofi
     def one(p):
         tmp = str(p) + ".ln.mp3"
         try:

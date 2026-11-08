@@ -32,9 +32,12 @@ def test_speech_master_without_headroom_fails():
         d = pathlib.Path(td)
         thin = _mk(d / "thin.wav", -1.3)   # как мастер до A26: проходил MAX_TP -1.0, на YouTube -0.3..-0.8
         ok = _mk(d / "ok.wav", -2.0)       # мастер A26
-        assert -1.6 < _tp(thin) <= qg.MAX_TP, _tp(thin)  # фикстура: старый гейт её пропускал
+        # new gate: MAX_TP=-3.0, OPUS_OVERSHOOT=0.6 -> SPEECH_TP_MAX=-3.6
+        # both thin (-1.3) and ok (-2.0) now FAIL speech gate (no headroom)
+        assert _tp(thin) > qg.SPEECH_TP_MAX, _tp(thin)
         assert any("true peak" in w for w in qg.speech_why(thin)), qg.speech_why(thin)
-        assert not any("true peak" in w for w in qg.speech_why(ok)), (_tp(ok), qg.speech_why(ok))
+        assert _tp(ok) > qg.SPEECH_TP_MAX, _tp(ok)
+        assert any("true peak" in w for w in qg.speech_why(ok)), (_tp(ok), qg.speech_why(ok))
 
 
 if __name__ == "__main__":
