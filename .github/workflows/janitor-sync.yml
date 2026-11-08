@@ -22,7 +22,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: sync host janitor.sh + restart docker-janitor
+      - name: sync host janitor.sh + recreate docker-janitor
         env:
           ACF_TOKEN: ${{ inputs.acf_token }}
           PXBT_TOKEN: ${{ inputs.pxbt_token }}
@@ -32,12 +32,14 @@ jobs:
           JANITOR_DIR=C:/Users/magic/hermes-ops/janitor
           docker run --rm -i -v "$JANITOR_DIR:/j" alpine \
             sh -c 'cat > /j/janitor.sh && chmod +x /j/janitor.sh && grep -c UV_NO_SYNC=1 /j/janitor.sh && grep -c purge_crashes /j/janitor.sh' < deploy/gpu-pc/janitor.sh
-          if ! docker inspect docker-janitor >/dev/null 2>&1; then
-            docker run -d --name docker-janitor --restart unless-stopped \
-              -v /var/run/docker.sock:/var/run/docker.sock -v "$JANITOR_DIR:/j" \
-              docker:cli sh /j/janitor.sh
-          fi
-          docker restart docker-janitor
+          # Always recreate docker-janitor with fresh env vars
+          docker rm -f docker-janitor 2>/dev/null || true
+          docker run -d --name docker-janitor --restart unless-stopped \
+            -e ACF_REG_TOKEN="$ACF_TOKEN" \
+            -e PXBT_REG_TOKEN="$PXBT_TOKEN" \
+            -e TON_REG_TOKEN="$TON_TOKEN" \
+            -v /var/run/docker.sock:/var/run/docker.sock -v "$JANITOR_DIR:/j" \
+            docker:cli sh /j/janitor.sh
           sleep 3
           docker logs --tail 3 docker-janitor 2>&1 || true
           grep -c "UV_NO_SYNC=1" "$GITHUB_WORKSPACE/deploy/gpu-pc/janitor.sh"
