@@ -124,16 +124,24 @@ jobs:
           # temporal — нужен backend'у для workflows; должен быть в той же сети
           docker rm -f postiz-temporal 2>/dev/null || true
           for i in 1 2 3 4 5; do
-            docker pull temporalio/temporal:latest && break
+            docker pull temporalio/auto-setup:1.28.1 && break
             [ $i = 5 ] && { echo "::error::temporal image pull failed after 5 retries"; exit 1; }
             sleep 30
           done
-          # debug: check temporal version and commands
-          docker run --rm temporalio/temporal:latest --version
-          docker run --rm temporalio/temporal:latest --help
+          # dcover: Postiz官方docker-compose temporal配置复用为本地持久化
           docker run -d --name postiz-temporal --restart unless-stopped --network postiz-net \
             -p 7233:7233 \
-            temporalio/temporal:latest server start-dev --ip 0.0.0.0
+            temporalio/auto-setup:1.28.1 \
+              POSTGRES_USER=temporal \
+              POSTGRES_PWD=temporal \
+              DB=postgres12 \
+              DB_PORT=5432 \
+              POSTGRES_SEEDS=postiz-postgres \
+              DYNAMIC_CONFIG_FILE_PATH=/etc/temporal/dynamicconfig/development-sql.yaml \
+              ENABLE_ES=true \
+              ES_SEEDS=postiz-postgres \
+              ES_VERSION=v7 \
+              TEMPORAL_NAMESPACE=default
           # wait for temporal
           for i in $(seq 1 30); do
             sleep 2
