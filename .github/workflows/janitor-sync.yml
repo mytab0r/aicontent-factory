@@ -1,29 +1,27 @@
 name: janitor-sync
-# t: host-файл janitor.sh на ПК (C:\\Users\\magic\\hermes-ops\\janitor) вне репо; его recreate ace-step
-# шёл без UV_NO_SYNC и гонка с workflow ломала выпуск (25.10). Эталон живёт в репо (deploy/gpu-pc/janitor.sh),
-# этот workflow (вручную) синхронизирует host-копию и перезапускает docker-janitor.
 on:
   workflow_dispatch:
+    inputs:
+      fix_runners:
+        description: 'Recreate crash-looping runners'
+        required: false
+        default: 'false'
 
 jobs:
   sync:
-    # t_5cdbb967: release, не pc/ci — pc занят часовыми bank fill, ci очередью PR; release простаивает
-    # между выпусками (все раннеры видят docker.sock хоста). Свап самого release-раннера janitor делает
-    # только без Runner.Worker, т.е. после завершения этой джобы.
     runs-on: [self-hosted, release]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: sync host janitor.sh + restart docker-janitor
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FIX_RUNNERS: ${{ inputs.fix_runners }}
         run: |
           set -e
           JANITOR_DIR=C:/Users/magic/hermes-ops/janitor
-          # run 40132476922: $GITHUB_WORKSPACE живёт в томе раннера, не на хосте -> bind давал пустой /src.
-          # Файл идёт через stdin (docker run -i), хостовый путь нужен только для /j.
           docker run --rm -i -v "$JANITOR_DIR:/j" alpine \
             sh -c 'cat > /j/janitor.sh && chmod +x /j/janitor.sh && grep -c UV_NO_SYNC=1 /j/janitor.sh && grep -c purge_crashes /j/janitor.sh' < deploy/gpu-pc/janitor.sh
-          # t_5cdbb967 (ротация /tmp и томов uv-cache/xlv): после ребута ПК docker-janitor пропадает
-          # (создавался вручную вне репо) — поднимаем заново, иначе purge_tmp не крутится.
           if ! docker inspect docker-janitor >/dev/null 2>&1; then
             docker run -d --name docker-janitor --restart unless-stopped \
               -v /var/run/docker.sock:/var/run/docker.sock -v "$JANITOR_DIR:/j" \
@@ -33,3 +31,41 @@ jobs:
           sleep 3
           docker logs --tail 3 docker-janitor 2>&1 || true
           grep -c "UV_NO_SYNC=1" "$GITHUB_WORKSPACE/deploy/gpu-pc/janitor.sh"
+          if [ "$FIX_RUNNERS" = "true" ]; then
+            ACF_TOKEN=$(curl -s -H "Authorization: token $GH_TOKEN" -X POST "https://api.github.com/repos/mytab0r/aicontent-factory/actions/runners/registration-token" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+            PXBT_TOKEN=$(curl -s -H "Authorization: token $GH_TOKEN" -X POST "https://api.github.com/repos/mytab0r/pxbt-infra/actions/runners/registration-token" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+            TON_TOKEN=$(curl -s -H "Authorization: token $GH_TOKEN" -X POST "https://api.github.com/repos/mytab0r/tonproxy/actions/runners/registration-token" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+            echo "== Recreating crash-running runners =="
+            docker rm -f gh-runner-acf-release gh-runner-aicontent-factory gh-runner-pxbt-infra gh-runner-tonproxy 2>/dev/null || true
+            docker volume rm -f gh-runner-acf-release-data gh-runner-aicontent-factory-data gh-runner-pxbt-infra-data gh-runner-tonproxy-data 2>/dev/null || true
+            decode() { python3 -c "import base64,sys; [print(l.split('=',1)[1].strip()) for l in sys.stdin if l.startswith('$1=')]" ; }
+            for cfg in "gh-runner-acf-release|aicontent-factory|$ACF_TOKEN|release" \
+                       "gh-runner-aicontent-factory|aicontent-factory|$ACF_TOKEN|pc,release,ci" \
+                       "gh-runner-pxbt-infra|pxbt-infra|$PXBT_TOKEN|pc" \
+                       "gh-runner-tonproxy|tonproxy|$TON_TOKEN|pc"; do
+              name=$(echo "$cfg" | cut -d'|' -f1)
+              repo=$(echo "$cfg" | cut -d'|' -f2)
+              token=$(echo "$cfg" | cut -d'|' -f3)
+              labels=$(echo "$cfg" | cut -d'|' -f4)
+              docker run -d --name "$name" --restart unless-stopped \
+                --dns 192.168.65.7 --dns 8.8.8.8 --cpus 2 --memory 4g \
+                -e REPO_URL="https://github.com/mytab0r/$repo" -e RUNNER_SCOPE=repo \
+                -e RUNNER_NAME="$name" -e LABELS="$labels" \
+                -e RUNNER_TOKEN="$token" -e RUNNER_WORKDIR="/tmp/runner/${name#gh-runner-}" \
+                -e CONFIGURED_ACTIONS_RUNNER_FILES_DIR=/runner/data \
+                -e DISABLE_AUTOMATIC_DEREGISTRATION=true -e RUNNER_EPHEMERAL=0 \
+                -e ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE=/opt/actions-archive-cache \
+                -v gh-actions-archive-cache:/opt/actions-archive-cache \
+                -v /var/run/docker.sock:/var/run/docker.sock \
+                -v "${name}-data:/runner/data" \
+                -v "${name}-work:/tmp/runner/${name#gh-runner-}" \
+                -v "${name}-tmp:/tmp" \
+                -v "${name}-cache:/root/.cache" \
+                myoung34/github-runner:2.338.2-ubuntu-noble
+            done
+            sleep 60
+            for c in gh-runner-acf-release gh-runner-aicontent-factory gh-runner-pxbt-infra gh-runner-tonproxy; do
+              echo "=== $c ==="
+              docker logs --tail 5 "$c" 2>&1 || true
+            done
+          fi

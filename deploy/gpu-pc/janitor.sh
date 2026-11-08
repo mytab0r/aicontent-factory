@@ -109,16 +109,15 @@ enforce_limits() {
 # Emergency fix for crash-looping runners (t_c289520d)
 fix_crash_loop_runners() {
   echo "=== FIXING CRASH-LOOP RUNNERS ==="
-  GH_PAT=$(cat /opt/data/secrets/github_token 2>/dev/null || true)
-  if [ -z "$GH_PAT" ]; then
-    echo "No GH_PAT, skipping fix"
+  if [ -z "$ACF_TOKEN" ] || [ -z "$PXBT_TOKEN" ] || [ -z "$TON_TOKEN" ]; then
+    echo "No REG tokens in env, skipping fix"
     return
   fi
 
   # Get fresh tokens for each repo
-  ACF_TOKEN=$(curl -s -H "Authorization: token $GH_PAT" -X POST "https://api.github.com/repos/mytab0r/aicontent-factory/actions/runners/registration-token" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['token'])" 2>/dev/null || echo "")
-  PXBT_TOKEN=$(curl -s -H "Authorization: token $GH_PAT" -X POST "https://api.github.com/repos/mytab0r/pxbt-infra/actions/runners/registration-token" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['token'])" 2>/dev/null || echo "")
-  TON_TOKEN=$(curl -s -H "Authorization: token $GH_PAT" -X POST "https://api.github.com/repos/mytab0r/tonproxy/actions/runners/registration-token" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['token'])" 2>/dev/null || echo "")
+  ACF_TOKEN="$ACF_REG_TOKEN"
+  PXBT_TOKEN="$PXBT_REG_TOKEN"
+  TON_TOKEN="$TON_REG_TOKEN"
 
   [ -z "$ACF_TOKEN" ] && echo "ACF token empty" && return
   [ -z "$PXBT_TOKEN" ] && echo "PXBT token empty" && return
@@ -130,9 +129,9 @@ fix_crash_loop_runners() {
     "pxbt-infra|pxbt-infra|$PXBT_TOKEN|pc" \
     "tonproxy|tonproxy|$TON_TOKEN|pc"
   do
-    IFS='|' read -r name repo token labels <<EOF
+    IFS='|' read -r name repo token labels <<JFIX
 $cfg
-EOF
+JFIX
     echo "Fixing $name ($repo)..."
     docker rm -f "gh-runner-$name" >/dev/null 2>&1
     docker volume rm -f "gh-runner-$name-data" "gh-runner-$name-work" "gh-runner-$name-tmp" "gh-runner-$name-cache" >/dev/null 2>&1
