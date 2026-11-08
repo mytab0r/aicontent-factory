@@ -112,7 +112,7 @@ jobs:
           YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
         run: |
           set -e
-          sh deploy/gpu-pc/disk_gate.sh c 2
+          sh deploy/gpu-pc/disk_gate.sh d 2
           docker rm -f postiz postiz-postgres postiz-redis 2>/dev/null || true
           docker network create postiz-net 2>/dev/null || true
           docker run --rm -v /run/desktop/mnt/host/c/dockerlocal/postiz:/d alpine:3.20 \
