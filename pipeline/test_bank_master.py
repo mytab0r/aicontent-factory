@@ -186,7 +186,7 @@ def test_loudnorm_2pass_budget_and_final_tp_trim():
     # При TP_SAFE=-3.5 каждый проход с TP > TP_SAFE гонит одну тишину + 1 доворот.
     # 8 проходов по tp=-0.1 -> 8 тишины + 16 доворотов (2 на проход) = 8 итераций seq.
     import importlib
-    seq = [{"tp": -0.1, "i": T - 6.0, "lra": 5} for _ in range(8)] + [{"tp": -3.6, "i": T - 7, "lra": 5} for _ in range(9)]
+    seq = [{"tp": -0.1, "i": T - 6.0, "lra": 5} for _ in range(8)] + [{"tp": -3.6, "i": T - 7, "lra": 5} for _ in range(8)]
     j, seen, dst_h, calls, rest, left = _ln2_run(seq, 8)
     assert not rest and dst_h and not left, (rest, left)
     assert len(calls) == 1 + 8 + 2, len(calls)
