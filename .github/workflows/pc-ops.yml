@@ -136,7 +136,7 @@ jobs:
           # wait for temporal with logs on failure
           for i in $(seq 1 30); do
             sleep 2
-            docker exec postiz-temporal temporal cluster health --address localhost:7233 2>/dev/null && break
+            docker exec postiz-temporal temporal operator namespace describe default --address localhost:7233 >/dev/null 2>&1 && break
             if [ $i = 30 ]; then
               echo "=== temporal logs (failed) ==="
               docker logs postiz-temporal 2>&1 | tail -50
