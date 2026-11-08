@@ -128,6 +128,9 @@ jobs:
             [ $i = 5 ] && { echo "::error::temporal image pull failed after 5 retries"; exit 1; }
             sleep 30
           done
+          # debug: check temporal version and commands
+          docker run --rm temporalio/temporal:latest --version
+          docker run --rm temporalio/temporal:latest --help
           docker run -d --name postiz-temporal --restart unless-stopped --network postiz-net \
             -p 7233:7233 \
             temporalio/temporal:latest server start-dev --ip 0.0.0.0
