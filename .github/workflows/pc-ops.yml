@@ -162,14 +162,20 @@ jobs:
           set -e
           echo "=== Postiz containers ==="
           docker ps --filter name=postiz --format '{{.Names}} {{.Status}}'
-          echo "=== Postiz HTTP health ==="
-          curl -s -m 10 http://localhost:5070/api/health 2>&1 | head -c 500 || true
+          echo "=== Postiz HTTP health (verbose) ==="
+          curl -v -m 10 http://localhost:5070/api/health 2>&1 | head -c 1000 || true
+          echo
+          echo "=== Postiz root (UI) ==="
+          curl -v -m 10 http://localhost:5070 2>&1 | head -c 1000 || true
           echo
           echo "=== Postiz integrations ==="
-          curl -s -m 10 http://localhost:5070/api/integrations 2>&1 | head -c 1000 || true
+          curl -v -m 10 http://localhost:5070/api/integrations 2>&1 | head -c 2000 || true
           echo
           echo "=== Postiz YouTube status ==="
-          curl -s -m 10 http://localhost:5070/api/integrations/social/youtube 2>&1 | head -c 1000 || true
+          curl -v -m 10 http://localhost:5070/api/integrations/social/youtube 2>&1 | head -c 2000 || true
+          echo
+          echo "=== Postiz logs (last 50) ==="
+          docker logs --tail 50 postiz 2>&1 | head -c 3000 || true
 
       - name: pc-ops status
         if: ${{ inputs.action == 'status' }}
