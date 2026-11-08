@@ -124,14 +124,17 @@ jobs:
           # temporal — нужен backend'у для workflows; должен быть в той же сети
           docker rm -f postiz-temporal 2>/dev/null || true
           for i in 1 2 3 4 5; do
-            docker pull temporalio/temporal:latest && break
+            docker pull temporalio/auto-setup:1.28.1 && break
             [ $i = 5 ] && { echo "::error::temporal image pull failed after 5 retries"; exit 1; }
             sleep 30
           done
-          # простой dev-сервер без внешних зависимостей (sqlite in-memory)
+          # auto-setup с минимальной конфигурацией (sqlite, без ES) как в docker-compose Postiz
           docker run -d --name postiz-temporal --restart unless-stopped --network postiz-net \
             -p 7233:7233 \
-            temporalio/temporal:latest temporal server start-dev --ip 0.0.0.0
+            -e DB=sqlite \
+            -e DB_FILENAME=/tmp/temporal.db \
+            -e TEMPORAL_NAMESPACE=default \
+            temporalio/auto-setup:1.28.1
           # wait for temporal
           for i in $(seq 1 30); do
             sleep 2
