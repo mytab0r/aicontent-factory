@@ -22,7 +22,16 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: sync host janitor.sh + recreate docker-janitor
+      - name: sync host janitor.sh + stop docker-janitor
+        run: |
+          set -e
+          JANITOR_DIR=C:/Users/magic/hermes-ops/janitor
+          docker run --rm -i -v "$JANITOR_DIR:/j" alpine \
+            sh -c 'cat > /j/janitor.sh && chmod +x /j/janitor.sh && grep -c UV_NO_SYNC=1 /j/janitor.sh && grep -c purge_crashes /j/janitor.sh' < deploy/gpu-pc/janitor.sh
+          docker rm -f docker-janitor 2>/dev/null || true
+          grep -c "UV_NO_SYNC=1" "$GITHUB_WORKSPACE/deploy/gpu-pc/janitor.sh"
+      - name: fix crash-looping runners
+        if: inputs.fix_runners == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           ACF_TOKEN: ${{ inputs.acf_token }}
@@ -30,71 +39,67 @@ jobs:
           TON_TOKEN: ${{ inputs.ton_token }}
         run: |
           set -e
-          JANITOR_DIR=C:/Users/magic/hermes-ops/janitor
-          docker run --rm -i -v "$JANITOR_DIR:/j" alpine \
-            sh -c 'cat > /j/janitor.sh && chmod +x /j/janitor.sh && grep -c UV_NO_SYNC=1 /j/janitor.sh && grep -c purge_crashes /j/janitor.sh' < deploy/gpu-pc/janitor.sh
-          docker rm -f docker-janitor 2>/dev/null || true
+          if [ -z "$ACF_TOKEN" ] || [ -z "$PXBT_TOKEN" ] || [ -z "$TON_TOKEN" ]; then
+            echo "Missing tokens, skipping fix"
+            exit 0
+          fi
+          echo "== Deleting old GitHub runner registrations =="
+          # Delete from aicontent-factory repo
+          for rname in pc-gh-runner-acf-release pc-gh-runner-aicontent-factory; do
+            rid=$(curl -s -H "Authorization: token $GH_TOKEN" "https://api.github.com/repos/mytab0r/aicontent-factory/actions/runners?per_page=100" 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); [print(r['id']) for r in d.get('runners',[]) if r['name']=='$rname']" 2>/dev/null || true)
+            if [ -n "$rid" ]; then
+              curl -s -X DELETE -H "Authorization: token $GH_TOKEN" "https://api.github.com/repos/mytab0r/aicontent-factory/actions/runners/$rid" && echo "Deleted $rname ($rid) from aicontent-factory"
+            fi
+          done
+          # Delete from pxbt-infra repo
+          rname=pc-gh-runner-pxbt-infra
+          rid=$(curl -s -H "Authorization: token $GH_TOKEN" "https://api.github.com/repos/mytab0r/pxbt-infra/actions/runners?per_page=100" 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); [print(r['id']) for r in d.get('runners',[]) if r['name']=='$rname']" 2>/dev/null || true)
+          if [ -n "$rid" ]; then
+            curl -s -X DELETE -H "Authorization: token $GH_TOKEN" "https://api.github.com/repos/mytab0r/pxbt-infra/actions/runners/$rid" && echo "Deleted $rname ($rid) from pxbt-infra"
+          fi
+          # Delete from tonproxy repo
+          rname=pc-gh-runner-tonproxy
+          rid=$(curl -s -H "Authorization: token $GH_TOKEN" "https://api.github.com/repos/mytab0r/tonproxy/actions/runners?per_page=100" 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); [print(r['id']) for r in d.get('runners',[]) if r['name']=='$rname']" 2>/dev/null || true)
+          if [ -n "$rid" ]; then
+            curl -s -X DELETE -H "Authorization: token $GH_TOKEN" "https://api.github.com/repos/mytab0r/tonproxy/actions/runners/$rid" && echo "Deleted $rname ($rid) from tonproxy"
+          fi
+          sleep 5
+          echo "== Recreating crash-running runners =="
+          docker rm -f gh-runner-acf-release gh-runner-aicontent-factory gh-runner-pxbt-infra gh-runner-tonproxy 2>/dev/null || true
+          docker volume rm -f gh-runner-acf-release-data gh-runner-aicontent-factory-data gh-runner-pxbt-infra-data gh-runner-tonproxy-data 2>/dev/null || true
+          for cfg in "gh-runner-acf-release|aicontent-factory|$ACF_TOKEN|release" \
+                     "gh-runner-aicontent-factory|aicontent-factory|$ACF_TOKEN|pc,release,ci" \
+                     "gh-runner-pxbt-infra|pxbt-infra|$PXBT_TOKEN|pc" \
+                     "gh-runner-tonproxy|tonproxy|$TON_TOKEN|pc"; do
+            name=$(echo "$cfg" | cut -d'|' -f1)
+            repo=$(echo "$cfg" | cut -d'|' -f2)
+            token=$(echo "$cfg" | cut -d'|' -f3)
+            labels=$(echo "$cfg" | cut -d'|' -f4)
+            docker run -d --name "$name" --restart unless-stopped \
+              --dns 192.168.65.7 --dns 8.8.8.8 --cpus 2 --memory 4g \
+              -e REPO_URL="https://github.com/mytab0r/$repo" -e RUNNER_SCOPE=repo \
+              -e RUNNER_NAME="$name" -e LABELS="$labels" \
+              -e RUNNER_TOKEN="$token" -e RUNNER_WORKDIR="/tmp/runner/${name#gh-runner-}" \
+              -e CONFIGURED_ACTIONS_RUNNER_FILES_DIR=/runner/data \
+              -e DISABLE_AUTOMATIC_DEREGISTRATION=true -e RUNNER_EPHEMERAL=0 \
+              -e ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE=/opt/actions-archive-cache \
+              -v gh-actions-archive-cache:/opt/actions-archive-cache \
+              -v /var/run/docker.sock:/var/run/docker.sock \
+              -v "${name}-data:/runner/data" \
+              -v "${name}-work:/tmp/runner/${name#gh-runner-}" \
+              -v "${name}-tmp:/tmp" \
+              -v "${name}-cache:/root/.cache" \
+              myoung34/github-runner:2.338.2-ubuntu-noble
+          done
+          sleep 60
+          for c in gh-runner-acf-release gh-runner-aicontent-factory gh-runner-pxbt-infra gh-runner-tonproxy; do
+            echo "=== $c ==="
+            docker logs --tail 5 "$c" 2>&1 || true
+          done
+      - name: start docker-janitor
+        run: |
           docker run -d --name docker-janitor --restart unless-stopped \
-            -e ACF_REG_TOKEN="$ACF_TOKEN" \
-            -e PXBT_REG_TOKEN="$PXBT_TOKEN" \
-            -e TON_REG_TOKEN="$TON_TOKEN" \
-            -v /var/run/docker.sock:/var/run/docker.sock -v "$JANITOR_DIR:/j" \
+            -v /var/run/docker.sock:/var/run/docker.sock -v "C:/Users/magic/hermes-ops/janitor:/j" \
             docker:cli sh /j/janitor.sh
           sleep 3
           docker logs --tail 3 docker-janitor 2>&1 || true
-          grep -c "UV_NO_SYNC=1" "$GITHUB_WORKSPACE/deploy/gpu-pc/janitor.sh"
-          if [ "$FIX_RUNNERS" = "true" ] && [ -n "$ACF_TOKEN" ] && [ -n "$PXBT_TOKEN" ] && [ -n "$TON_TOKEN" ]; then
-            echo "== Deleting old GitHub runner registrations =="
-            # Delete from aicontent-factory repo
-            for rname in pc-gh-runner-acf-release pc-gh-runner-aicontent-factory; do
-              rid=$(curl -s -H "Authorization: token $GH_TOKEN" "https://api.github.com/repos/mytab0r/aicontent-factory/actions/runners?per_page=100" 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); [print(r['id']) for r in d.get('runners',[]) if r['name']=='$rname']" 2>/dev/null || true)
-              if [ -n "$rid" ]; then
-                curl -s -X DELETE -H "Authorization: token $GH_TOKEN" "https://api.github.com/repos/mytab0r/aicontent-factory/actions/runners/$rid" && echo "Deleted $rname ($rid) from aicontent-factory"
-              fi
-            done
-            # Delete from pxbt-infra repo
-            rname=pc-gh-runner-pxbt-infra
-            rid=$(curl -s -H "Authorization: token $GH_TOKEN" "https://api.github.com/repos/mytab0r/pxbt-infra/actions/runners?per_page=100" 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); [print(r['id']) for r in d.get('runners',[]) if r['name']=='$rname']" 2>/dev/null || true)
-            if [ -n "$rid" ]; then
-              curl -s -X DELETE -H "Authorization: token $GH_TOKEN" "https://api.github.com/repos/mytab0r/pxbt-infra/actions/runners/$rid" && echo "Deleted $rname ($rid) from pxbt-infra"
-            fi
-            # Delete from tonproxy repo
-            rname=pc-gh-runner-tonproxy
-            rid=$(curl -s -H "Authorization: token $GH_TOKEN" "https://api.github.com/repos/mytab0r/tonproxy/actions/runners?per_page=100" 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); [print(r['id']) for r in d.get('runners',[]) if r['name']=='$rname']" 2>/dev/null || true)
-            if [ -n "$rid" ]; then
-              curl -s -X DELETE -H "Authorization: token $GH_TOKEN" "https://api.github.com/repos/mytab0r/tonproxy/actions/runners/$rid" && echo "Deleted $rname ($rid) from tonproxy"
-            fi
-            sleep 5
-            echo "== Recreating crash-running runners =="
-            docker rm -f gh-runner-acf-release gh-runner-aicontent-factory gh-runner-pxbt-infra gh-runner-tonproxy 2>/dev/null || true
-            docker volume rm -f gh-runner-acf-release-data gh-runner-aicontent-factory-data gh-runner-pxbt-infra-data gh-runner-tonproxy-data 2>/dev/null || true
-            for cfg in "gh-runner-acf-release|aicontent-factory|$ACF_TOKEN|release" \
-                       "gh-runner-aicontent-factory|aicontent-factory|$ACF_TOKEN|pc,release,ci" \
-                       "gh-runner-pxbt-infra|pxbt-infra|$PXBT_TOKEN|pc" \
-                       "gh-runner-tonproxy|tonproxy|$TON_TOKEN|pc"; do
-              name=$(echo "$cfg" | cut -d'|' -f1)
-              repo=$(echo "$cfg" | cut -d'|' -f2)
-              token=$(echo "$cfg" | cut -d'|' -f3)
-              labels=$(echo "$cfg" | cut -d'|' -f4)
-              docker run -d --name "$name" --restart unless-stopped \
-                --dns 192.168.65.7 --dns 8.8.8.8 --cpus 2 --memory 4g \
-                -e REPO_URL="https://github.com/mytab0r/$repo" -e RUNNER_SCOPE=repo \
-                -e RUNNER_NAME="$name" -e LABELS="$labels" \
-                -e RUNNER_TOKEN="$token" -e RUNNER_WORKDIR="/tmp/runner/${name#gh-runner-}" \
-                -e CONFIGURED_ACTIONS_RUNNER_FILES_DIR=/runner/data \
-                -e DISABLE_AUTOMATIC_DEREGISTRATION=true -e RUNNER_EPHEMERAL=0 \
-                -e ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE=/opt/actions-archive-cache \
-                -v gh-actions-archive-cache:/opt/actions-archive-cache \
-                -v /var/run/docker.sock:/var/run/docker.sock \
-                -v "${name}-data:/runner/data" \
-                -v "${name}-work:/tmp/runner/${name#gh-runner-}" \
-                -v "${name}-tmp:/tmp" \
-                -v "${name}-cache:/root/.cache" \
-                myoung34/github-runner:2.338.2-ubuntu-noble
-            done
-            sleep 60
-            for c in gh-runner-acf-release gh-runner-aicontent-factory gh-runner-pxbt-infra gh-runner-tonproxy; do
-              echo "=== $c ==="
-              docker logs --tail 5 "$c" 2>&1 || true
-            done
-          fi
