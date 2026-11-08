@@ -27,7 +27,7 @@ BAND_TOL = 3.0   # мягкое отклонение полосы
 BAND_MAX = 5.0   # жёсткое: одиночная полоса дальше = FAIL
 BAND_SOFT_SUM = 8.0  # сумма мягких отклонений (одобренный versija_1 даёт 7.7, жалобы 14.9+)
 BAL_TOL = 2.0
-MAX_TP = -1.0  # true peak dBTP; 17.10 YouTube-копия p-kkEmLGviU: +1.3..+1.9 = клиппинг  # (среднее 1-5 кГц) - (150-400 Гц) не хуже эталона более чем на столько
+MAX_TP = -3.0  # true peak dBTP; master goal TP=-3 (AAC headroom); 17.10 YouTube-копия p-kkEmLGviU: +1.3..+1.9 = клиппинг
 # A6: внутренняя тишина/обрыв >= 2 с ниже -50 дБ вне хвоста (последние 10 с = штатное затухание: ref1 6.5 с, v2 3.4 с)
 SIL_DB, SIL_MIN, TAIL = -50, 2.0, 10.0
 # A15: интегральная громкость финального звука. YouTube нормализует к ~-14 LUFS: тише -16 = трек проигрывает
@@ -478,8 +478,8 @@ def tuning_why(f):
 
 
 # A27: YouTube перекодирует звук в Opus и поднимает true peak речи. Замер 26.10 YouTube-копий канала 2:
-# K5cqI_AX4hk TP -0.3, kQauDNrBAWU -0.8 dBTP (мастер проходил MAX_TP -1.0); A26: Opus +0.6 дБ.
-# Мастер речи обязан иметь запас: TP <= MAX_TP - OPUS_OVERSHOOT (-1.6). Мастер A26 (loudnorm TP=-2.0) проходит.
+# K5cqI_AX4hk TP -0.3, kQauDNrBAWU -0.8 dBTP (мастер цели -3.0); A26: Opus +0.6 дБ.
+# Мастер речи обязан иметь запас: TP <= MAX_TP - OPUS_OVERSHOOT (-3.6). Мастер A26 (loudnorm TP=-3.0) проходит.
 OPUS_OVERSHOOT = 0.6
 SPEECH_TP_MAX = MAX_TP - OPUS_OVERSHOOT
 
