@@ -10,7 +10,7 @@ on:
         description: "status | deploy-comfyui | download-models"
         default: "status"
         type: choice
-        options: [status, deploy-comfyui, download-models, comfy-object-list, add-release-runner, diag-release-runner, add-repo-runner, deploy-postiz]
+        options: [status, deploy-comfyui, download-models, comfy-object-list, add-release-runner, diag-release-runner, add-repo-runner, deploy-postiz, postiz-diag]
       repo:
         description: "owner/repo for add-repo-runner"
         required: false
@@ -155,6 +155,21 @@ jobs:
           docker ps --filter name=postiz --format '{{.Names}} {{.Status}}'
           echo "Redirect URI для Google Cloud Console (OAuth client -> Authorized redirect URIs -> добавить):"
           echo "  http://localhost:5070/api/integrations/social/youtube/callback"
+
+      - name: pc-ops postiz-diag
+        if: ${{ inputs.action == 'postiz-diag' }}
+        run: |
+          set -e
+          echo "=== Postiz containers ==="
+          docker ps --filter name=postiz --format '{{.Names}} {{.Status}}'
+          echo "=== Postiz HTTP health ==="
+          curl -s -m 10 http://localhost:5070/api/health 2>&1 | head -c 500 || true
+          echo
+          echo "=== Postiz integrations ==="
+          curl -s -m 10 http://localhost:5070/api/integrations 2>&1 | head -c 1000 || true
+          echo
+          echo "=== Postiz YouTube status ==="
+          curl -s -m 10 http://localhost:5070/api/integrations/social/youtube 2>&1 | head -c 1000 || true
 
       - name: pc-ops status
         if: ${{ inputs.action == 'status' }}
