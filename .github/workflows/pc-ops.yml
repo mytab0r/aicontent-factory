@@ -121,6 +121,17 @@ jobs:
             -e POSTGRES_PASSWORD=postiz-local-pw -e POSTGRES_USER=postiz-user -e POSTGRES_DB=postiz-db-local \
             -v /run/desktop/mnt/host/c/dockerlocal/postiz/pg-data:/var/lib/postgresql/data postgres:17-alpine
           docker run -d --name postiz-redis --restart unless-stopped --network postiz-net redis:7-alpine
+          # temporal — нужен backend'у для workflows; должен быть в той же сети
+          docker rm -f postiz-temporal 2>/dev/null || true
+          docker run -d --name postiz-temporal --restart unless-stopped --network postiz-net \
+            -p 7233:7233 \
+            temporalio/auto-setup:1.25
+          # wait for temporal
+          for i in $(seq 1 30); do
+            sleep 2
+            docker exec postiz-temporal temporal cluster health 2>/dev/null && break
+            [ $i = 30 ] && { echo "::error::temporal not healthy"; exit 1; }
+          done
           # YOUTUBE_TOKEN_JSON — authorized_user creds (Desktop OAuth client владельца),
           # содержит client_id/client_secret. Postiz может переиспользовать тот же client,
           # но нужен ОДИН ручной шаг владельца: добавить Web redirect URI в GCP Console
@@ -143,6 +154,7 @@ jobs:
             -e REDIS_URL="redis://postiz-redis:6379" -e IS_GENERAL=true -e DISABLE_REGISTRATION=false \
             -e STORAGE_PROVIDER=local -e UPLOAD_DIRECTORY=/uploads -e NEXT_PUBLIC_UPLOAD_DIRECTORY=/uploads \
             -e YOUTUBE_CLIENT_ID="$YT_ID" -e YOUTUBE_CLIENT_SECRET="$YT_SECRET" \
+            -e TEMPORAL_ADDRESS="postiz-temporal:7233" \
             -v /run/desktop/mnt/host/c/dockerlocal/postiz/uploads:/uploads \
             ghcr.io/gitroomhq/postiz-app:latest
           for i in $(seq 1 30); do
