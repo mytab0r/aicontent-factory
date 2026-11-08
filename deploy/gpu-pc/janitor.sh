@@ -105,7 +105,52 @@ enforce_limits() {
       && echo "RUNNER LIMITS RESTORED $n mem=$m -> 4g $(date -u +%FT%TZ)" || echo "RUNNER LIMITS RESTORE FAILED $n $(date -u +%FT%TZ)"
   done
 }
+# Emergency fix for crash-looping runners
+fix_crash_loop_runners() {
+  echo "=== FIXING CRASH-LOOP RUNNERS ==="
+  # Tokens (refresh if older than 50 min)
+  for r in aicontent-factory pxbt-infra tonproxy; do
+    curl -s -H "Authorization: token \$GH_PAT" -X POST "https://api.github.com/repos/mytab0r/\$r/actions/runners/registration-token" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['token'])" 2>/dev/null || return 1
+  done | read -r ACF_TOKEN PXBT_TOKEN TON_TOKEN
+  
+  # Recreate each crash-looping runner
+  for cfg in \
+    'acf-release|aicontent-factory|\$ACF_TOKEN|release' \
+    'aicontent-factory|aicontent-factory|\$ACF_TOKEN|pc,release,ci' \
+    'pxbt-infra|pxbt-infra|\$PXBT_TOKEN|pc' \
+    'tonproxy|tonproxy|\$TON_TOKEN|pc'
+  do
+    IFS='|' read -r name repo token labels <<< "\$cfg"
+    echo "Fixing \$name (\$repo)..."
+    docker rm -f "gh-runner-\$name" >/dev/null 2>&1
+    docker volume rm -f "gh-runner-\$name-data" "gh-runner-\$name-work" "gh-runner-\$name-tmp" "gh-runner-\$name-cache" >/dev/null 2>&1
+    docker run -d --name "gh-runner-\$name" --restart unless-stopped \
+      --dns 192.168.65.7 --dns 8.8.8.8 --dns 77.88.8.8 --cpus 4 --memory 6g \
+      -e "REPO_URL=https://github.com/mytab0r/\$repo" -e "RUNNER_SCOPE=repo" \
+      -e "RUNNER_NAME=pc-gh-runner-\$name" -e "LABELS=\$labels" \
+      -e "RUNNER_TOKEN=\$token" -e "RUNNER_WORKDIR=/tmp/runner/\$name" \
+      -e "CONFIGURED_ACTIONS_RUNNER_FILES_DIR=/runner/data" \
+      -e "DISABLE_AUTOMATIC_DEREGISTRATION=true" -e "RUNNER_EPHEMERAL=0" \
+      -e "ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE=/opt/actions-archive-cache" \
+      -v "gh-actions-archive-cache:/opt/actions-archive-cache" \
+      -v "/var/run/docker.sock:/var/run/docker.sock" \
+      -v "gh-runner-\$name-data:/runner/data" \
+      -v "gh-runner-\$name-work:/tmp/runner/\$name" \
+      -v "gh-runner-\$name-tmp:/tmp" \
+      -v "gh-runner-\$name-cache:/root/.cache" \
+      "myoung34/github-runner:2.338.2-ubuntu-noble" >/dev/null
+    echo "Started gh-runner-\$name"
+  done
+  sleep 40
+  for c in gh-runner-acf-release gh-runner-aicontent-factory gh-runner-pxbt-infra gh-runner-tonproxy; do
+    echo "=== \$c ==="; docker logs --tail 10 "\$c" 2>&1 || true
+  done
+}
+
+fix_crash_loop_runners
+
 while true; do
+
   enforce_limits
   guard_ace
   for c in $(docker ps -a --format '{{.Names}}'); do [ "$c" = ace-step ] && continue; echo "$c" | grep -Eq "$BAD_CT" && docker rm -f "$c" >/dev/null 2>&1; done
