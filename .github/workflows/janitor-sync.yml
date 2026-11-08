@@ -6,17 +6,27 @@ on:
         description: 'Recreate crash-looping runners'
         required: false
         default: 'false'
+      acf_token:
+        description: 'aicontent-factory registration token'
+        required: false
+      pxbt_token:
+        description: 'pxbt-infra registration token'
+        required: false
+      ton_token:
+        description: 'tonproxy registration token'
+        required: false
 
 jobs:
   sync:
     runs-on: [self-hosted, release]
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: sync host janitor.sh + restart docker-janitor
         env:
-          GH_TOKEN: ${{ github.token }}
-          FIX_RUNNERS: ${{ inputs.fix_runners }}
+          ACF_TOKEN: ${{ inputs.acf_token }}
+          PXBT_TOKEN: ${{ inputs.pxbt_token }}
+          TON_TOKEN: ${{ inputs.ton_token }}
         run: |
           set -e
           JANITOR_DIR=C:/Users/magic/hermes-ops/janitor
@@ -31,14 +41,10 @@ jobs:
           sleep 3
           docker logs --tail 3 docker-janitor 2>&1 || true
           grep -c "UV_NO_SYNC=1" "$GITHUB_WORKSPACE/deploy/gpu-pc/janitor.sh"
-          if [ "$FIX_RUNNERS" = "true" ]; then
-            ACF_TOKEN=$(curl -s -H "Authorization: token $GH_TOKEN" -X POST "https://api.github.com/repos/mytab0r/aicontent-factory/actions/runners/registration-token" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
-            PXBT_TOKEN=$(curl -s -H "Authorization: token $GH_TOKEN" -X POST "https://api.github.com/repos/mytab0r/pxbt-infra/actions/runners/registration-token" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
-            TON_TOKEN=$(curl -s -H "Authorization: token $GH_TOKEN" -X POST "https://api.github.com/repos/mytab0r/tonproxy/actions/runners/registration-token" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+          if [ "$FIX_RUNNERS" = "true" ] && [ -n "$ACF_TOKEN" ] && [ -n "$PXBT_TOKEN" ] && [ -n "$TON_TOKEN" ]; then
             echo "== Recreating crash-running runners =="
             docker rm -f gh-runner-acf-release gh-runner-aicontent-factory gh-runner-pxbt-infra gh-runner-tonproxy 2>/dev/null || true
             docker volume rm -f gh-runner-acf-release-data gh-runner-aicontent-factory-data gh-runner-pxbt-infra-data gh-runner-tonproxy-data 2>/dev/null || true
-            decode() { python3 -c "import base64,sys; [print(l.split('=',1)[1].strip()) for l in sys.stdin if l.startswith('$1=')]" ; }
             for cfg in "gh-runner-acf-release|aicontent-factory|$ACF_TOKEN|release" \
                        "gh-runner-aicontent-factory|aicontent-factory|$ACF_TOKEN|pc,release,ci" \
                        "gh-runner-pxbt-infra|pxbt-infra|$PXBT_TOKEN|pc" \

@@ -109,15 +109,13 @@ enforce_limits() {
 # Emergency fix for crash-looping runners (t_c289520d)
 fix_crash_loop_runners() {
   echo "=== FIXING CRASH-LOOP RUNNERS ==="
+  ACF_TOKEN="$ACF_REG_TOKEN"
+  PXBT_TOKEN="$PXBT_REG_TOKEN"
+  TON_TOKEN="$TON_REG_TOKEN"
   if [ -z "$ACF_TOKEN" ] || [ -z "$PXBT_TOKEN" ] || [ -z "$TON_TOKEN" ]; then
     echo "No REG tokens in env, skipping fix"
     return
   fi
-
-  # Get fresh tokens for each repo
-  ACF_TOKEN="$ACF_REG_TOKEN"
-  PXBT_TOKEN="$PXBT_REG_TOKEN"
-  TON_TOKEN="$TON_REG_TOKEN"
 
   [ -z "$ACF_TOKEN" ] && echo "ACF token empty" && return
   [ -z "$PXBT_TOKEN" ] && echo "PXBT token empty" && return
