@@ -123,6 +123,11 @@ jobs:
           docker run -d --name postiz-redis --restart unless-stopped --network postiz-net redis:7-alpine
           # temporal — нужен backend'у для workflows; должен быть в той же сети
           docker rm -f postiz-temporal 2>/dev/null || true
+          for i in 1 2 3 4 5; do
+            docker pull temporalio/auto-setup:1.25 && break
+            [ $i = 5 ] && { echo "::error::temporal image pull failed after 5 retries"; exit 1; }
+            sleep 30
+          done
           docker run -d --name postiz-temporal --restart unless-stopped --network postiz-net \
             -p 7233:7233 \
             temporalio/auto-setup:1.25
