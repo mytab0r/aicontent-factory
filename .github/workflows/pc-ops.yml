@@ -130,7 +130,7 @@ jobs:
           done
           docker run -d --name postiz-temporal --restart unless-stopped --network postiz-net \
             -p 7233:7233 \
-            temporalio/temporal:1.9.1 server start-dev --ip 0.0.0.0
+            --entrypoint sh temporalio/temporal:1.9.1 -c 'temporal server start-dev --ip 0.0.0.0'
           # wait for temporal
           for i in $(seq 1 30); do
             sleep 2
