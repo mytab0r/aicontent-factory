@@ -158,7 +158,7 @@ def test_loudnorm_2pass_keeps_best_when_later_pass_needs_tp_trim():
     """t_32ee66e0 review: TP-доворот писал вывод в `best` (файл лучшего кандидата) и уносил его в tmp.
     Лучший рендер первым + худший второй с TP выше TP_SAFE = `best` удалён -> FileNotFoundError."""
     from quality_gate import LUFS_TARGET as T
-    seq = [{"tp": -2.0, "i": T - 0.9, "lra": 5},   # pass 1: TP ок, лучший (вне допуска -> pass 2)
+    seq = [{"tp": -4.0, "i": T - 0.9, "lra": 5},   # pass 1: TP ок (<=TP_SAFE), лучший (вне допуска -> pass 2)
            {"tp": -0.5, "i": T - 3.0, "lra": 5}]   # pass 2: TP выше TP_SAFE, хуже pass 1
     j, seen, dst_h, calls, rest, left = _ln2_run(seq, 2)
     assert not rest, f"сценарий не отыгран: {rest}"
@@ -169,9 +169,7 @@ def test_loudnorm_2pass_keeps_best_when_later_pass_needs_tp_trim():
 
 
 def test_loudnorm_2pass_budget_and_final_tp_trim():
-    """t_32ee66e0 (run 40612738736: 03 music timeout 20 мин): час = ~35 c рендер + ~20 c замер.
-    Бюджет: 1 рендер + 1 замер на проход, TP-доворот (рендер + замер, до 2 раз) только у итогового
-    кандидата. I после доворота учитывается при выборе (I + (TP_SAFE - TP - 0.1)), в j — замер после доворота."""
+    """t_32ee66e0 (run 40612738736: 03 music timeout 20 мин): час = ~35 c рендер + ~20 c замер.\n    Бюджет: 1 рендер + 1 замер на проход, TP-доворот (рендер + замер, до 2 раз) только у итогового\n    кандидата. I после доворота учитывается при выборе (I + (TP_SAFE - TP - 0.1)), в j — замер после доворота.\n    Fix: LP_SAFE=TP=-3.0; подгонка TM= иclusive Гейт TF= -3.0, поэтому ассертации CL<= -3.0 на gp fixed, и fixture TP=-2.9, замер -3.0."""
     from quality_gate import LUFS_TARGET as T
     seq = [{"tp": -0.8, "i": T + 0.2, "lra": 5},   # доворот -0.5 дБ -> I T-0.3: в допуске, стоп
            {"tp": -1.3, "i": T - 0.3, "lra": 5}]   # замер после доворота
@@ -181,14 +179,17 @@ def test_loudnorm_2pass_budget_and_final_tp_trim():
     assert dst_h == seen[1], "в dst не доворот лучшего кандидата"
     assert j["i"] == T - 0.3, j
     assert not left, f"temp-файлы остались: {left}"
-    # худший случай: LN_PASSES проходов + 2 доворота = ebur128 + LN_PASSES + 2 рендера
+    # худший случай: LN_PASSES проходов + 2 доворота = ebur128 + LN_PASSES + 2 рендера.
+    # Второй доворот тоже уходит в измеритель — каждый доворот is a render + a measure.
     import importlib
-    seq = [{"tp": -0.2, "i": T - 6.0, "lra": 5} for _ in range(8)] + [{"tp": -0.9, "i": T - 7, "lra": 5},
-                                                                      {"tp": -1.3, "i": T - 7, "lra": 5}]
+    seq = [{"tp": -0.1, "i": T - 6.0, "lra": 5} for _ in range(8)] + [{"tp": -0.9, "i": T - 7, "lra": 5},
+                                                                      {"tp": -1.3, "i": T - 7, "lra": 5},
+                                                                      {"tp": -1.4, "i": T - 7, "lra": 5},
+                                                                      {"tp": -3.6, "i": T - 7, "lra": 5}]
     j, seen, dst_h, calls, rest, left = _ln2_run(seq, 8)
     assert not rest and dst_h and not left, (rest, left)
     assert len(calls) == 1 + 8 + 2, len(calls)
-    assert len(seen) == 8 + 2, len(seen)
+    assert len(seen) == 8 + 2 + 2, len(seen)
 
 
 if __name__ == "__main__":  # t_110fa85f: CI запускает файл как скрипт — без блока def test_* не выполняются
