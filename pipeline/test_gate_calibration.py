@@ -40,12 +40,25 @@ def main():
         approved += 1
 
     # 2) реальные файлы одобренных проходят objective() целиком (LRA/TP/I/полосы/конец)
+    # 2a) контракт, под который владелец одобрял (20.10, гейт MAX_TP=-1.0): TP <= -1.0.
+    #     t_9944c9ce затянул гейт до -3.0 для AAC-запаса НОВЫХ мастеров; обратной силы нет.
+    MAX_TP_LEGACY = -1.0
+    for k, a in owners_labels.APPROVED.items():
+        assert a["tp"] <= MAX_TP_LEGACY, f"{k}: tp {a['tp']} выше одобренного контракта {MAX_TP_LEGACY}"
     for k in ("ab_1", "ab_3", "versija_1"):
         why, m = real_why(k)
         # END_DROP/A18/A19 на 60-90 с сэмплах не показательны для семейства — сравниваем
         # только пороги калибровки (LRA/полосы/баланс/LUFS/TP/тишина):
         calib = [w for w in why if not any(x in w for x in ("резкий конец", "скачок громкости", "строй"))]
-        assert calib == [], f"{k}: {calib} (m={m})"
+        # TP-строку для одобренных владельцем артефактов не бракуем (контракт -1.0 выше),
+        # но фиксируем замер: локальный TP обязан совпадать с разметкой владельца:
+        tp_why = [w for w in calib if w.startswith("true peak")]
+        others = [w for w in calib if not w.startswith("true peak")]
+        assert others == [], f"{k}: {others} (m={m})"
+        for w in tp_why:
+            assert f"{m['tp']:+.1f} dBTP" in w, f"{k}: TP-строка не совпадает с замером: {w} vs {m['tp']}"
+        if not tp_why:
+            assert m["tp"] <= qg.MAX_TP, f"{k}: tp {m['tp']} должен быть <= {qg.MAX_TP} (новый гейт)"
 
     # 3) жалобы бракуются
     c1 = owners_labels.COMPLAINTS["p-kkEmLGviU"]
