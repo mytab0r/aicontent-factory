@@ -71,7 +71,7 @@ swap_runner() {
   docker volume create gh-runner-uv-cache >/dev/null; docker volume create gh-runner-xlv >/dev/null
   docker rm -f "$n-old" >/dev/null 2>&1
   docker stop -t 60 "$n" >/dev/null && docker rename "$n" "$n-old" || { rm -f "$envf"; docker start "$n" >/dev/null 2>&1; return; }
-  docker run -d --name "$n" --restart unless-stopped --dns 192.168.65.7 --dns 8.8.8.8 --dns 77.88.8.8 --cpus 4 --memory 4g \
+  docker run -d --name "$n" --restart unless-stopped --cpus 4 --memory 4g \
     --env-file "$envf" -e CONFIGURED_ACTIONS_RUNNER_FILES_DIR=/runner/data -e AGENT_TOOLSDIRECTORY=/opt/hostedtoolcache \
     -e ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE=/opt/actions-archive-cache -v gh-actions-archive-cache:/opt/actions-archive-cache \
     -v /var/run/docker.sock:/var/run/docker.sock -v "$n-data:/runner/data" \
