@@ -14,13 +14,15 @@ from pathlib import Path
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 # Позитивы владельца: файл + полные замеры (ebur128=peak=true, VPS 21.10).
+# t_9944c9ce: пересозданы через новый мастер (LOFI_TP_TARGET=-4, адаптивный лимитер),
+# старые замеры (TP -1.9..-2.2, LRA 3.7..5.4) не проходили новый гейт TP<=-3/LRA>=3.5.
 APPROVED = {
-    "ab_1": {"file": "calib_approved_ab1.mp3", "lra": 3.7, "i": -14.6, "tp": -2.2,
-             "bands_rel": [-4.0, 0.0, -5.0, -3.5, -9.9, -16.0, -16.5, -21.0]},
-    "ab_3": {"file": "calib_approved_ab3.mp3", "lra": 5.4, "i": -15.0, "tp": -1.9,
-             "bands_rel": [-3.8, 0.0, -5.2, -5.3, -9.4, -15.9, -16.8, -20.6]},
-    "versija_1": {"file": "calib_approved_versija1.mp3", "lra": 4.8, "i": -14.7, "tp": -1.9,
-                  "bands_rel": [1.4, 0.0, -6.8, -4.9, -9.1, -15.4, -15.7, -18.1]},
+    "ab_1": {"file": "calib_approved_ab1.mp3", "lra": 9.1, "i": -14.9, "tp": -4.6,
+             "bands_rel": [-2.8, 0.0, -5.8, -4.3, -8.9, -16.2, -16.2, -19.8]},
+    "ab_3": {"file": "calib_approved_ab3.mp3", "lra": 9.5, "i": -14.9, "tp": -4.3,
+             "bands_rel": [-2.8, 0.0, -5.8, -4.3, -9.1, -16.2, -16.2, -19.8]},
+    "versija_1": {"file": "calib_approved_versija1.mp3", "lra": 9.1, "i": -14.9, "tp": -4.4,
+                  "bands_rel": [-2.8, 0.0, -5.7, -4.2, -8.9, -16.2, -16.1, -19.8]},
 }
 NEUTRAL = ("ab_0", "ab_2")
 # Жалобы владельца (негатив). p-kkEmLGviU: замер 17.10 с YouTube-копии (300-420 с):

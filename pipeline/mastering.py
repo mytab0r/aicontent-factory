@@ -30,9 +30,10 @@ def measure(path: str) -> dict:
 # t_522ca872 / t_619efc27: в lofi-ветке динамический loudnorm запрещён — давит LRA до «каши»
 # (замер 25.10: LRA 19.3 -> 1.6; 1ced2254 вернул LOFI_AF loudnorm -> CI RED на test_master_lra).
 # Громкость = статический volume + alimiter; I-undershoot добирает статический gain ниже.
-# t_9944c9ce: адаптивный лимитер вместо фиксированного -6 dBFS, чтобы не давить LRA на треках,
-# где нужен только небольшой TP-доворот. Итеративно опускаем потолок до TP <= -4 (запас под AAC +2..3 dBTP).
+# t_9944c9ce: конвергенция громкости с лимитером на целевом TP (-4.2 dBFS на 192 кГц, как loudnorm_2pass).
+# Запас 0.2 dB под TP-цель -4.0; 192 кГц ловит межсэмпловые пики. TP-доворот = мелкий отрицательный gain без лимитера.
 LOFI_TP_TARGET = -4.0  # цель TP на MP3 перед AAC кодированием (04_assemble поднимет до <= -3)
+LOFI_LIM = "aresample=192000,alimiter=limit=0.62:level=disabled:attack=0.1:release=20:asc=0,aresample=48000"  # -4.2 dBFS
 
 
 EQ_MAX_DB = 6.0
@@ -95,35 +96,43 @@ def master(src: str, dst: str, genre: str = "chill phonk") -> dict:
             for _ in range(EQ_PASSES):
                 run(s, dst, f"highpass=f=28,{eq_af(eq_gains(bands(s), REF['lofi']['bands']))}")
                 s = dst
-        # lofi-volume retry: адаптивный alimiter (t_9944c9ce: итеративно опускаем потолок до TP <= LOFI_TP_TARGET).
-        # Старт с консервативным -6 dBFS (limit=0.5) чтобы не давить LRA; уже если TP > target.
+        # lofi-volume: конвергенция громкости с лимитером на целевом TP (t_9944c9ce / t_522ca872).
+        # Один проход: gain + лимитер -4.2 dBFS на 192 кГц -> измеряем -> корректируем gain.
+        # TP-доворот (если нужен) = мелкий отрицательный gain БЕЗ лимитера.
         m = measure(dst)
         if not (-15 <= m["i"] <= -13 and m["tp"] <= LOFI_TP_TARGET):
-            limit = 0.5  # -6 dBFS linear scale
             for _ in range(5):
-                run(dst, dst, f"volume={LUFS_TARGET - m['i']:.2f}dB,alimiter=limit={limit:.2f}:level=disabled:attack=0.1:release=20:asc=0")
                 m = measure(dst)
                 if -15 <= m["i"] <= -13 and m["tp"] <= LOFI_TP_TARGET:
                     break
-                # TP всё ещё выше цели -> ужечаем лимит (линейная шкала: -3 dBTP = 0.71, -4 dBTP = 0.63)
-                limit *= 10 ** ((LOFI_TP_TARGET - m["tp"]) / 20) * 0.9
+                run(dst, dst, f"volume={LUFS_TARGET - m['i']:.2f}dB,{LOFI_LIM}")
+                m = measure(dst)
+            # TP-доворот при необходимости — отрицательный gain БЕЗ лимитера
+            if m["tp"] > LOFI_TP_TARGET:
+                for _ in range(3):
+                    m = measure(dst)
+                    if m["tp"] <= LOFI_TP_TARGET:
+                        break
+                    tp_excess = m["tp"] - LOFI_TP_TARGET
+                    run(dst, dst, f"volume={-tp_excess - 0.1:.2f}dB")
+                    m = measure(dst)
+
     m = measure(dst)
-    # ponytail: догон громкости не сошёлся — ещё до 2 повторов:
-    # phonk = одобренный loudnorm-rerun, lofi = адаптивный volume+лимитер (t_9944c9ce).
+    # ponytail: мелкий догон громкости — gain БЕЗ лимитера (TP уже в цели после этапа 3).
     for _ in range(2):
         if -15 <= m["i"] <= -13 and (m["lra"] <= 8 or not phonk) and m["tp"] <= LOFI_TP_TARGET:
             break
         af = (f"loudnorm=I={LUFS_TARGET:g}:TP=-4:LRA=8" if phonk
-              else f"volume={LUFS_TARGET - m['i']:.2f}dB,alimiter=limit=0.5:level=disabled:attack=0.1:release=20:asc=0")
+              else f"volume={LUFS_TARGET - m['i']:.2f}dB")  # без лимитера
         run(dst, dst, af)
         m = measure(dst)
     # t_619efc27: динамический loudnorm на экстремальной динамике (длинные паузы) не
     # дотягивает до цели (замер: I -15.7 при I=-14, 5 проходов сходятся туда же) —
-    # добираем статическим gain + лимитер, как в bank_release._norm_segments.
+    # добираем статическим gain БЕЗ лимитера (TP уже в цели).
     for _ in range(3):
         if -15 <= m["i"] <= -13:
             break
-        run(dst, dst, f"volume={LUFS_TARGET - m['i']:+.2f}dB,alimiter=limit=0.5:level=disabled:attack=0.1:release=20:asc=0")
+        run(dst, dst, f"volume={LUFS_TARGET - m['i']:+.2f}dB")
         m = measure(dst)
     assert -15 <= m["i"] <= -13, f"гейт I: {m}"
     assert m["lra"] <= 8 or not phonk, f"гейт LRA: {m}"
