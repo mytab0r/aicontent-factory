@@ -426,11 +426,11 @@ def _norm_segments(paths: list[Path], log=print) -> None:
     (фикстура 12.4 -> 6.9, run 40449097418: трек LRA 3.1 < 3.5 при CE 7.2) — тот же класс, что
     t_522ca872 в mastering.master. Внутренние LU-скачки (run 40155188504) выравнивает flatten_blocks
     по сетке гейта A18 на готовой склейке, сегментный компрессор для этого не нужен.
-    t_9944c9ce: мягкий лимитер (LOFI_LIM_GENTLE) сохраняет LRA сегментов; TP-доворот делает master_final.
+    t_9944c9ce: мягкий лимитер (LOFI_LIM, -4.2 dBFS на 192 кГц) сохраняет LRA сегментов; TP-доворот делает master_final.
     """
     import mastering
     from quality_gate import LUFS_TARGET
-    lim = mastering.LOFI_LIM_GENTLE  # -1.8 dBFS, сохраняет LRA
+    lim = mastering.LOFI_LIM  # -4.2 dBFS на 192 кГц, сохраняет LRA
     def one(p):
         tmp = str(p) + ".ln.mp3"
         try:
