@@ -1,5 +1,5 @@
 """Мастеринг трека: одобренная владельцем цепочка (14.10, сэмплы phonk_*_master)
-+ гейт итогового файла: I -14±1 LUFS, LRA <= 8 LU, TP <= -1 dBTP.
++ гейт итогового файла: I -14±1 LUFS, LRA <= 8 LU, TP <= -3 dBTP.
 
 Схема: тональная EQ/комп (как в A/B) -> loudnorm (динамический, приводит к
 громкости платформы) -> доуплотнение динамики (2 компа: LRA после loudnorm
@@ -30,7 +30,10 @@ def measure(path: str) -> dict:
 # t_522ca872 / t_619efc27: в lofi-ветке динамический loudnorm запрещён — давит LRA до «каши»
 # (замер 25.10: LRA 19.3 -> 1.6; 1ced2254 вернул LOFI_AF loudnorm -> CI RED на test_master_lra).
 # Громкость = статический volume + alimiter; I-undershoot добирает статический gain ниже.
-LOFI_LIM = "alimiter=limit=0.813:level=disabled:attack=0.1:release=20:asc=0"  # -1.2 dBFS, literal для guard-теста
+# t_9944c9ce: конвергенция громкости с лимитером на целевом TP (-4.2 dBFS на 192 кГц, как loudnorm_2pass).
+# Запас 0.2 dB под TP-цель -4.0; 192 кГц ловит межсэмпловые пики. TP-доворот = мелкий отрицательный gain без лимитера.
+LOFI_TP_TARGET = -4.0  # цель TP на MP3 перед AAC кодированием (04_assemble поднимет до <= -3)
+LOFI_LIM = "aresample=192000,alimiter=limit=0.62:level=disabled:attack=0.1:release=20:asc=0,aresample=48000"  # -4.2 dBFS
 
 
 EQ_MAX_DB = 6.0
@@ -65,12 +68,12 @@ def master(src: str, dst: str, genre: str = "chill phonk") -> dict:
                 "treble=g=2:f=10000,"
                 "acompressor=threshold=-18dB:ratio=2.5:attack=20:release=250:makeup=2,"
                 "extrastereo=m=1.2,"
-                f"loudnorm=I={LUFS_TARGET:g}:TP=-2:LRA=8,"
+                f"loudnorm=I={LUFS_TARGET:g}:TP=-4:LRA=8,"
                 "aresample=48000,"
                 "acompressor=threshold=-18dB:ratio=4:attack=10:release=150:makeup=1.5,"
                 "acompressor=threshold=-15dB:ratio=6:attack=5:release=100:makeup=2,"
                 "alimiter=limit=0.79:level=disabled,"
-                f"loudnorm=I={LUFS_TARGET:g}:TP=-2:LRA=8")
+                f"loudnorm=I={LUFS_TARGET:g}:TP=-3:LRA=8")
 
     def run(s: str, d: str, chain: str) -> None:
         # пишем во временный файл: ffmpeg не может писать в свой же вход (src == dst)
@@ -83,43 +86,58 @@ def master(src: str, dst: str, genre: str = "chill phonk") -> dict:
         run(src, dst, PHONK_AF)  # одобренная владельцем 14.10 динамика/лимитер
         # повторные проходы ПОСЛЕ цепочки: только тон+громкость, цепочку не повторять (снесёт тон)
         for _ in range(EQ_PASSES):
-            run(dst, dst, f"{eq_af(eq_gains(bands(dst), REF['phonk']['bands']))},loudnorm=I={LUFS_TARGET:g}:TP=-2:LRA=8")
+            run(dst, dst, f"{eq_af(eq_gains(bands(dst), REF['phonk']['bands']))},loudnorm=I={LUFS_TARGET:g}:TP=-4:LRA=8")
     else:
         # t_522ca872: lofi громкость БЕЗ loudnorm (динамический давит LRA -> «каша»).
         m0 = measure(src)
-        already = -15 <= m0["i"] <= -13 and m0["tp"] <= -1
+        already = -15 <= m0["i"] <= -13 and m0["tp"] <= -3
         if not already:
             s = src
             for _ in range(EQ_PASSES):
                 run(s, dst, f"highpass=f=28,{eq_af(eq_gains(bands(s), REF['lofi']['bands']))}")
                 s = dst
-        # lofi-volume retry: alimiter safety-limiter (t_522ca872 guard: literal alimiter в lofi-ветке)
-        for _ in range(3):
-            m = measure(dst)
-            if -15 <= m["i"] <= -13 and m["tp"] <= -1:
-                break
-            run(dst, dst, f"volume={LUFS_TARGET - m['i']:.2f}dB,{LOFI_LIM}")
+        # lofi-volume: конвергенция громкости с лимитером на целевом TP (t_9944c9ce / t_522ca872).
+        # Один проход: gain + лимитер -4.2 dBFS на 192 кГц -> измеряем -> корректируем gain.
+        # TP-доворот (если нужен) = мелкий отрицательный gain БЕЗ лимитера.
+        m = measure(dst)
+        if not (-15 <= m["i"] <= -13 and m["tp"] <= LOFI_TP_TARGET):
+            for _ in range(5):
+                m = measure(dst)
+                if -15 <= m["i"] <= -13 and m["tp"] <= LOFI_TP_TARGET:
+                    break
+                run(dst, dst, f"volume={LUFS_TARGET - m['i']:.2f}dB,{LOFI_LIM}")
+                m = measure(dst)
+            # TP-доворот при необходимости — отрицательный gain БЕЗ лимитера
+            if m["tp"] > LOFI_TP_TARGET:
+                for _ in range(3):
+                    m = measure(dst)
+                    if m["tp"] <= LOFI_TP_TARGET:
+                        break
+                    tp_excess = m["tp"] - LOFI_TP_TARGET
+                    run(dst, dst, f"volume={-tp_excess - 0.1:.2f}dB")
+                    m = measure(dst)
+
     m = measure(dst)
-    # ponytail: догон громкости не сошёлся — ещё до 2 повторов:
-    # phonk = одобренный loudnorm-rerun, lofi = статический volume+лимитер (t_522ca872).
+    # ponytail: мелкий догон громкости — gain БЕЗ лимитера (TP уже в цели после этапа 3).
     for _ in range(2):
-        if -15 <= m["i"] <= -13 and (m["lra"] <= 8 or not phonk) and m["tp"] <= -1:
+        if -15 <= m["i"] <= -13 and (m["lra"] <= 8 or not phonk) and m["tp"] <= LOFI_TP_TARGET:
             break
-        af = (f"loudnorm=I={LUFS_TARGET:g}:TP=-2:LRA=8" if phonk
-              else f"volume={LUFS_TARGET - m['i']:.2f}dB,{LOFI_LIM}")
+        af = (f"loudnorm=I={LUFS_TARGET:g}:TP=-4:LRA=8" if phonk
+              else f"volume={LUFS_TARGET - m['i']:.2f}dB")  # без лимитера
         run(dst, dst, af)
         m = measure(dst)
     # t_619efc27: динамический loudnorm на экстремальной динамике (длинные паузы) не
     # дотягивает до цели (замер: I -15.7 при I=-14, 5 проходов сходятся туда же) —
-    # добираем статическим gain + лимитер, как в bank_release._norm_segments.
+    # добираем статическим gain БЕЗ лимитера (TP уже в цели).
     for _ in range(3):
         if -15 <= m["i"] <= -13:
             break
-        run(dst, dst, f"volume={LUFS_TARGET - m['i']:+.2f}dB,alimiter=limit=-2dB:level=false")
+        run(dst, dst, f"volume={LUFS_TARGET - m['i']:+.2f}dB")
         m = measure(dst)
     assert -15 <= m["i"] <= -13, f"гейт I: {m}"
     assert m["lra"] <= 8 or not phonk, f"гейт LRA: {m}"
-    assert m["tp"] <= -1, f"гейт TP: {m}"
+    tp_limit = LOFI_TP_TARGET if not phonk else -3
+    assert m["tp"] <= tp_limit, f"гейт TP: {m}"
     return m
 
 

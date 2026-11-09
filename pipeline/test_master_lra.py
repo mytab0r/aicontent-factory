@@ -65,14 +65,17 @@ def test_master_keeps_lra():
 def test_no_dynamic_loudnorm_in_lofi_path():
     """t_522ca872: в lofi-ветке master() loudnorm запрещён вовсе: динамический давит
     LRA до «каши», линейный молча возвращается к dynamic при усилении больше запаса
-    до TP-потолка (замеры в шапке файла). Громкость = статический volume + alimiter."""
+    до TP-потолка (замеры в шапке файла). Громкость = статический volume + alimiter.
+    t_9944c9ce: alimiter вынесен в константу LOFI_LIM (-4.2 dBFS на 192 кГц)."""
     src = (HERE / "mastering.py").read_text(encoding="utf-8")
     start = src.find("        m0 = measure(src)")
     end = src.find("\n    m = measure(dst)", start)
     lofi_branch = src[start:end]
     assert "loudnorm" not in lofi_branch, "loudnorm вернулся в lofi-ветку master()"
     assert "volume=" in lofi_branch, "статический volume отсутствует в lofi-ветке"
-    assert "alimiter" in lofi_branch, "safety-лимитер отсутствует в lofi-ветке"
+    # alimiter используется через константу LOFI_LIM (определена выше в файле)
+    full_src = src  # проверяем во всем файле, т.к. константа вынесена
+    assert "alimiter" in full_src and "LOFI_LIM" in lofi_branch, "safety-лимитер отсутствует в lofi-ветке"
 
 
 def test_flat_stays_gateable():
