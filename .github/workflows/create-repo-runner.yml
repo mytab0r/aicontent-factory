@@ -37,7 +37,6 @@ jobs:
           LABELS: ${{ inputs.labels }}
         run: |
           docker run -d --name "gh-runner-$CNAME" --restart unless-stopped \
-            --dns 192.168.65.7 --dns 8.8.8.8 --dns 77.88.8.8 \
             --cpus 4 --memory 6g \
             -e REPO_URL=https://github.com/mytab0r/$REPO \
             -e RUNNER_SCOPE=repo \
