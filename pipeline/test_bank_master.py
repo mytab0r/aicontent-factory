@@ -173,24 +173,34 @@ def test_loudnorm_2pass_budget_and_final_tp_trim():
     Бюджет: 1 рендер + 1 замер на проход, TP-доворот (рендер + замер, до 2 раз) только у итогового
     кандидата. I после доворота учитывается при выборе (I + (TP_SAFE - TP - 0.1)), в j — замер после доворота."""
     from quality_gate import LUFS_TARGET as T
-    seq = [{"tp": -0.8, "i": T + 0.2, "lra": 5},   # pass 1: I нарушен, TP > TP_SAFE
-           {"tp": -1.3, "i": T - 0.3, "lra": 5},   # pass 2: I снова нарушен
-           {"tp": -3.6, "i": T - 4.1, "lra": 5}]   # pass 3: TP <= TP_SAFE -> стоп
+    # TP_SAFE=-3.5 (t_9944c9ce): pass1 eff_i = i+min(0, TP_SAFE-tp-0.1) = T+0.2-2.8 = T-2.6 (не сходится);
+    # pass2 tp=-3.6: доворот-остаток min(0, -3.5+3.6-0.1)=0 -> eff_i = T-0.3: в допуске, стоп. Лучший = pass2.
+    seq = [{"tp": -0.8, "i": T + 0.2, "lra": 5},   # pass 1: TP > TP_SAFE, I_eff далеко (продолжаем)
+           {"tp": -3.6, "i": T - 0.3, "lra": 5}]   # pass 2: TP <= TP_SAFE, I в допуске -> стоп
     j, seen, dst_h, calls, rest, left = _ln2_run(seq, 8)
     assert not rest, f"сценарий не отыгран: {rest}"
+    assert len(calls) == 3, f"ebur128 + 2 рендера, а не {len(calls)}"
+    assert dst_h == seen[1], "в dst не рендер лучшего кандидата"
+    assert j["i"] == T - 0.3, j
+    # доворот TP у лучшего: лучший pass1 (tp=-0.8 > TP_SAFE), доворот = рендер + замер, tp -> TP_SAFE -> стоп.
+    seq = [{"tp": -0.8, "i": T + 0.2, "lra": 5},   # pass 1: TP > TP_SAFE -> после пасса доворот, замер #2
+           {"tp": -3.6, "i": T - 0.3, "lra": 5}]   # замер доворота: tp <= TP_SAFE -> стоп
+    j, seen, dst_h, calls, rest, left = _ln2_run(seq, 1)
+    assert not rest and not left, (rest, left)
     assert len(calls) == 3, f"ebur128 + 1 рендер + 1 доворот, а не {len(calls)}"
-    assert dst_h == seen[1], "в dst не доворот лучшего кандидата"
     assert j["i"] == T - 0.3, j
     assert not left, f"temp-файлы остались: {left}"
-    # худший случай: LN_PASSES проходов + 2 доворота = ebur128 + LN_PASSES + 2 рендера.
-    # При TP_SAFE=-3.5 каждый проход с TP > TP_SAFE гонит одну тишину + 1 доворот.
-    # 8 проходов по tp=-0.1 -> 8 тишины + 16 доворотов (2 на проход) = 8 итераций seq.
-    import importlib
-    seq = [{"tp": -0.1, "i": T - 6.0, "lra": 5} for _ in range(8)] + [{"tp": -3.6, "i": T - 7, "lra": 5} for _ in range(10)]
+    # худший случай: LN_PASSES проходов + 2 доворота = ebur128 + LN_PASSES + 2 замера.
+    # При TP_SAFE=-3.5 каждый из 8 проходов с TP=-0.1 не сходится (i сдвигается вниз 3.5 дБ на
+    # каждый проход, 8 раз), поэтому проходят все 8 итераций + 2 итерации доворота.
+    # Итог: 1 ebur128 + 8 замеров + 2 доворота = 11 замеров.
+    # Доворот вниз: 2 итерации, каждая меряет итоговый файл.
+    seq = [{"tp": -0.1, "i": T - 6.0, "lra": 5} for _ in range(8)] + [{"tp": -0.9, "i": T - 7, "lra": 5},
+                                                                      {"tp": -1.3, "i": T - 7, "lra": 5}]
     j, seen, dst_h, calls, rest, left = _ln2_run(seq, 8)
     assert not rest and dst_h and not left, (rest, left)
     assert len(calls) == 1 + 8 + 2, len(calls)
-    assert len(seen) == 8 + 2 + 2, len(seen)
+    assert len(seen) == 8 + 2, len(seen)
 
 
 if __name__ == "__main__":  # t_110fa85f: CI запускает файл как скрипт — без блока def test_* не выполняются
