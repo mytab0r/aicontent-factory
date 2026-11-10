@@ -46,3 +46,39 @@ assert not bad, "docker-том для весов/данных запрещён, 
 # сам детектор ловит пример
 assert re.findall(r"(?:-v|--volume)[ =]+([A-Za-z][\w.-]*):/", "docker run -v minimax-weights:/w x") == ["minimax-weights"]
 print("R2 no weight volumes OK")
+
+
+# R4 (t_096e2d0d): замер без docker API ПК — host-df fallback; оба недоступны — fail-closed exit 2.
+import tempfile
+GATE = str(GPU / "disk_gate.sh")
+
+def run_gate(need, **env):
+    e = {k: v for k, v in os.environ.items() if k not in ("DISK_FREE_GB", "DISK_HOST_DF_PATHS")}
+    e.update(env)
+    p = subprocess.run(["sh", GATE, "d", str(need)], capture_output=True, text=True, env=e, timeout=120)
+    return p.returncode, p.stdout + p.stderr
+
+def fake_docker(body):
+    d = tempfile.mkdtemp()
+    f = Path(d) / "docker"
+    f.write_text("#!/bin/sh\n" + body + "\n")
+    f.chmod(0o755)
+    return f"{d}:{os.environ['PATH']}"
+
+# docker отдаёт цифру -> measure=docker (host-df не спрашивается)
+rc, out = run_gate(1, PATH=fake_docker('echo "Filesystem 1024-blocks Used Available Use%"; echo "/x 1000 1 102400000 1%"'))
+assert rc == 0 and "measure=docker" in out, out
+
+# docker 401/недоступен (как в kanban-воркере на ПК) -> падаем на host-df, не падаем вообще
+rc, out = run_gate(1, PATH=fake_docker('echo "401 Authorization Required" >&2; exit 1'),
+                   DISK_HOST_DF_PATHS=tempfile.mkdtemp())
+assert "measure=host-df:" in out and rc in (0, 1), out
+
+# оба недоступны -> exit 2 и слово «отказ», а не «0G free» и не тихий проход
+rc, out = run_gate(1, PATH=fake_docker('echo "401 Authorization Required" >&2; exit 1'), DISK_HOST_DF_PATHS="")
+assert rc == 2 and "отказ" in out and "measure=" not in out, (rc, out)
+
+# host-df на несуществующем пути не выдумывает цифру
+rc, out = run_gate(1, PATH=fake_docker('exit 1'), DISK_HOST_DF_PATHS="/nonexistent/path/xyz")
+assert rc == 2 and "отказ" in out, (rc, out)
+print("R4 host-df fallback + fail-closed OK")
