@@ -15,7 +15,10 @@ concurrency:
   group: ci-${{ github.head_ref || github.ref }}
   cancel-in-progress: false
 jobs:
-  test:
+  test-and-lint:
+    # объединено: test + ci-bypass-lint (раньше 2 параллельных job-слота на прогон).
+    # консолидация (t_8814b9a9): снижает пиковую нагрузку с 2 слотов на 1 слот на прогон,
+    # что устраняет queued >20 мин при ≥3 параллельных PR на 2 ci-раннерах.
     runs-on: [self-hosted, ci]
     # merge-police (P10) читает /commits/{sha}/pulls и /check-runs: default read-токен (contents+metadata+packages)
     # даёт 403 -> master ci красный с 25.10, pay-image не публиковал образ (t_3ecce166). Инвариант: test_merge_police.py.
@@ -26,6 +29,8 @@ jobs:
       checks: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # t_de7348c1: нужны все ветки origin для --branches
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -47,7 +52,7 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -f -qq ffmpeg || true
           # прерванный apt оставил битые (нулевые) .so; apt-reinstall блокируется ошибкой
           # postinst fontconfig. Ищем пакеты, у которых файлы в /lib и /usr нулевого размера
-          # (симптом прерванной распаковки), и ставим их .deb напрямую — dpkg распаковывает
+          # (симптом прерванной распаковки), и ставим их .deb напрямую — dpkg распаковвает
           # файлы ДО postinst, так что fontconfig-ошибка восстановлению не мешает.
           broken=""
           for f in $(sudo find /lib /usr/lib /usr/bin -xdev -type f -size 0 2>/dev/null); do
@@ -78,6 +83,8 @@ jobs:
           done
       - name: recheck_blockers selftest
         run: python recheck_blockers.py --selftest
+      - name: ci-bypass-lint («Повтор = класс»)
+        run: python3 scripts/ci_bypass_lint.py . && python3 scripts/test_ci_lint_docker_login.py && python3 scripts/ci_bypass_lint.py --branches . && python3 scripts/actions_policy.py .
       - name: merge-police (P10)
         id: police
         if: github.event_name == 'push'
@@ -94,23 +101,12 @@ jobs:
         run: |
           python3 -c "from common import tg_send; tg_send('🚨 merge-police (P10): PR смержен раньше зелёного test — master получил непроверенный коммит. Лог: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}')"
 
-  ci-bypass-lint:
-    # лёгкий линт: не ждать занятый GPU-раннер pc-acf. t_55108370: все jobs ci.yml на label ci —
-    # release-раннеры только под выпуски (daily-video), CI их не занимает. Инвариант: test_ci_no_release_label.py
-    runs-on: [self-hosted, ci]
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # t_de7348c1: нужны все ветки origin для --branches
-      - name: ci-bypass-lint («Повтор = класс»)
-        run: python3 scripts/ci_bypass_lint.py . && python3 scripts/test_ci_lint_docker_login.py && python3 scripts/ci_bypass_lint.py --branches . && python3 scripts/actions_policy.py .
-
   # t_b1429246: сам хостед-раннер во время окон деградации PC-egress не смог доставить вердикт
   # (CompleteJobAsync -> HttpIOException "The response ended prematurely") — job падает с
   # System.AggregateException "… (An error occurred while sending the request.)" без реальной
   # ошибки шагов. Проверяем логи упавших jobs текущего прогона и перезапускаем совпавшие.
   runner-restore:
-    needs: [test, ci-bypass-lint]
+    needs: [test-and-lint]
     if: ${{ !cancelled() }}
     runs-on: [self-hosted, ci]
     permissions:
