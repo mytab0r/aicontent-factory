@@ -26,6 +26,7 @@ ALLOW = sorted([
     "astral-sh/setup-uv@*",
     "docker/setup-buildx-action@*",
     "docker/build-push-action@*",
+    "docker/metadata-action@*",
 ])
 USES = re.compile(r"^\s*-?\s*uses:\s*['\"]?([^\s'\"#@]+)@")
 
