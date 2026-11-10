@@ -30,6 +30,8 @@ from pathlib import Path
 
 from gradio_client import Client
 
+from quota_guard import is_exhausted, mark_exhausted
+
 import mastering
 
 from common import latest_run_dir
@@ -143,6 +145,8 @@ def ace_endpoint() -> tuple[str, str | None]:
     local = os.environ.get("ACE_ENDPOINT")
     if local:
         return local, None
+    if is_exhausted():
+        raise RuntimeError("ZeroGPU quota exhausted — skipping HF Space call")
     return SPACE, os.environ.get("HF_TOKEN") or None
 
 
@@ -157,31 +161,36 @@ def generate_track(prompt: str, duration_sec: int, seed: int | None = None,
             raise
         print(f"ACE {url} недоступен ({type(e).__name__}: {e}); HF Space фолбэк"[:300])
         client = client_cls(SPACE, token=os.environ.get("HF_TOKEN") or None)
-    result = client.predict(
-        audio_duration=float(duration_sec),
-        prompt=prompt,
-        lyrics="[instrumental]",
-        infer_step=27,
-        guidance_scale=15.0,
-        scheduler_type="euler",
-        cfg_type="apg",
-        omega_scale=10.0,
-        manual_seeds=str(seed) if seed is not None else None,
-        guidance_interval=0.5,
-        guidance_interval_decay=0.0,
-        min_guidance_scale=3.0,
-        use_erg_tag=True,
-        use_erg_lyric=False,
-        use_erg_diffusion=True,
-        oss_steps=None,
-        guidance_scale_text=0.0,
-        guidance_scale_lyric=0.0,
-        audio2audio_enable=False,
-        ref_audio_strength=0.5,
-        ref_audio_input=None,
-        lora_name_or_path="none",
-        api_name="/__call__",
-    )
+    try:
+        result = client.predict(
+            audio_duration=float(duration_sec),
+            prompt=prompt,
+            lyrics="[instrumental]",
+            infer_step=27,
+            guidance_scale=15.0,
+            scheduler_type="euler",
+            cfg_type="apg",
+            omega_scale=10.0,
+            manual_seeds=str(seed) if seed is not None else None,
+            guidance_interval=0.5,
+            guidance_interval_decay=0.0,
+            min_guidance_scale=3.0,
+            use_erg_tag=True,
+            use_erg_lyric=False,
+            use_erg_diffusion=True,
+            oss_steps=None,
+            guidance_scale_text=0.0,
+            guidance_scale_lyric=0.0,
+            audio2audio_enable=False,
+            ref_audio_strength=0.5,
+            ref_audio_input=None,
+            lora_name_or_path="none",
+            api_name="/__call__",
+        )
+    except Exception as e:
+        if "quota" in str(e).lower() or "zerogpu" in str(e).lower():
+            mark_exhausted(str(e))
+        raise
     return result[0]
 
 

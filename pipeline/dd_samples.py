@@ -7,12 +7,16 @@
 always() на upload), повторный диспатч продолжает с места падения
 (resume: готовые dd_*.mp3 не перегенерируются).
 """
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import dd_channel
+import importlib.util
+
+from quota_guard import is_exhausted, mark_exhausted
 
 
 class QuotaExhausted(Exception):
@@ -21,6 +25,15 @@ class QuotaExhausted(Exception):
 
 SCENES = dd_channel.load_scenes()
 OUT_DIR = Path("samples_candidates")
+
+
+def _load_music_module():
+    """Загружает 03_music.py как модуль (generate_track_v15, _Http)."""
+    mod_path = Path(__file__).resolve().parent / "03_music.py"
+    spec = importlib.util.spec_from_file_location("music_mod", mod_path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def out_name(scene: dict) -> str:
@@ -39,6 +52,8 @@ def run_batch(scenes: list[dict], out_dir: Path, client_factory):
     уже сохранённые файлы остаются на месте — следующий ран их пропустит.
     Прочие исключения (сеть и т.п.) — тоже наружу: ран падает, state цел.
     """
+    if is_exhausted():
+        return 0, QuotaExhausted("ZeroGPU quota exhausted (guard)")
     out_dir.mkdir(parents=True, exist_ok=True)
     todo = pending_scenes(scenes, out_dir)
     generated = 0
@@ -77,23 +92,58 @@ def run_batch(scenes: list[dict], out_dir: Path, client_factory):
             generated += 1
             print(f"saved {dest.name}", flush=True)
         except Exception as e:  # noqa: BLE001 — граница процесса, классифицируем
-            if "quota" in str(e).lower():
+            msg = str(e)
+            if "quota" in msg.lower() or "zerogpu" in msg.lower():
                 print(f"quota exhausted after {generated} new track(s) — fail fast", flush=True)
-                return generated, QuotaExhausted(str(e))
+                mark_exhausted(msg)
+                return generated, QuotaExhausted(msg)
+            print(f"FAILED {scene['name']}: {e}", flush=True)
+            return generated, e
+    return generated, None
+
+
+def run_local_generation(scenes: list[dict], out_dir: Path, generate=None):
+    """root-cause t_61f7c556: локальный ACE-Step 1.5, ноль ZeroGPU-квоты.
+
+    generate_track_v15 из 03_music.py на ACE15_ENDPOINT (REST контейнера
+    на ПК). Возвращает (сколько новых, ошибка|None) — fail-fast как run_batch.
+    """
+    music = _load_music_module()
+    generate = generate or music.generate_track_v15
+    endpoint = os.environ.get("ACE15_ENDPOINT")
+    if not endpoint:
+        return 0, "ACE15_ENDPOINT не задан (root-cause t_61f7c556: ZeroGPU-фолбэка нет)"
+    api = music._Http(endpoint)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    generated = 0
+    for i, scene in enumerate(pending_scenes(scenes, out_dir)):
+        try:
+            dest = out_dir / out_name(scene)
+            generate(scene["music_prompt"], 45, i, dest, api=api)
+            generated += 1
+            print(f"saved {dest.name}", flush=True)
+        except Exception as e:  # noqa: BLE001
             print(f"FAILED {scene['name']}: {e}", flush=True)
             return generated, e
     return generated, None
 
 
 def main() -> None:
-    import os
-
     from gradio_client import Client
 
-    token = os.environ.get("HF_TOKEN") or None
-    generated, err = run_batch(
-        SCENES, OUT_DIR, client_factory=lambda: Client("ACE-Step/ACE-Step", token=token)
-    )
+    endpoint = os.environ.get("ACE15_ENDPOINT")
+    if endpoint:
+        generated, err = run_local_generation(SCENES, OUT_DIR)
+    else:
+        if is_exhausted():
+            print("ZeroGPU quota exhausted — skipping HF Space fallback", flush=True)
+            raise SystemExit(0)
+        print("ACE15_ENDPOINT не задан — фолбэк на HF Space (тарат квоту ZeroGPU; "
+              "временный, root-cause t_61f7c556)", flush=True)
+        token = os.environ.get("HF_TOKEN") or None
+        generated, err = run_batch(
+            SCENES, OUT_DIR, client_factory=lambda: Client("ACE-Step/ACE-Step", token=token)
+        )
     done = len(list(OUT_DIR.glob("dd_*.mp3")))
     print(f"progress: {done}/{len(SCENES)} total ({generated} new this run)")
     if err is not None:

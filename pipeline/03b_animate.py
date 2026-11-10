@@ -13,6 +13,7 @@ import subprocess
 import sys
 
 from common import latest_run_dir
+from quota_guard import is_exhausted, mark_exhausted
 
 SPACE = "zerogpu-aoti/wan2-2-fp8da-aoti-faster"
 MOTION = ("subtle cozy motion: rain or snow falls, lights flicker softly, steam rises, "
@@ -28,6 +29,9 @@ def main() -> None:
     import json
     run_dir = latest_run_dir()
     idea = json.loads((run_dir / "idea.json").read_text(encoding="utf-8"))
+    if is_exhausted():
+        print("ZeroGPU quota exhausted — skipping animation", file=sys.stderr)
+        return
     try:
         from gradio_client import Client, handle_file
         c = Client(SPACE, token=os.environ.get("HF_TOKEN"), verbose=False)
@@ -41,6 +45,9 @@ def main() -> None:
                         str(run_dir / "loop.mp4")], check=True)
         print(f"loop -> {run_dir / 'loop.mp4'}")
     except Exception as e:  # noqa: BLE001 — фолбэк на статику, причина в лог
+        msg = str(e)
+        if "quota" in msg.lower() or "zerogpu" in msg.lower():
+            mark_exhausted(msg)
         print(f"анимация пропущена, будет статичный кадр: {e}", file=sys.stderr)
 
 
