@@ -355,12 +355,17 @@ await scenario('S6 evm: закрыл модалку — кнопка актив�
     await env.page.waitForFunction(() => !!window.__appkit, null, { timeout: 30_000 }).catch(async () => {
       await env.page.evaluate(() => {
         delete window.__appkitError;
-        const st = { open: false };
+        const st = { open: false, account: null };
         window.__appkit = {
           modal: {
             getState: () => st,
             open: async () => { st.open = true; },
             close: async () => { st.open = false; },
+            getAccount: () => st.account,
+            disconnect: async () => {},
+            getWalletProvider: () => ({
+              request: async () => { throw new Error('stub: no provider'); },
+            }),
           },
         };
       });
