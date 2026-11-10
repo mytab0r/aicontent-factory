@@ -1,0 +1,52 @@
+name: tarot-funnel-image
+# ghcr.io/mytab0r/tarot-funnel:latest — только после зелёного ci на master; Watchtower на VPS подтянет.
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [master, main]
+jobs:
+  build-push:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: [self-hosted, release]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      # root-cause: t_831d9fd6 -- docker/login-action runs `docker login`, i.e. one daemon-side ping of
+      # https://ghcr.io/v2/ through Docker Desktop's http.docker.internal:3128 with a hard ~15s timeout and no
+      # retry; PC egress stalls fail the job ("Client.Timeout exceeded while awaiting headers", 11 runs 16-21.10).
+      # Creds are client-side anyway: write them to a per-job DOCKER_CONFIG, buildx sends them per request.
+      - name: ghcr auth (client-side config, no daemon ping)
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          d="$RUNNER_TEMP/docker"; mkdir -p "$d"; echo "DOCKER_CONFIG=$d" >> "$GITHUB_ENV"
+          printf '{"auths":{"ghcr.io":{"auth":"%s"}}\n' "$(printf '%s:%s' "$GITHUB_ACTOR" "$GHCR_TOKEN" | base64 -w0)" > "$d/config.json"
+      # root-cause t_a41372f5: docker-container driver = empty BuildKit on every run, base node:22-alpine
+      # every time from CloudFront Docker Hub (drops -> httpReadSeeker unexpected EOF). docker driver
+      # takes layers from PC daemon store, where ci/pay-image-smoke already built this Dockerfile.
+      - uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker
+      # root-cause t_0a4cae59: transport-drops egress PC (WSL NAT / Docker Desktop proxy) dropped build on
+      # live GET of base layer (httpReadSeeker unexpected EOF -> failed to compute cache key) and push to ghcr
+      # (oauth token EOF). driver=docker (t_a41372f5) removed empty BuildKit, but base not in store,
+      # daemon still pulls with single GET no retries. Class mechanism: 1) pull base separately with 4 attempts
+      # (layers resume, no duplicates), as in ci/e2e-admin; 2) build-push retry whole thing up to 4 times
+      # only on registry transport errors (EOF / timeout / connection reset), not masking other failures.
+      - name: pre-pull base (4 attempts, resumable layers)
+        run: |
+          B=$(sed -n 's/^FROM //p' deploy/tarot-funnel/Dockerfile | head -1)
+          for n in 1 2 3 4; do docker pull -q "$B" && break; [ $n = 4 ] && exit 1; echo "pull $B: attempt $n failed, retry in $((n*20))s"; sleep $((n*20)); done
+      - name: build + push (retry on registry transport errors only)
+        run: |
+          set -e
+          for n in 1 2 3 4; do
+            if docker buildx build --push                  -f deploy/tarot-funnel/Dockerfile                  -t ghcr.io/${{ github.repository_owner }}/tarot-funnel:latest                  -t ghcr.io/${{ github.repository_owner }}/tarot-funnel:sha-${{ github.event.workflow_run.head_sha }}                  .; then exit 0; fi
+            [ $n = 4 ] && exit 1
+            echo "build-push: attempt $n failed, retry in $((n*20))s"; sleep $((n*20))
+          done

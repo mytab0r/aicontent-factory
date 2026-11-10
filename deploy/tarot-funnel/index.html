@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Тариф — первая раскладка в подарок</title>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+<style>
+  *{box-sizing:border-box}
+  body{font-family:system-ui,sans-serif;max-width:520px;margin:0 auto;padding:20px 16px;background:#0b0d10;color:#e8e8e8;line-height:1.5}
+  .card{background:#12151a;border-radius:16px;padding:24px;margin:16px 0;box-shadow:0 4px 24px rgba(0,0,0,.4)}
+  .card--tight{padding:16px}
+  h1{font-size:26px;margin:0 0 8px;color:#fff}
+  h2{font-size:18px;margin:0 0 12px;color:#f0e6d2}
+  .subtitle{color:#9a9fa8;font-size:14px;margin-bottom:20px}
+  .benefit{display:flex;align-items:flex-start;gap:12px;margin:14px 0;padding:14px;background:#171b22;border-radius:10px;border:1px solid #232831}
+  .benefit-icon{font-size:22px;flex-shrink:0}
+  .benefit-text{font-size:15px;color:#d8dce3}
+  .price-row{display:flex;justify-content:space-between;align-items:center;padding:16px;background:#1a1f2a;border-radius:10px;margin:16px 0;border:1px solid #2d3548}
+  .price-label{color:#9a9fa8;font-size:14px}
+  .price-value{font-size:28px;font-weight:700;color:#ffd74a}
+  .price-value--free{color:#4ade80;font-size:22px}
+  .cta{display:block;width:100%;padding:16px;border:0;border-radius:12px;background:linear-gradient(135deg,#ffd74a 0%,#ffb800 100%);color:#0b0d10;font-size:17px;font-weight:700;text-align:center;text-decoration:none;cursor:pointer;transition:transform .15s,box-shadow .15s}
+  .cta:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(255,215,74,.35)}
+  .cta:active{transform:translateY(0)}
+  .cta--secondary{background:#1e2430;color:#e8e8e8;border:1px solid #303848}
+  .cta--secondary:hover{background:#252d3d}
+  .divider{height:1px;background:linear-gradient(90deg,transparent,#303848,transparent);margin:20px 0}
+  .qr-wrap{text-align:center;margin:16px 0}
+  .qr-wrap img{filter:invert(1) hue-rotate(180deg);max-width:200px}
+  .addr{font-family:monospace;font-size:13px;word-break:break-all;background:#0e1116;padding:10px 12px;border-radius:8px;color:#ffd74a;border:1px solid #2d3548}
+  .muted{color:#7a808a;font-size:13px}
+  .trust{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0}
+  .badge{font-size:12px;padding:6px 10px;background:#1a1f2a;border:1px solid #2d3548;border-radius:20px;color:#a8b0bc}
+  .step{display:flex;gap:12px;margin:14px 0}
+  .step-num{width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#ffd74a,#ffb800);color:#0b0d10;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:14px}
+  .step-text{color:#d0d5dc;font-size:14px}
+  .input-group{display:flex;gap:8px;margin:12px 0}
+  .input{flex:1;padding:12px 14px;border:1px solid #2d3548;border-radius:10px;background:#0e1116;color:#e8e8e8;font-size:15px}
+  .input:focus{outline:none;border-color:#ffd74a;box-shadow:0 0 0 3px rgba(255,215,74,.15)}
+  .error{color:#ff6b6b;font-size:13px;margin-top:8px;min-height:18px}
+  .success{color:#4ade80;font-size:14px;margin-top:8px;min-height:20px}
+  .hidden{display:none}
+  .footer{text-align:center;margin-top:24px;padding-top:16px;border-top:1px solid #1e2430;color:#6a707a;font-size:12px}
+  .warn{color:#ffb84d;font-weight:600;margin:12px 0}
+  @media (prefers-reduced-motion: reduce) { .cta{transition:none} }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Тариф — персональные расклады</h1>
+    <p class="subtitle">AI-таро с живым комментарием таролога. Первая раскладка — в подарок.</p>
+    
+    <div class="benefit">
+      <span class="benefit-icon">🎁</span>
+      <span class="benefit-text"><strong>Первая раскладка бесплатно</strong> — оплачиваете только USDT комиссию сети (≈$0.5–1)</span>
+    </div>
+    <div class="benefit">
+      <span class="benefit-icon">🔮</span>
+      <span class="benefit-text"><strong>3 расклада в сутки</strong> — на любую тему: отношения, деньги, выбор, будущее</span>
+    </div>
+    <div class="benefit">
+      <span class="benefit-icon">💬</span>
+      <span class="benefit-text"><strong>Через личку Instagram/TikTok</strong> — ManyChat присылает расклад, таролог комментирует голосом</span>
+    </div>
+    <div class="benefit">
+      <span class="benefit-icon">🔒</span>
+      <span class="benefit-text"><strong>Приватно и анонимно</strong> — никаких данных, только ваш вопрос и адрес кошелька для верификации</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Как это работает</h2>
+    <div class="step">
+      <span class="step-num">1</span>
+      <span class="step-text">Нажмите кнопку ниже — откроется ManyChat в Instagram/TikTok</span>
+    </div>
+    <div class="step">
+      <span class="step-num">2</span>
+      <span class="step-text">Напишите свой вопрос тарологу в чате</span>
+    </div>
+    <div class="step">
+      <span class="step-num">3</span>
+      <span class="step-text">Получите расклад + голосовое разбор за 15–30 мин</span>
+    </div>
+    <div class="step">
+      <span class="step-num">4</span>
+      <span class="step-text">Первая раскладка бесплатно, следующие — по подписке (USDT)</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Подписка после бесплатной раскладки</h2>
+    <div class="price-row">
+      <span class="price-label">Первая раскладка</span>
+      <span class="price-value price-value--free">0 USDT</span>
+    </div>
+    <div class="price-row">
+      <span class="price-label">3 расклада / день</span>
+      <span class="price-value">15 USDT / мес</span>
+    </div>
+    <div class="price-row">
+      <span class="price-label">Безлимит</span>
+      <span class="price-value">45 USDT / мес</span>
+    </div>
+    <p class="muted">Оплата только USDT (TRC20 / ERC20 / Solana). Никаких карт, KYC или подписок в приложении.</p>
+  </div>
+
+  <div class="card" id="payment-section">
+    <h2>Получить бесплатную раскладку</h2>
+    <p class="subtitle">Введите адрес вашего USDT-кошелька — мы проверим, что вы не бот, и отправим ссылку в ManyChat</p>
+    
+    <div class="input-group">
+      <input type="text" class="input" id="walletInput" placeholder="T... или 0x... или Solana адрес" autocomplete="off" />
+    </div>
+    <button class="cta" id="submitBtn" onclick="handleSubmit()">Открыть ManyChat и получить раскладку</button>
+    <p class="error" id="errorMsg"></p>
+    <p class="success" id="successMsg"></p>
+  </div>
+
+  <div class="card card--tight hidden" id="qr-section">
+    <h2>Или оплатите подписку прямо сейчас</h2>
+    <p class="muted">Выберите сеть — покажу адрес и QR для оплаты</p>
+    <div id="chainOpts"></div>
+    <div id="payDetails" class="hidden">
+      <p class="warn" id="payWarn"></p>
+      <div class="addr" id="payAddr"></div>
+      <div class="qr-wrap" id="payQr"></div>
+      <button class="cta" id="copyAddr" onclick="copyAddress()">Скопировать адрес</button>
+      <p class="muted" id="copyDone"></p>
+    </div>
+  </div>
+
+  <div class="trust">
+    <span class="badge">🔮 2М+ подписчиков @hothighpriestess</span>
+    <span class="badge">💰 ~$1М/год (Fortune 2024)</span>
+    <span class="badge">🛡 ManyChat официальный API</span>
+    <span class="badge">⚡ Мгновенная доставка в DM</span>
+  </div>
+
+  <div class="footer">
+    <p>Это не финансовый совет. Таро — инструмент рефлексии, не предсказание будущего.</p>
+    <p>Оплата USDT через <a href="https://pay.pxbt.app" style="color:#ffd74a">pay.pxbt.app</a> — без комиссий платформы</p>
+  </div>
+
+<script>
+// Chain configs for payment
+const CHAINS = [
+  { id: 'tron', label: 'USDT · Tron (TRC20)', net: 'Tron (TRC20)', address: '' },
+  { id: 'evm', label: 'USDT · Ethereum (ERC20)', net: 'Ethereum (ERC20)', address: '' },
+  { id: 'solana', label: 'USDT · Solana', net: 'Solana', address: '' }
+];
+
+let selectedChain = null;
+let walletAddress = '';
+
+// Load addresses from pay.pxbt.app API
+async function loadAddresses() {
+  try {
+    const res = await fetch('https://pay.pxbt.app/api/address');
+    if (res.ok) {
+      const data = await res.json();
+      CHAINS.forEach(c => {
+        if (data[c.id]) c.address = data[c.id];
+      });
+      renderChains();
+    }
+  } catch (e) {
+    console.warn('Could not load addresses from pay.pxbt.app', e);
+    renderChains();
+  }
+}
+
+function renderChains() {
+  const box = document.getElementById('chainOpts');
+  box.innerHTML = '';
+  CHAINS.forEach(c => {
+    const btn = document.createElement('button');
+    btn.className = 'opt';
+    btn.textContent = c.label + (c.address ? '' : ' (адрес не настроен)');
+    btn.setAttribute('aria-pressed', 'false');
+    btn.disabled = !c.address;
+    btn.onclick = () => selectChain(c);
+    box.appendChild(btn);
+  });
+}
+
+function selectChain(chain) {
+  selectedChain = chain;
+  document.querySelectorAll('#chainOpts .opt').forEach((b, i) => {
+    b.setAttribute('aria-pressed', String(b === event.target));
+  });
+  document.getElementById('payDetails').classList.remove('hidden');
+  document.getElementById('payWarn').textContent = '⚠ Отправляйте ТОЛЬКО USDT в сети ' + chain.net + ' — при переводе из другой сети средства будут потеряны.';
+  document.getElementById('payAddr').textContent = chain.address;
+  document.getElementById('payQr').innerHTML = '';
+  const qr = qrcode(0, 'M');
+  qr.addData(chain.address);
+  qr.make();
+  document.getElementById('payQr').innerHTML = qr.createImgTag(4, 8);
+  document.getElementById('copyDone').textContent = '';
+}
+
+function copyAddress() {
+  if (!selectedChain) return;
+  navigator.clipboard.writeText(selectedChain.address).then(() => {
+    document.getElementById('copyDone').textContent = 'Адрес скопирован в буфер обмена';
+  }).catch(() => {
+    document.getElementById('copyDone').textContent = selectedChain.address;
+  });
+}
+
+async function handleSubmit() {
+  const input = document.getElementById('walletInput');
+  const addr = input.value.trim();
+  const errorEl = document.getElementById('errorMsg');
+  const successEl = document.getElementById('successMsg');
+  const btn = document.getElementById('submitBtn');
+  
+  errorEl.textContent = '';
+  successEl.textContent = '';
+  
+  // Basic validation
+  if (!addr) {
+    errorEl.textContent = 'Введите адрес кошелька';
+    return;
+  }
+  if (addr.length < 20) {
+    errorEl.textContent = 'Адрес слишком короткий';
+    return;
+  }
+  // Basic format check
+  const isTron = addr.startsWith('T') && addr.length === 34;
+  const isEvm = addr.startsWith('0x') && addr.length === 42;
+  const isSolana = addr.length >= 32 && addr.length <= 44 && /^[1-9A-HJ-NP-Za-km-z]+$/.test(addr);
+  if (!isTron && !isEvm && !isSolana) {
+    errorEl.textContent = 'Неверный формат адреса (TRC20: T..., ERC20: 0x..., Solana: base58)';
+    return;
+  }
+  
+  walletAddress = addr;
+  btn.disabled = true;
+  btn.textContent = 'Проверяем...';
+  
+  try {
+    // Call pay.pxbt.app to verify/create invoice for free tier
+    const res = await fetch('https://pay.pxbt.app/api/invoice', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        wallet: addr,
+        tier: 'free_tarot',
+        amount: 0 
+      })
+    });
+    
+    const data = await res.json();
+    
+    if (res.ok && data.manychat_url) {
+      successEl.textContent = '✓ Кошелек верифицирован! Перенаправляем в ManyChat...';
+      // Store wallet for session
+      sessionStorage.setItem('tarot_wallet', addr);
+      // Redirect to ManyChat
+      setTimeout(() => {
+        window.location.href = data.manychat_url;
+      }, 1500);
+    } else {
+      errorEl.textContent = data.error || 'Ошибка верификации. Попробуйте другой адрес.';
+      btn.disabled = false;
+      btn.textContent = 'Открыть ManyChat и получить раскладку';
+    }
+  } catch (e) {
+    errorEl.textContent = 'Сеть недоступна. Проверьте соединение.';
+    btn.disabled = false;
+    btn.textContent = 'Открыть ManyChat и получить раскладку';
+  }
+}
+
+// Check if coming from ManyChat with verified wallet
+document.addEventListener('DOMContentLoaded', () => {
+  loadAddresses();
+  
+  // Check for wallet in URL params (from ManyChat callback)
+  const params = new URLSearchParams(window.location.search);
+  const wallet = params.get('wallet') || sessionStorage.getItem('tarot_wallet');
+  if (wallet) {
+    document.getElementById('walletInput').value = wallet;
+    document.getElementById('payment-section').classList.add('hidden');
+    document.getElementById('qr-section').classList.remove('hidden');
+    document.getElementById('submitBtn').textContent = 'Кошелек подтверждён ✓';
+    document.getElementById('submitBtn').disabled = true;
+    document.getElementById('submitBtn').classList.add('cta--secondary');
+  }
+  
+  // Auto-show payment section after 30 seconds
+  setTimeout(() => {
+    if (!document.getElementById('payment-section').classList.contains('hidden')) {
+      document.getElementById('qr-section').classList.remove('hidden');
+    }
+  }, 30000);
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  tarot-funnel:
+    build: .
+    container_name: tarot-funnel
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    environment:
+      - PORT=8081
+      - DATA_DIR=/data
+      - MANYCHAT_PAGE_ID=${MANYCHAT_PAGE_ID}
+      - MANYCHAT_TOKEN=${MANYCHAT_TOKEN}
+      - PAY_API_TOKEN=${PAY_API_TOKEN}
+    volumes:
+      - tarot-funnel-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8081/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  tarot-funnel-data:
