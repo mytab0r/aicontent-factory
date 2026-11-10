@@ -15,7 +15,7 @@ concurrency:
   group: ci-${{ github.head_ref || github.ref }}
   cancel-in-progress: false
 jobs:
-  test-and-lint:
+  test:
     # объединено: test + ci-bypass-lint (раньше 2 параллельных job-слота на прогон).
     # консолидация (t_8814b9a9): снижает пиковую нагрузку с 2 слотов на 1 слот на прогон,
     # что устраняет queued >20 мин при ≥3 параллельных PR на 2 ci-раннерах.
@@ -106,7 +106,7 @@ jobs:
   # System.AggregateException "… (An error occurred while sending the request.)" без реальной
   # ошибки шагов. Проверяем логи упавших jobs текущего прогона и перезапускаем совпавшие.
   runner-restore:
-    needs: [test-and-lint]
+    needs: [test]
     if: ${{ !cancelled() }}
     runs-on: [self-hosted, ci]
     permissions:
