@@ -365,7 +365,7 @@ await scenario('S6 evm: закрыл модалку — кнопка актив�
         };
       });
     });
-    await env.page.click('#connect-all');
+    await env.page.evaluate(() => claimChain('evm'));
     await logHas(env.page, '✘ кошелёк не найден — открываю WalletConnect');
     await env.page.waitForFunction(() => window.__appkit.modal.getState().open, null, { timeout: 20_000 });
     assert.ok(await env.page.evaluate(() => document.getElementById('connect-all').disabled), 'кнопка disabled, пока модалка открыта');
