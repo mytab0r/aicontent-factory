@@ -16,6 +16,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import dd_channel
 import importlib.util
 
+from quota_guard import is_exhausted, mark_exhausted
+
 
 class QuotaExhausted(Exception):
     """Дневная квота ZeroGPU исчерпана — ран должен упасть сразу."""
@@ -50,6 +52,8 @@ def run_batch(scenes: list[dict], out_dir: Path, client_factory):
     уже сохранённые файлы остаются на месте — следующий ран их пропустит.
     Прочие исключения (сеть и т.п.) — тоже наружу: ран падает, state цел.
     """
+    if is_exhausted():
+        return 0, QuotaExhausted("ZeroGPU quota exhausted (guard)")
     out_dir.mkdir(parents=True, exist_ok=True)
     todo = pending_scenes(scenes, out_dir)
     generated = 0
@@ -88,9 +92,11 @@ def run_batch(scenes: list[dict], out_dir: Path, client_factory):
             generated += 1
             print(f"saved {dest.name}", flush=True)
         except Exception as e:  # noqa: BLE001 — граница процесса, классифицируем
-            if "quota" in str(e).lower():
+            msg = str(e)
+            if "quota" in msg.lower() or "zerogpu" in msg.lower():
                 print(f"quota exhausted after {generated} new track(s) — fail fast", flush=True)
-                return generated, QuotaExhausted(str(e))
+                mark_exhausted(msg)
+                return generated, QuotaExhausted(msg)
             print(f"FAILED {scene['name']}: {e}", flush=True)
             return generated, e
     return generated, None
@@ -129,6 +135,9 @@ def main() -> None:
     if endpoint:
         generated, err = run_local_generation(SCENES, OUT_DIR)
     else:
+        if is_exhausted():
+            print("ZeroGPU quota exhausted — skipping HF Space fallback", flush=True)
+            raise SystemExit(0)
         print("ACE15_ENDPOINT не задан — фолбэк на HF Space (тарат квоту ZeroGPU; "
               "временный, root-cause t_61f7c556)", flush=True)
         token = os.environ.get("HF_TOKEN") or None
