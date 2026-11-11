@@ -117,6 +117,12 @@ def master(src: str, dst: str, genre: str = "chill phonk") -> dict:
             break
         run(dst, dst, f"volume={LUFS_TARGET - m['i']:+.2f}dB,alimiter=limit=-2dB:level=false")
         m = measure(dst)
+    # t_60cce439: динамический loudnorm TP=-2 не гарантирует TP-гейт на mp3 (овершут кодека
+    # до +2 дБ: CI 43006800165 — tp=0.1 при I -14.7). Safety-limiter по семпл-пику ставит
+    # TP ниже гейта всегда; I меняется negligibly.
+    if m["tp"] > -1:
+        run(dst, dst, "alimiter=limit=0.79:level=disabled:attack=0.1:release=20:asc=0")
+        m = measure(dst)
     assert -15 <= m["i"] <= -13, f"гейт I: {m}"
     assert m["lra"] <= 8 or not phonk, f"гейт LRA: {m}"
     assert m["tp"] <= -1, f"гейт TP: {m}"
