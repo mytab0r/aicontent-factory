@@ -78,6 +78,87 @@ def test_idea_main_survives_router_down():
         assert (Path(d) / "idea.json").exists()
 
 
+# ---------- t_c3cb2ecb: preflight + skipped slot ----------
+
+def test_preflight_logs_all_models():
+    def post(path, payload, **kw):
+        if payload["model"] == "dead":
+            raise RuntimeError("9router HTTP 404")
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    st = common.preflight(["alive", "dead"], post=post)
+    assert st == {"alive": True, "dead": False}
+
+
+def test_owning_idea_skips_with_exit3_when_all_models_fail():
+    idea_mod = load("01_idea.py")
+
+    def dead(*a, **k):
+        return False
+
+    idea_mod.model_alive = dead
+    idea_mod.router_post = dead  # preflight тоже через него
+    with tempfile.TemporaryDirectory() as d:
+        idea_mod.STATE_DIR = Path(d)
+        try:
+            idea_mod.owning_idea()
+        except SystemExit as e:
+            assert e.code == 3, f"ожидался exit 3 (skipped slot), получил {e.code}"
+        else:
+            raise AssertionError("owning_idea должен завершать слот exit 3, не падать")
+
+
+def test_owning_idea_bad_script_falls_to_next_model():
+    """Пустой скрипт (combo content=None) не роняет run — валидный ответ на следующей модели."""
+    idea_mod = load("01_idea.py")
+    import owning_channel as oc
+    import json as _json
+
+    plan = {"topic": "car wash", "hook": "hook text", "structure": "list"}
+
+    def set_plan(*a, **k):
+        return dict(plan)
+
+    oc.next_plan = set_plan
+    run_dir = Path(tempfile.mkdtemp())
+    idea_mod.STATE_DIR = Path(tempfile.mkdtemp())
+    idea_mod.new_run_dir = lambda: run_dir
+    oc.validate_script = lambda s: s
+    idea_mod.model_alive = lambda *a, **k: True
+    responses = iter([
+        {"choices": [{"message": {"content": None}}]},  # combo: content=None -> AttributeError
+        {"choices": [{"message": {"content": _json.dumps(
+            {"title": "The Economics of Owning a car wash", "beats": [{"say": "a", "big": "b"}]})}}]},
+        # на случай probe/повторного запроса третьей модели
+        {"choices": [{"message": {"content": _json.dumps(
+            {"title": "The Economics of Owning a car wash", "beats": [{"say": "a", "big": "b"}]})}}]},
+    ])
+    idea_mod.router_post = lambda *a, **k: next(responses)
+    idea_mod.owning_idea()  # без SystemExit: второй ответ валиден, idea.json записан
+    assert (run_dir / "idea.json").exists()
+
+
+def test_owning_idea_all_empty_scripts_skip_not_crash():
+    """41542127792-паттерн: combo отдаёт пустой скрипт всем моделям -> exit 3, не AttributeError."""
+    idea_mod = load("01_idea.py")
+    import owning_channel as oc
+
+    def set_plan(*a, **k):
+        return {"topic": "car wash", "hook": "hook text", "structure": "list"}
+
+    oc.next_plan = set_plan
+    idea_mod.STATE_DIR = Path(tempfile.mkdtemp())
+    idea_mod.model_alive = lambda *a, **k: True
+    idea_mod.router_post = lambda *a, **k: {"choices": [{"message": {"content": None}}]}
+    try:
+        idea_mod.owning_idea()
+    except SystemExit as e:
+        assert e.code == 3
+    else:
+        raise AssertionError("ожидался exit 3 при пустых скриптах всех моделей")
+
+
+
 def test_dead_models_removed_from_chains():
     """t_b87507e0: glm (404 нет кредов) и cx/gpt-5.5 (400 unsupported) мертвы на 9router — не в цепочках."""
     idea_mod = load("01_idea.py")
