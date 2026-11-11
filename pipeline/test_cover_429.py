@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """t_629a7ba2: 27-28.10 gpt-image-1.5 отдавал 429 -> 02_cover ставил заглушку -> 04b FAIL «обложка-заглушка».
-При 429 обязаны сработать: ретрай по «reset after Ns» -> другая модель -> банк артов; заглушка только без фолбэков."""
+При 429 обязаны сработать: ретрай по «reset after Ns» -> другая модель -> банк артов; заглушка только без фолбэков.
+
+t_2b4f5dec: flux-1-schnell теперь первичная модель (gpt-image-1.5 401 invalidated oauth).
+Тесты обновлены под новый порядок: flux primary, gpt-image fallback."""
 import importlib.util, json, os, sys, tempfile, types
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import quality_gate as qg
 
-LIMIT = '9router /images/generations HTTP 429: {"error":{"message":"[codex/gpt-image-1.5] [429]: The usage limit has been reached (reset after 6s)"}}'
+# 429 теперь приходит от codex/gpt-image-1.5 даже когда запрос к flux (роутер маршрутизирует через codex)
+LIMIT_FLUX = '9router /images/generations HTTP 429: {"error":{"message":"[codex/gpt-image-1.5] [429]: The usage limit has been reached (reset after 6s)"}}'
+LIMIT_GPT = '9router /images/generations HTTP 429: {"error":{"message":"[codex/gpt-image-1.5] [429]: The usage limit has been reached (reset after 6s)"}}'
 
 
 def load(d, router_post):
@@ -41,39 +46,39 @@ def run(case, router_post, bank=True):
 calls = []
 def always_429(path, body, timeout=0):
     calls.append(body["model"])
-    raise RuntimeError(LIMIT)
+    raise RuntimeError(LIMIT_FLUX)
 
 for genre in ("anime lofi", "chill phonk"):
     os.environ["GENRE"] = genre
     calls.clear()
     d, src = run(f"[{genre}] всё 429 ->", always_429)
     assert src["path"] == "bank", src
-    assert calls.count("cx/gpt-image-1.5") == 2, calls  # исходная модель + один ретрай по reset after
-    assert any("flux" in c for c in calls), "не переключился на другую модель"
+    assert calls.count("cf/@cf/black-forest-labs/flux-1-schnell") == 2, calls  # первичная модель + один ретрай по reset after
+    assert any("gpt-image" in c for c in calls), "не переключился на fallback"
     assert sleeps == [8, 8], sleeps  # по одному ретраю (6s+2) на каждую модель
     assert not (d / "cover_fallback.json").exists() and qg.fallback_why(d) == [], "банк есть, а стоит заглушка"
     from PIL import Image
     assert Image.open(d / "cover.png").size[0] >= 1024, "из банка пришла не обложка"
     assert qg.cover_why(d / "cover.png") == [], qg.cover_why(d / "cover.png")  # V9 яркость
 
-# 429 на первой, повтор после reset — успех
+# 429 на первой (flux), повтор после reset — успех
 n = []
 def ok_after_retry(path, body, timeout=0):
     n.append(1)
     if len(n) == 1:
-        raise RuntimeError(LIMIT)
+        raise RuntimeError(LIMIT_FLUX)
     return {"data": [{"b64_json": png_b64()}]}
 _, src = run("429 -> ретрай ->", ok_after_retry)
-assert src["path"] == "retry" and src["model"] == "cx/gpt-image-1.5", src
+assert src["path"] == "retry" and src["model"] == "cf/@cf/black-forest-labs/flux-1-schnell", src
 
-# gpt-image 429 с длинным окном -> сразу flux
-def gpt_long_flux_ok(path, body, timeout=0):
-    if "gpt-image" in body["model"]:
-        raise RuntimeError(LIMIT.replace("6s", "15m 51s"))
-    assert "size" not in body, "flux-1-schnell падает 400 на size"
+# flux 429 с длинным окном -> сразу gpt-image
+def flux_long_gpt_ok(path, body, timeout=0):
+    if "flux" in body["model"]:
+        raise RuntimeError(LIMIT_FLUX.replace("6s", "15m 51s"))
+    assert "size" in body, "gpt-image требует size"
     return {"data": [{"b64_json": png_b64()}]}
-_, src = run("429 долгий -> другая модель ->", gpt_long_flux_ok)
-assert src["path"] == "fallback_model" and "flux" in src["model"] and sleeps == [], (src, sleeps)
+_, src = run("429 долгий -> fallback ->", flux_long_gpt_ok)
+assert src["path"] == "fallback_model" and "gpt-image" in src["model"] and sleeps == [], (src, sleeps)
 
 # без банка и без моделей — прежний V14: заглушка + маркер (04b не пропустит)
 d, src = run("всё 429, банк пуст ->", always_429, bank=False)
@@ -86,19 +91,19 @@ def auth_401_all(path, body, timeout=0):
     auth_calls.append(body["model"])
     raise RuntimeError(AUTH_401)
 
-# gpt-image 401, flux ok -> fallback_model без лишних повторений gpt
-n_gpt = []
-def gpt_401_flux_ok(path, body, timeout=0):
-    if "gpt-image" in body["model"]:
-        n_gpt.append(body["model"])
+# flux 401, gpt-image ok -> fallback_model без лишних повторений flux
+n_flux = []
+def flux_401_gpt_ok(path, body, timeout=0):
+    if "flux" in body["model"]:
+        n_flux.append(body["model"])
         raise RuntimeError(AUTH_401)
-    assert "size" not in body, "flux не принимает size"
+    assert "size" in body, "gpt-image требует size"
     return {"data": [{"b64_json": png_b64()}]}
 
 os.environ["GENRE"] = "anime lofi"
-d, src = run("401 -> flux ->", gpt_401_flux_ok)
-assert src["path"] == "fallback_model" and "flux" in src["model"], src
-assert n_gpt.count("cx/gpt-image-1.5") == 2, n_gpt  # один size 1536x1024 + один 1024x1024, без ретраев на 401
+d, src = run("401 -> gpt-image ->", flux_401_gpt_ok)
+assert src["path"] == "fallback_model" and "gpt-image" in src["model"], src
+assert n_flux.count("cf/@cf/black-forest-labs/flux-1-schnell") == 1, n_flux  # flux не принимает size, один вызов без ретраев на 401
 assert qg.fallback_why(d) == []
 
 # все 401 -> банк
