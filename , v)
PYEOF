@@ -1,0 +1,5 @@
+bash: line 10: warning: here-document at line 1 delimited by end-of-file (wanted `PYEOF')
+  File "<stdin>", line 4
+    for r in c.execute(select name, config from providerConnections where provider=gemini):
+                       ^^^^^^^^^^^
+SyntaxError: invalid syntax. Perhaps you forgot a comma?

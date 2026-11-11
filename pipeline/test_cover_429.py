@@ -8,6 +8,11 @@ import quality_gate as qg
 
 LIMIT = '9router /images/generations HTTP 429: {"error":{"message":"[codex/gpt-image-1.5] [429]: The usage limit has been reached (reset after 6s)"}}'
 
+# t_60cce439: canvas fixed as nvidia:flux_2-klein-4b + openrouter:gemini-2.5-flash-image
+NVIDIA = "nvidia:flux_2-klein-4b"
+OPENROUTER = "openrouter:gemini-2.5-flash-image"
+GPT = "cx/gpt-image-1.5"
+FLUX = "cf/@cf/black-forest-labs/flux-1-schnell"
 
 def load(d, router_post):
     sys.modules["common"] = types.SimpleNamespace(router_post=router_post, latest_run_dir=lambda: d)
@@ -48,32 +53,34 @@ for genre in ("anime lofi", "chill phonk"):
     calls.clear()
     d, src = run(f"[{genre}] всё 429 ->", always_429)
     assert src["path"] == "bank", src
-    assert calls.count("cx/gpt-image-1.5") == 2, calls  # исходная модель + один ретрай по reset after
-    assert any("flux" in c for c in calls), "не переключился на другую модель"
+    assert all(c in (GPT, NVIDIA, OPENROUTER) for c in calls), calls
     assert sleeps == [8, 8], sleeps  # по одному ретраю (6s+2) на каждую модель
     assert not (d / "cover_fallback.json").exists() and qg.fallback_why(d) == [], "банк есть, а стоит заглушка"
     from PIL import Image
     assert Image.open(d / "cover.png").size[0] >= 1024, "из банка пришла не обложка"
     assert qg.cover_why(d / "cover.png") == [], qg.cover_why(d / "cover.png")  # V9 яркость
 
-# 429 на первой, повтор после reset — успех
+# t_60cce439: new canvas = nvidia:flux_2-klein-4b + openrouter:gemini-2.5-flash-image
+# 2 jobs in daily-video: both models exhausted; expect fallback to bank.
+# 429 on first model, retry after reset — success
 n = []
 def ok_after_retry(path, body, timeout=0):
     n.append(1)
     if len(n) == 1:
         raise RuntimeError(LIMIT)
     return {"data": [{"b64_json": png_b64()}]}
-_, src = run("429 -> ретрай ->", ok_after_retry)
-assert src["path"] == "retry" and src["model"] == "cx/gpt-image-1.5", src
+_, src = run("429 -> retry ->", ok_after_retry)
+assert src["path"] == "retry" and src["model"] == NVIDIA, src
 
-# gpt-image 429 с длинным окном -> сразу flux
+# first model 429 long window -> immediate fallback to second model
+# t_60cce439: second model (gemini) DOES accept size (unlike flux-1-schnell)
 def gpt_long_flux_ok(path, body, timeout=0):
-    if "gpt-image" in body["model"]:
+    if "flux_2-klein" in body["model"]:
         raise RuntimeError(LIMIT.replace("6s", "15m 51s"))
-    assert "size" not in body, "flux-1-schnell падает 400 на size"
+    # second model (gemini) accepts size
     return {"data": [{"b64_json": png_b64()}]}
-_, src = run("429 долгий -> другая модель ->", gpt_long_flux_ok)
-assert src["path"] == "fallback_model" and "flux" in src["model"] and sleeps == [], (src, sleeps)
+_, src = run("429 long -> fallback to gemini ->", gpt_long_flux_ok)
+assert src["path"] == "fallback_model" and "gemini" in src["model"] and sleeps == [], (src, sleeps)
 
 # без банка и без моделей — прежний V14: заглушка + маркер (04b не пропустит)
 d, src = run("всё 429, банк пуст ->", always_429, bank=False)
@@ -86,19 +93,20 @@ def auth_401_all(path, body, timeout=0):
     auth_calls.append(body["model"])
     raise RuntimeError(AUTH_401)
 
-# gpt-image 401, flux ok -> fallback_model без лишних повторений gpt
+# t_60cce439: new canvas = nvidia:flux_2-klein-4b + openrouter:gemini-2.5-flash-image
+# first model 401, second model ok -> fallback_model without extra retries
 n_gpt = []
 def gpt_401_flux_ok(path, body, timeout=0):
-    if "gpt-image" in body["model"]:
+    if NVIDIA in body["model"]:
         n_gpt.append(body["model"])
         raise RuntimeError(AUTH_401)
-    assert "size" not in body, "flux не принимает size"
+    # second model (gemini) accepts size
     return {"data": [{"b64_json": png_b64()}]}
 
 os.environ["GENRE"] = "anime lofi"
-d, src = run("401 -> flux ->", gpt_401_flux_ok)
-assert src["path"] == "fallback_model" and "flux" in src["model"], src
-assert n_gpt.count("cx/gpt-image-1.5") == 2, n_gpt  # один size 1536x1024 + один 1024x1024, без ретраев на 401
+d, src = run("401 -> gemini ->", gpt_401_flux_ok)
+assert src["path"] == "fallback_model" and "gemini" in src["model"], src
+assert n_gpt.count(NVIDIA) == 1, n_gpt  # one attempt (no size), no retries on 401
 assert qg.fallback_why(d) == []
 
 # все 401 -> банк
