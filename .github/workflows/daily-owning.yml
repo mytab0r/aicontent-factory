@@ -56,26 +56,32 @@ jobs:
           [ $rc -eq 3 ] && echo "go=0" >> "$GITHUB_OUTPUT"
           [ $rc -eq 0 ] || [ $rc -eq 3 ]  # прочее (токен/API) = красный run, не тихий пропуск
       - name: 01 idea (script)
+        id: idea
         if: steps.guard.outputs.go == '1'
         working-directory: pipeline
-        run: ../.venv/bin/python 01_idea.py
+        # t_c3cb2ecb: exit 3 = слот пропущен (провайдеры 9router не дали валидный скрипт) —
+        # зелёный run с warning, не failure; ротация не коммитится, слот повторится позже.
+        run: |
+          rc=0; ../.venv/bin/python 01_idea.py || rc=$?
+          [ $rc -eq 3 ] && { echo "::warning::слот пропущен: нет валидного скрипта после всех моделей 9router"; echo "skip=1" >> "$GITHUB_OUTPUT"; exit 0; }
+          exit $rc
       - name: 04 render (tts + infographic)
-        if: steps.guard.outputs.go == '1'
+        if: steps.guard.outputs.go == '1' && steps.idea.outputs.skip != '1'
         working-directory: pipeline
         run: ../.venv/bin/python owning_channel.py render
       - name: spokes (Pinterest/X/блог/TG из того же скрипта, t_705386b0)
-        if: steps.guard.outputs.go == '1'
+        if: steps.guard.outputs.go == '1' && steps.idea.outputs.skip != '1'
         working-directory: pipeline
         run: ../.venv/bin/python spokes.py
       # P19: гейт до заливки (целостность, чёрный кадр, формат шортса, обложка). FAIL = не публиковать.
       - name: quality gate video (FAIL = не публиковать)
-        if: steps.guard.outputs.go == '1'
+        if: steps.guard.outputs.go == '1' && steps.idea.outputs.skip != '1'
         working-directory: pipeline
         run: ../.venv/bin/python quality_gate.py --video
       # t_479b69e6: без GO гейта запуска ch1 — выход без upload (рендер/QA остаются, токен не пишется).
       - name: launch gate (NO-GO = без upload)
         id: gate
-        if: steps.guard.outputs.go == '1'
+        if: steps.guard.outputs.go == '1' && steps.idea.outputs.skip != '1'
         run: |
           if [ "$PUBLISH_PRIVACY" = "private" ]; then echo "go=1" >> "$GITHUB_OUTPUT"; echo "dryrun: private upload, гейт не нужен"
           else
@@ -104,7 +110,7 @@ jobs:
           PRIVACY: ${{ env.PUBLISH_PRIVACY }}
         run: ../.venv/bin/python 05_publish.py --verify
       - name: commit rotation state
-        if: steps.guard.outputs.go == '1' && !inputs.dryrun
+        if: steps.guard.outputs.go == '1' && steps.idea.outputs.skip != '1' && !inputs.dryrun
         run: |
           git config user.name "aicontent-factory-bot"
           git config user.email "actions@users.noreply.github.com"
