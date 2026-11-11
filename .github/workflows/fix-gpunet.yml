@@ -1,0 +1,23 @@
+name: fix-gpunet
+# временный workflow (t_8814b9a9): подключить свежесозданные ci-раннеры gh-runner-acf-ci/gh-runner-acf-ci2
+# к сети gpu-net (в ней живут ace-step и прочие сервисы, которые зовёт test job).
+# Разовый dispatch; запускается на pc-acf (уникальная метка gpu).
+on:
+  pull_request:
+    branches: [master]
+
+jobs:
+  connect:
+    runs-on: [self-hosted, gpu]
+    steps:
+      - name: connect runners to gpu-net
+        run: |
+          set -x
+          GID=$(curl -s --unix-socket /var/run/docker.sock http://x/networks | python3 -c "import json,sys; print([n['Id'] for n in json.load(sys.stdin) if n['Name']=='gpu-net'][0])")
+          for C in gh-runner-acf-ci gh-runner-acf-ci2; do
+            code=$(curl -s -o /tmp/resp.json -w '%{http_code}' --unix-socket /var/run/docker.sock -X POST \
+              "http://x/networks/$GID/connect" -H 'Content-Type: application/json' \
+              -d "{\"Container\":\"$C\"}")
+            echo "$C -> $code $(cat /tmp/resp.json)"
+          done
+          curl -s --unix-socket /var/run/docker.sock "http://x/networks/$GID" | python3 -c "import json,sys; d=json.load(sys.stdin); print('gpu-net containers:', [c['Name'] for c in d['Containers'].values()])"
