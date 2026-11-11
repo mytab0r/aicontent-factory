@@ -83,6 +83,19 @@ def model_alive(model: str, post=None, timeout: int = 30) -> bool:
         return False
 
 
+def preflight(models: list[str], post=None) -> dict:
+    """t_c3cb2ecb: preflight всех провайдеров ДО генерации — статусы видны в логе run'а,
+    деградация предсказуема (кто мёртв на старте, тот не жжёт полный запрос)."""
+    post = post or router_post
+    status = {m: model_alive(m, post=post) for m in models}
+    for m, ok in status.items():
+        print(f"preflight {m}: {'alive' if ok else 'DEAD'}")
+    dead = [m for m, ok in status.items() if not ok]
+    if len(dead) == len(models):
+        print("preflight: ВСЕ модели мертвы — генерация уйдёт в фолбэк/скип")
+    return status
+
+
 def load_moods() -> list[str]:
     """Простой парсер config/moods.yaml (список строк под ключом moods:), без pyyaml (YAGNI)."""
     path = ROOT / "config" / "moods.yaml"

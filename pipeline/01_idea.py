@@ -9,7 +9,7 @@ from datetime import date
 from pathlib import Path
 
 import dd_channel
-from common import STATE_DIR, rotate, router_post, next_mood, new_run_dir, model_alive
+from common import STATE_DIR, rotate, router_post, next_mood, new_run_dir, model_alive, preflight
 from watchdog import GENRE_IN_TITLE
 
 # ponytail: фолбэк по списку; квота gemini кончается -> следующая модель.
@@ -197,13 +197,16 @@ def remember_title(title: str, today: date, state_dir: Path | None = None) -> No
 
 def owning_idea() -> None:
     """S1 ch1 «Economics of Owning»: скрипт Short через 9router; невалидный ответ = следующая модель.
-    ponytail: без шаблонного фолбэка (inauthentic content) — нет валидного скрипта, нет выпуска."""
+    ponytail: без шаблонного фолбэка (inauthentic content) — нет валидного скрипта, нет выпуска.
+    t_c3cb2ecb: все модели мертвы/упали -> exit 3 = слот пропущен с причиной в логе (workflow
+    помечает слот skipped, зелёный run), а не failure всего пайплайна."""
     import owning_channel as oc
+    st = preflight(MODELS, router_post)  # t_c3cb2ecb: статусы провайдеров в лог run до генерации
     plan = oc.next_plan(STATE_DIR)
     prompt, err = oc.idea_prompt(plan), None
     # t_b87507e0 (30.10): glm убран из цепочки — нет активных кредов на 9router (404 model_not_found).
     for model in MODELS:
-        if not model_alive(model, router_post):  # t_b87507e0: мёртвая (404/400) / лежащая (5xx) -> следующая
+        if not st.get(model, True) or not model_alive(model, router_post):  # t_b87507e0: мёртвая (404/400/5xx) -> следующая
             err = RuntimeError(f"{model}: probe failed (404/400/5xx)")
             continue
         try:
@@ -217,7 +220,8 @@ def owning_idea() -> None:
             print(f"model {model}: {e}"[:300])
             err = e
     else:
-        raise SystemExit(f"нет валидного скрипта: {err}")
+        print(f"owning: слот пропущен — нет валидного скрипта после всех моделей: {err}")
+        sys.exit(3)  # 3 = skipped slot (конвенция guard-лимита), не failure пайплайна
     idea.update(channel="owning", topic=plan["topic"], plan=plan)
     out = new_run_dir() / "idea.json"
     out.write_text(json.dumps(idea, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -258,6 +262,7 @@ def llm_idea(prompt: str):
 
 def main() -> None:
     channel = os.environ.get("CHANNEL", "lofi")
+    preflight(MODELS, router_post)  # t_c3cb2ecb: статусы провайдеров в лог run до генерации
     if channel == "owning":
         return owning_idea()
     if channel == "dd":
