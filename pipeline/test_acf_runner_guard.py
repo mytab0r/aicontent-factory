@@ -51,6 +51,10 @@ def case_stale_runs():
 
 def case_e2e_stub_gh():
     """Стаб вместо gh: runners=0 → exit!=0 + RUNNERS_ZERO; здоровые фикстуры → exit 0."""
+    # e2e идёт по стенным часам (не NOW): иначе через 6 ч после NOW кейс «здоровый»
+    # падал NO_RUNS_6H — тест-бомба замедленного действия.
+    fresh_runs = {"workflow_runs": [{"created_at": (
+        datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=30)).isoformat()}]}
     with tempfile.TemporaryDirectory() as td:
         stub = pathlib.Path(td, "gh")
         stub.write_text(f"""#!/bin/sh
@@ -64,7 +68,7 @@ J
 J
   ;;
   *) cat <<'J'
-{json.dumps(OK_RUNS)}
+{json.dumps(fresh_runs)}
 J
   ;;
 esac
