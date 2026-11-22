@@ -92,3 +92,20 @@ Suno/Udio не имеют официального публичного API (н�
 - Не строить admin-панель/дашборд — отчёт в виде markdown-файла достаточно.
 - Не оптимизировать пайплайн под "вирусность" — сначала просто работающий
   воспроизводимый цикл с приемлемым качеством.
+## CI-инфра: self-hosted раннеры и сторож (t_ea04a09c)
+
+Инцидент 12.11: контейнеры раннеров `gh-runner-acf-*` удалены, `daily-owning.yml`
+disabled_manually — прогонов не было 10 дней, а разборы списывали простой на «мёртвые
+модели 9router». Механизм против повтора:
+
+- Два контейнера на ПК: `gh-runner-acf-ci` (LABELS=ci, `ci.yml`) и
+  `gh-runner-acf-release` (LABELS=release, `daily-owning`/`post-analytics`/`ch2-snapshot`);
+  метки `com.hermes.project=aicontent-factory`, `com.hermes.role=ci|release`,
+  строки в `/opt/data/docker-owners.json`.
+- `pipeline/acf_runner_guard.py` падает (exit 1) с сигнатурами `RUNNERS_ZERO`,
+  `WORKFLOW_DISABLED <файл>`, `NO_RUNS_6H` и шлёт алерт в топик aicontent-factory;
+  тихий прогон — одна строка `ok`. Тест `pipeline/test_acf_runner_guard.py` включает
+  e2e-подмену `gh` (`ACF_GUARD_GH`): `total_count:0` → exit 1 + `RUNNERS_ZERO`.
+- Cron `acf-runner-guard` (every 30m, no_agent) гоняет
+  `/opt/data/scripts/acf_runner_guard_cron.sh`; он же ловит собственное молчание
+  (>75 мин без прогона = алерт), иначе «сторож есть, а не сторожит».
