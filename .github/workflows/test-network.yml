@@ -1,0 +1,21 @@
+name: test network
+on:
+  workflow_dispatch:
+  push:
+    branches: [aicontent-factory/t_ca65473e-aicontent-factory-tls-ssleof-www.googlea]
+
+jobs:
+  test:
+    runs-on: [self-hosted, release]
+    steps:
+      - uses: actions/checkout@v4
+      - name: test ipv4 connectivity
+        run: |
+          echo "=== Testing IPv4 connectivity to googleapis ==="
+          curl -4 -v --max-time 10 https://www.googleapis.com/ 2>&1 | head -30
+          echo "=== Testing IPv6 connectivity to googleapis ==="
+          curl -6 -v --max-time 10 https://www.googleapis.com/ 2>&1 | head -30 || echo "IPv6 failed (expected)"
+          echo "=== Testing DNS resolution ==="
+          getent ahosts www.googleapis.com
+          echo "=== Testing socket.getaddrinfo from Python ==="
+          python -c "import socket; results = socket.getaddrinfo('www.googleapis.com', 443); [print(f'  family={r[0]} addr={r[4][0]}') for r in results[:5]]"
