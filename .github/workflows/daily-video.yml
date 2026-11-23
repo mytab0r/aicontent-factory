@@ -61,10 +61,23 @@ jobs:
 
       # schedule опаздывает до 18:41 UTC -> второй long-form за сутки (12.10). Ручной dispatch = намеренный.
       # Слот жанра: cron-ы обеих матриц срабатывают оба, чужой слот = published=1 (скип всех шагов).
+      # G1ZM0_PUBLISH=0: полная пауза канала G1zm0 (как CODE2D=0 для второго канала).
+      # Никакие шаги не выполняются, публикации нет. Снимать только после качественного пилота.
+      - name: gate G1ZM0 publish flag
+        id: gate_pub
+        if: ${{ !inputs.force }}
+        run: |
+          if [ "${{ env.G1ZM0_PUBLISH }}" = "0" ] || [ "${{ env.G1ZM0_PUBLISH }}" = "false" ]; then
+            echo "G1ZM0_PUBLISH=0 — полная пауза канала, джоба пропущена"
+            echo "published=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "published=0" >> "$GITHUB_OUTPUT"
+
       - name: guard (один long-form жанра в сутки)
         id: guard
         # P16 (20.10): 4 ручных dispatch без scheduled обходили guard -> риск дубля long-form. Guard всегда, кроме force.
-        if: ${{ !inputs.force }}
+        if: ${{ !inputs.force && steps.gate_pub.outputs.published != '1' }}
         working-directory: pipeline
         run: |
           if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" != "${{ matrix.slots }}" ]; then
