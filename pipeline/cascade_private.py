@@ -10,6 +10,9 @@ import sys
 import urllib.parse
 import urllib.request
 
+# Force IPv4 for Google API domains to avoid TLS SSLEOF on broken IPv6 routes (t_ca65473e)
+import ipv4_google  # noqa: F401 - side effect: installs socket.getaddrinfo patch
+
 API = "https://www.googleapis.com/youtube/v3/"
 FULL_MIX = re.compile(r"Full mix:\s*https?://(?:www\.)?(?:youtube\.com/watch\?v=|youtu\.be/)([\w-]{11})")
 

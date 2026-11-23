@@ -2,7 +2,7 @@
 """S1 ch1 «Economics of Owning» (@OwningItMath, UC82JHx5Cl_kuxND-qHHwzTg): нарративные Shorts.
 
 CHANNEL=owning: 01_idea.py пишет EN-скрипт через 9router (next_plan + idea_prompt + validate_script),
-этот модуль озвучивает его (edge-tts, бесплатно) и собирает 1080x1920 инфографику (PIL + ffmpeg):
+этот модуль озвучивает него (edge-tts, бесплатно) и собирает 1080x1920 инфографику (PIL + ffmpeg):
   python owning_channel.py render   -> runs/<last>/video.mp4
   python owning_channel.py guard    -> exit 0 если сегодня ещё < MAX_PER_DAY загрузок (печатает count)
   python owning_channel.py channel-desc  -> обновить описание канала (тематические ссылки, без таро)
@@ -15,6 +15,9 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+
+# Force IPv4 for Google API domains to avoid TLS SSLEOF on broken IPv6 routes (t_ca65473e)
+import ipv4_google  # noqa: F401 - side effect: installs socket.getaddrinfo patch
 
 from quality_gate import LUFS_TARGET
 

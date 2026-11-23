@@ -39,6 +39,9 @@ import os
 import sys
 from pathlib import Path
 
+# Force IPv4 for Google API domains to avoid TLS SSLEOF on broken IPv6 routes (t_ca65473e)
+import ipv4_google  # noqa: F401 - side effect: installs socket.getaddrinfo patch
+
 ROOT = Path(__file__).resolve().parent.parent
 STATE_DIR = ROOT / ".state"
 TOKEN_PATH = STATE_DIR / "youtube_token.json"

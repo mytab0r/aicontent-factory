@@ -24,6 +24,9 @@ import urllib.parse
 import urllib.request
 from time import sleep as time_sleep
 
+# Force IPv4 for Google API domains to avoid TLS SSLEOF on broken IPv6 routes (t_ca65473e)
+import ipv4_google  # noqa: F401 - side effect: installs socket.getaddrinfo patch
+
 from common import tg_send
 
 WINDOW_H = (48, 72)
