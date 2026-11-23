@@ -29,3 +29,6 @@ jobs:
       - name: test full googleapiclient stack
         working-directory: pipeline
         run: ../.venv/bin/python test_google_api.py
+      - name: test direct SSL to IPv4
+        working-directory: pipeline
+        run: ../.venv/bin/python test_ssl_direct.py
