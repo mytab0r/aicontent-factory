@@ -1,0 +1,26 @@
+name: test ipv4 patch
+on:
+  workflow_dispatch:
+  push:
+    branches: [aicontent-factory/t_ca65473e-aicontent-factory-tls-ssleof-www.googlea]
+
+jobs:
+  test:
+    runs-on: [self-hosted, release]
+    steps:
+      - uses: actions/checkout@v4
+      - name: test ipv4 patch
+        run: |
+          cd pipeline
+          python -c "
+import socket
+import ipv4_google
+print('Patch applied:', hasattr(socket.getaddrinfo, '_ipv4_patched'))
+results = socket.getaddrinfo('www.googleapis.com', 443)
+print('First 5 families:', [r[0] for r in results[:5]])
+ipv4_first = all(r[0] == socket.AF_INET for r in results[:2])
+print('IPv4 first:', ipv4_first)
+if not ipv4_first:
+    exit(1)
+print('SUCCESS: IPv4 patch working')
+"
