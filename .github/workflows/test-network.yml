@@ -25,7 +25,7 @@ jobs:
           getent ahosts www.googleapis.com
       - name: test python socket.getaddrinfo
         working-directory: pipeline
-        run: .venv/bin/python test_ipv4_connectivity.py
+        run: ../.venv/bin/python test_ipv4_connectivity.py
       - name: test full googleapiclient stack
         working-directory: pipeline
-        run: .venv/bin/python test_google_api.py
+        run: ../.venv/bin/python test_google_api.py
