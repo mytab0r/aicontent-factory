@@ -17,5 +17,6 @@ jobs:
           curl -6 -v --max-time 10 https://www.googleapis.com/ 2>&1 | head -30 || echo "IPv6 failed (expected)"
           echo "=== Testing DNS resolution ==="
           getent ahosts www.googleapis.com
-          echo "=== Testing socket.getaddrinfo from Python ==="
-          python -c "import socket; results = socket.getaddrinfo('www.googleapis.com', 443); [print(f'  family={r[0]} addr={r[4][0]}') for r in results[:5]]"
+      - name: test python socket.getaddrinfo
+        working-directory: pipeline
+        run: python3 test_ipv4_connectivity.py
