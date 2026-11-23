@@ -12,8 +12,10 @@ CHANNEL=owning: 01_idea.py пишет EN-скрипт через 9router (next_p
 import datetime as dt
 import json
 import re
+import ssl
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from quality_gate import LUFS_TARGET
@@ -319,14 +321,42 @@ def _youtube():
     return build("youtube", "v3", credentials=Credentials.from_authorized_user_file(str(TOKEN_PATH)))
 
 
+TRANSIENT = (ssl.SSLError, ConnectionError, TimeoutError, OSError)
+
+
+def _status(e) -> int:
+    return getattr(getattr(e, "resp", None), "status", 0) or 0
+
+
+def _call(fn, tries=3, delay=5.0):
+    """Повтор транзиентных сбоев YouTube API (t_c87cd624).
+
+    Инцидент 23.11: `ssl.SSLEOFError` на ПЕРВОМ же запросе guard() ронял весь run
+    трейсбеком — слот красный, повтора нет, причины в логе нет. Транзиентная сеть и 5xx
+    ретраятся; 4xx (токен/права) и исчерпанные попытки уходят наверх — красный run,
+    не тихий пропуск.
+    """
+    for i in range(tries):
+        try:
+            return fn()
+        except Exception as e:
+            if not (isinstance(e, TRANSIENT) or _status(e) >= 500) or i == tries - 1:
+                raise
+            print(f"youtube api: {type(e).__name__}: {e}; ретрай {i + 1}/{tries - 1} через {delay:g}с")
+            time.sleep(delay)
+
+
 def guard() -> int:
     y = _youtube()
-    ch = y.channels().list(part="contentDetails", mine=True).execute()["items"][0]
+    ch = _call(lambda: y.channels().list(part="contentDetails", mine=True).execute())["items"][0]
     up = ch["contentDetails"]["relatedPlaylists"]["uploads"]
     try:
-        items = y.playlistItems().list(part="snippet,contentDetails", playlistId=up, maxResults=30).execute().get("items", [])
+        items = _call(lambda: y.playlistItems().list(
+            part="snippet,contentDetails", playlistId=up, maxResults=30).execute()).get("items", [])
     except Exception as e:  # пустой канал: uploads-плейлист ещё 404
-        print(f"uploads list: {type(e).__name__}; считаю 0")
+        if _status(e) != 404:
+            raise
+        print("uploads list: 404; считаю 0")
         items = []
     n = count_owning_today([(i["contentDetails"].get("videoPublishedAt", ""), i["snippet"].get("title", "")) for i in items],
                            dt.datetime.now(dt.timezone.utc).date())
@@ -349,7 +379,11 @@ if __name__ == "__main__":
         from common import latest_run_dir
         render(latest_run_dir())
     elif cmd == "guard":
-        sys.exit(guard())
+        try:
+            sys.exit(guard())
+        except Exception as e:  # причины в логе одной строкой: rc=1 (красный слот), не трейсбек-простыня
+            print(f"::error::guard: YouTube API недоступен после ретраев — {type(e).__name__}: {e}")
+            sys.exit(1)
     elif cmd == "channel-desc":
         set_channel_description()
     else:
