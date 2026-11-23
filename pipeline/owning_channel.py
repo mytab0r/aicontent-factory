@@ -319,6 +319,14 @@ def _youtube():
     from google.oauth2.credentials import Credentials
     from googleapiclient.discovery import build
     from youtube_oauth import TOKEN_PATH
+    
+    # Debug: verify IPv4 patch is active
+    import socket
+    results = socket.getaddrinfo('www.googleapis.com', 443)
+    ipv4_first = all(r[0] == socket.AF_INET for r in results[:2])
+    first_addrs = [(('IPv4' if r[0]==socket.AF_INET else 'IPv6' if r[0]==socket.AF_INET6 else 'OTHER'), r[4][0]) for r in results[:3]]
+    print(f"[DEBUG] IPv4 patch active at _youtube(): {ipv4_first}, first={first_addrs}", flush=True)
+    
     return build("youtube", "v3", credentials=Credentials.from_authorized_user_file(str(TOKEN_PATH)))
 
 
