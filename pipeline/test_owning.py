@@ -244,6 +244,49 @@ def test_render_filter_has_no_upscale():
     assert "peak child RSS" in inspect.getsource(oc), "нет лога пиковой памяти рендера"
 
 
+def test_guard_retries_transient_ssl():
+    """t_c87cd624: ssl.SSLEOFError на первом запросе guard() -> ретрай, а не красный run."""
+    import ssl
+    import types
+
+    calls = []
+
+    def flaky():
+        calls.append(1)
+        if len(calls) < 3:
+            raise ssl.SSLEOFError(8, "EOF occurred in violation of protocol")
+        return "ok"
+
+    assert oc._call(flaky, tries=3, delay=0) == "ok", "транзиентный сбой должен ретраиться"
+    assert len(calls) == 3, calls
+
+    def dead():
+        raise ssl.SSLEOFError(8, "EOF occurred in violation of protocol")
+
+    try:
+        oc._call(dead, tries=2, delay=0)
+    except ssl.SSLEOFError:
+        pass
+    else:
+        raise AssertionError("постоянный сбой обязан дойти до верха (красный run, не тихий пропуск)")
+
+    def auth_err():  # 4xx (токен/права) не транзиентен: без ретраев
+        hits.append(1)
+        raise Denied("forbidden")
+
+    class Denied(Exception):
+        resp = types.SimpleNamespace(status=403)
+
+    hits = []
+    try:
+        oc._call(auth_err, tries=3, delay=0)
+    except Denied:
+        pass
+    else:
+        raise AssertionError("403 обязан всплыть сразу")
+    assert len(hits) == 1, hits
+
+
 if __name__ == "__main__":
     test_tts_retries_transient_failure()
     test_tts_falls_back_to_alternate_voice()
@@ -257,4 +300,5 @@ if __name__ == "__main__":
     test_parse_llm_json_fenced()
     test_cta_decision_and_description()
     test_upload_body_for_channel()
+    test_guard_retries_transient_ssl()
     print("all owning tests passed")

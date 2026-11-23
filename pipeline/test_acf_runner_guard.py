@@ -49,6 +49,22 @@ def case_stale_runs():
     assert g.check(OK_RUNNERS, OK_WF, {"workflow_runs": []}, now=NOW, sched=SCHED) == ["NO_RUNS_6H"]
 
 
+def case_slot_rate():
+    """Критерий замера t_c87cd624: green-доля слотов за 7 дней < 90% = сигнал."""
+    slots_ok = ([{"conclusion": "success"}] * 13 + [{"conclusion": "failure"}], 14)   # 92.9%
+    assert g.check(OK_RUNNERS, OK_WF, OK_RUNS, now=NOW, sched=SCHED, slots=slots_ok) == []
+    slots_low = ([{"conclusion": "success"}] * 12 + [{"conclusion": "failure"}] * 2, 14)  # 85.7%
+    assert g.check(OK_RUNNERS, OK_WF, OK_RUNS, now=NOW, sched=SCHED,
+                   slots=slots_low) == ["OWNING_SLOT_RATE 12/14 86%"]
+    # слоты молча не пришли (инцидент 12.11): 2 прогона из 14 ожидаемых — провал, не «нет данных»
+    starved = ([{"conclusion": "success"}] * 2, 14)
+    assert g.check(OK_RUNNERS, OK_WF, OK_RUNS, now=NOW, sched=SCHED,
+                   slots=starved) == ["OWNING_SLOT_RATE 2/14 14%"]
+    # skipped-слот с warning (rc=3) в GitHub = зелёный run -> считается success
+    skipped_green = ([{"conclusion": "success"}] * 14, 14)
+    assert g.check(OK_RUNNERS, OK_WF, OK_RUNS, now=NOW, sched=SCHED, slots=skipped_green) == []
+
+
 def case_e2e_stub_gh():
     """Стаб вместо gh: runners=0 → exit!=0 + RUNNERS_ZERO; здоровые фикстуры → exit 0."""
     # e2e идёт по стенным часам (не NOW): иначе через 6 ч после NOW кейс «здоровый»
@@ -59,6 +75,11 @@ def case_e2e_stub_gh():
         stub = pathlib.Path(td, "gh")
         stub.write_text(f"""#!/bin/sh
 case "$2" in
+  *daily-owning.yml/runs*) cat <<'J'
+{json.dumps({"workflow_runs": [{"event": "schedule", "conclusion": "success",
+                                "created_at": (NOW - datetime.timedelta(hours=i)).isoformat()} for i in range(14)]})}
+J
+  ;;
   *actions/runners*) cat <<'J'
 {json.dumps({"total_count": 0, "runners": []})}
 J
@@ -88,7 +109,8 @@ esac
         assert r.returncode == 0, (r.returncode, r.stdout, r.stderr)
 
 
-for fn in (case_healthy, case_zero_runners, case_disabled_workflow, case_stale_runs, case_e2e_stub_gh):
+for fn in (case_healthy, case_zero_runners, case_disabled_workflow, case_stale_runs, case_slot_rate,
+           case_e2e_stub_gh):
     fn()
     print("ok", fn.__name__)
 print("ALL OK")
