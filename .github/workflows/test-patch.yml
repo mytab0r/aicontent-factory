@@ -11,5 +11,4 @@ jobs:
       - uses: actions/checkout@v4
       - name: verify patch applied
         run: |
-          cd pipeline
-          python -c "import socket, ipv4_google; print('Patch applied:', hasattr(socket.getaddrinfo, '_ipv4_patched')); results = socket.getaddrinfo('www.googleapis.com', 443); print('First 5 families:', [r[0] for r in results[:5]]); ipv4_first = all(r[0] == socket.AF_INET for r in results[:2]); print('IPv4 first:', ipv4_first); assert ipv4_first; print('SUCCESS: IPv4 patch working')"
+          PYTHONPATH=/home/runner/work/aicontent-factory/aicontent-factory/pipeline python -c "import socket, ipv4_google; print('Patch applied:', hasattr(socket.getaddrinfo, '_ipv4_patched')); results = socket.getaddrinfo('www.googleapis.com', 443); print('First 5 families:', [r[0] for r in results[:5]]); ipv4_first = all(r[0] == socket.AF_INET for r in results[:2]); print('IPv4 first:', ipv4_first); assert ipv4_first; print('SUCCESS: IPv4 patch working')"
